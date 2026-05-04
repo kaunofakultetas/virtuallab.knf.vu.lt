@@ -1,0 +1,44 @@
+name: virtual-lab
+
+services:
+  backend:
+    build:
+      context: ./backend
+      cache_from:
+        - type=local,src=.docker-cache
+      cache_to:
+        - type=local,dest=.docker-cache,mode=max
+    container_name: backend
+
+    env_file: ./.env
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/backend_db
+
+    ports:
+      - "3000:3000"
+    read_only: true
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: postgres
+
+    read_only: true
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: backend_db
+
+    volumes:
+      - ./_DATA/postgres:/var/lib/postgresql/data
+    tmpfs:
+      - /run/postgresql
+      - /tmp
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+    restart: unless-stopped

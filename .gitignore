@@ -1,0 +1,10 @@
+# Build Cache
+dist/
+node_modules/
+.docker-cache/
+
+# Environment
+.env
+
+# App data
+_DATA/
