@@ -1,0 +1,19 @@
+info:
+  name: Delete User
+  type: http
+  seq: 4
+
+http:
+  method: DELETE
+  url: "{{API_URL}}/auth/users/:vu_id"
+  params:
+    - name: vu_id
+      value: "2345678"
+      type: path
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

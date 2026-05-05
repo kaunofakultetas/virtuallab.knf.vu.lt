@@ -53,7 +53,7 @@ systemctl restart dnsmasq
 
 ## 2. Setup Guacamole VM
 
-Refer [here](./infra/guacamole/README.md) for the Guacamole VM setup instructions.
+Refer [here](./guacamole/README.md) for the Guacamole VM setup instructions.
 
 ## 3. Create build and template images
 
