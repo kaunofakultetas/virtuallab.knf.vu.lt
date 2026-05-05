@@ -4,4 +4,4 @@ A Proxmox-based virtual lab for practicing offensive security, red teaming, and 
 
 ## Setup
 
-Refer to [SETUP.md](./SETUP.md) for the setup instructions.
+Refer to [infra/README.md](./infra/README.md) for the setup instructions.

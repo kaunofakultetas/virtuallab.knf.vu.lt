@@ -1,0 +1,24 @@
+info:
+  name: Create Template
+  type: http
+  seq: 1
+
+http:
+  method: POST
+  url: "{{API_URL}}/templates"
+  body:
+    type: json
+    data: |-
+      {
+        "name": "Kali Linux",
+        "type": "student_vm",
+        "proxmox_id": "9000",
+        "description": "Kali Linux attackbox"
+      }
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

@@ -20,6 +20,7 @@ RUN addgroup -g 1001 -S nodejs && \
 
 COPY --from=builder --chown=nodejs:nodejs /app/dist ./dist
 COPY --from=builder --chown=nodejs:nodejs /app/package*.json ./
+COPY --from=builder --chown=nodejs:nodejs /app/schema.sql ./
 
 RUN --mount=type=cache,target=/root/.npm \
     npm ci --only=production && npm cache clean --force

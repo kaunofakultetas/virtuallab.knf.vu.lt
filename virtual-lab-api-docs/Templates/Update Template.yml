@@ -1,0 +1,25 @@
+info:
+  name: Update Template
+  type: http
+  seq: 5
+
+http:
+  method: PATCH
+  url: "{{API_URL}}/templates/:id"
+  params:
+    - name: id
+      value: "1"
+      type: path
+  body:
+    type: json
+    data: |-
+      {
+        "visible_to_students": true
+      }
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
