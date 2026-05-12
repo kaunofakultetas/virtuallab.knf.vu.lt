@@ -1,0 +1,19 @@
+info:
+  name: Stop Instance
+  type: http
+  seq: 7
+
+http:
+  method: GET
+  url: "{{API_URL}}/instances/:instanceId/stop"
+  params:
+    - name: instanceId
+      value: "1"
+      type: path
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

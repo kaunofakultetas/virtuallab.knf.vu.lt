@@ -1,3 +1,4 @@
+import { UserRole } from "@/types/auth";
 import {
   CreateTemplateDTO,
   Template,
@@ -18,6 +19,14 @@ export const Templates = {
     return res.rows[0] as Template | null;
   },
 
+  getStudentTemplates: async (): Promise<Template[]> => {
+    const res = await pool.query(
+      `SELECT * FROM templates WHERE visible_to_students = true`,
+    );
+
+    return res.rows as Template[];
+  },
+
   getByProxmoxId: async (proxmoxId: string): Promise<Template | null> => {
     const res = await pool.query(
       `SELECT * FROM templates WHERE proxmox_id = $1`,
@@ -29,6 +38,23 @@ export const Templates = {
     } else {
       return res.rows[0] as Template;
     }
+  },
+
+  hasAccess: async (role: UserRole, templateId: number): Promise<boolean> => {
+    if (role === "admin") {
+      return true;
+    }
+
+    const res = await pool.query(
+      `SELECT visible_to_students FROM templates WHERE id = $1`,
+      [templateId],
+    );
+
+    if (res.rows.length === 0) {
+      return false;
+    }
+
+    return res.rows[0].visible_to_students;
   },
 
   create: async (template: CreateTemplateDTO): Promise<Template> => {

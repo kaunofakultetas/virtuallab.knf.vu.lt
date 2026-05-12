@@ -1,6 +1,13 @@
 import { Users } from "@/controllers/users.controller";
 import { isAdmin, isAuthenticated } from "@/middleware/auth.middleware";
+import { validateRequest } from "@/middleware/zod-validation.middleware";
 import { TokenPayload } from "@/types/auth";
+import {
+  changePasswordSchema,
+  createUsersSchema,
+  loginSchema,
+  userParamsSchema,
+} from "@/types/validators/auth.zod";
 import { logger } from "@/utils/logger";
 import { randomBytes } from "crypto";
 
@@ -22,11 +29,7 @@ router.get("/", isAuthenticated, (req, res) => {
 });
 
 // Login with username and password, return JWT token
-router.post("/login", async (req, res) => {
-  if (!req.body.username || !req.body.password) {
-    return res.status(400).json({ error: "Missing username or password" });
-  }
-
+router.post("/login", validateRequest({ body: loginSchema }), async (req, res) => {
   const { username, password } = req.body;
   const user = await Users.passwordLogin(username, password);
 
@@ -68,14 +71,12 @@ router.post("/logout", isAuthenticated, (req, res) => {
 });
 
 // Change password
-router.post("/change-password", isAuthenticated, async (req, res) => {
+router.post(
+  "/change-password",
+  isAuthenticated,
+  validateRequest({ body: changePasswordSchema }),
+  async (req, res) => {
   const user = req.user as TokenPayload;
-
-  if (!req.body.currentPassword || !req.body.newPassword) {
-    return res
-      .status(400)
-      .json({ error: "Missing currentPassword or newPassword" });
-  }
 
   const { currentPassword, newPassword } = req.body;
 
@@ -94,76 +95,56 @@ router.post("/change-password", isAuthenticated, async (req, res) => {
       logger.error(err, "Error changing password:");
       res.status(500).json({ error: "Failed to change password" });
     });
-});
+  },
+);
 
 // Create user(s) (admin only)
-router.post("/users", isAuthenticated, isAdmin, (req, res) => {
-  if (!req.body.users || !Array.isArray(req.body.users)) {
-    return res
-      .status(400)
-      .json({ error: "Missing users array in request body" });
-  }
+router.post(
+  "/users",
+  isAuthenticated,
+  isAdmin,
+  validateRequest({ body: createUsersSchema }),
+  (req, res) => {
+    const users = req.body.users as {
+      vu_id: string;
+      password?: string | null;
+    }[];
 
-  if (req.body.users.length === 0) {
-    return res.status(400).json({ error: "Users array cannot be empty" });
-  } else if (req.body.users.length > 100) {
-    return res
-      .status(400)
-      .json({ error: "Cannot create more than 100 users at once" });
-  }
+    const results = users.map((user) => {
+      let password = user.password;
+      let wasPasswordGenerated = false;
 
-  const users = req.body.users as {
-    vu_id: string;
-    password: string | null;
-  }[];
+      if (!password) {
+        password = randomBytes(6).toString("hex").slice(0, 12);
+        wasPasswordGenerated = true;
+      }
 
-  const results = users.map((user) => {
-    // validate vu_id, must be non-empty str digits only
-    if (
-      !user.vu_id ||
-      typeof user.vu_id !== "string" ||
-      !/^\d+$/.test(user.vu_id)
-    ) {
-      return Promise.resolve({
-        vu_id: user.vu_id,
-        success: false,
-        error: "Invalid vu_id, must be a non-empty string of digits",
-      });
-    }
-
-    var password = user.password;
-    var wasPasswordGenerated = false;
-
-    if (!password) {
-      password = randomBytes(6).toString("hex").slice(0, 12);
-      wasPasswordGenerated = true;
-    }
-
-    return Users.create(user.vu_id, password).then(
-      (createdUser) => ({
-        vu_id: user.vu_id,
-        success: true,
-        data: {
-          vu_id: createdUser.vu_id,
-          role: createdUser.role,
-          password: wasPasswordGenerated ? password : undefined,
-        },
-      }),
-      (err) => ({
-        vu_id: user.vu_id,
-        success: false,
-        error: err.message || "Failed to create user",
-      }),
-    );
-  });
-
-  Promise.all(results)
-    .then((finalResults) => res.json(finalResults))
-    .catch((err) => {
-      logger.error(err, "Error creating users:");
-      res.status(500).json({ error: "Failed to create users" });
+      return Users.create(user.vu_id, password).then(
+        (createdUser) => ({
+          vu_id: user.vu_id,
+          success: true,
+          data: {
+            vu_id: createdUser.vu_id,
+            role: createdUser.role,
+            password: wasPasswordGenerated ? password : undefined,
+          },
+        }),
+        (err) => ({
+          vu_id: user.vu_id,
+          success: false,
+          error: err.message || "Failed to create user",
+        }),
+      );
     });
-});
+
+    Promise.all(results)
+      .then((finalResults) => res.json(finalResults))
+      .catch((err) => {
+        logger.error(err, "Error creating users:");
+        res.status(500).json({ error: "Failed to create users" });
+      });
+  },
+);
 
 // Get all users (admin only)
 router.get("/users", isAuthenticated, isAdmin, (req, res) => {
@@ -176,33 +157,49 @@ router.get("/users", isAuthenticated, isAdmin, (req, res) => {
 });
 
 // Get user by ID (admin only)
-router.get("/users/:vu_id", isAuthenticated, isAdmin, (req, res) => {
-  const vu_id = req.params.vu_id as string;
+router.get(
+  "/users/:vu_id",
+  isAuthenticated,
+  isAdmin,
+  validateRequest({ params: userParamsSchema }),
+  (req, res) => {
+    const vu_id = Array.isArray(req.params.vu_id)
+      ? req.params.vu_id[0]
+      : req.params.vu_id;
 
-  Users.getByVuId(vu_id)
-    .then((user) => {
-      if (!user) {
-        res.status(404).json({ error: "User not found" });
-      } else {
-        res.json(user);
-      }
-    })
-    .catch((err) => {
-      logger.error(err, "Error fetching user:");
-      res.status(500).json({ error: "Failed to fetch user" });
-    });
-});
+    Users.getByVuId(vu_id)
+      .then((user) => {
+        if (!user) {
+          res.status(404).json({ error: "User not found" });
+        } else {
+          res.json(user);
+        }
+      })
+      .catch((err) => {
+        logger.error(err, "Error fetching user:");
+        res.status(500).json({ error: "Failed to fetch user" });
+      });
+  },
+);
 
 // Delete user (admin only)
-router.delete("/users/:vu_id", isAuthenticated, isAdmin, (req, res) => {
-  const vu_id = req.params.vu_id as string;
+router.delete(
+  "/users/:vu_id",
+  isAuthenticated,
+  isAdmin,
+  validateRequest({ params: userParamsSchema }),
+  (req, res) => {
+    const vu_id = Array.isArray(req.params.vu_id)
+      ? req.params.vu_id[0]
+      : req.params.vu_id;
 
-  Users.delete(vu_id)
-    .then(() => res.json({ message: "User deleted successfully" }))
-    .catch((err) => {
-      logger.error(err, "Error deleting user:");
-      res.status(500).json({ error: "Failed to delete user" });
-    });
-});
+    Users.delete(vu_id)
+      .then(() => res.json({ message: "User deleted successfully" }))
+      .catch((err) => {
+        logger.error(err, "Error deleting user:");
+        res.status(500).json({ error: "Failed to delete user" });
+      });
+  },
+);
 
 export { router as authRouter };

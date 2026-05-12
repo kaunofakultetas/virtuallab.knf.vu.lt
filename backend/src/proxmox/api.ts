@@ -4,10 +4,34 @@ import {
   ProxmoxApiResponse,
   ProxmoxClientConfig,
   ProxmoxHTTPMethod,
+  ProxmoxNodeTaskStatus,
   ProxmoxNodeVM,
+  ProxmoxNodeVMNetIface,
   ProxmoxNodeVMStatus,
 } from "./types";
 import { logger } from "@/utils/logger";
+
+export function normaliseVmName(input: string, fallback = "vm"): string {
+  const MAX_LABEL = 63;
+
+  const cleanLabel = (raw: string): string => {
+    const lowered = raw.toLowerCase();
+    // Replace any run of non-alphanumerics with a single hyphen
+    const hyphenated = lowered.replace(/[^a-z0-9]+/g, "-");
+    // Strip leading/trailing hyphens and collapse duplicates (already handled by the regex above for runs)
+    const trimmed = hyphenated.replace(/^-+|-+$/g, "");
+    return trimmed.slice(0, MAX_LABEL).replace(/-+$/g, "");
+  };
+
+  const labels = input
+    .split(".")
+    .map(cleanLabel)
+    .filter((l) => l.length > 0);
+
+  if (labels.length === 0) return fallback;
+
+  return labels.join(".");
+}
 
 export class ProxmoxClient {
   private readonly baseUrl: string;
@@ -139,5 +163,120 @@ export class ProxmoxClient {
       transformed[newKey] = resp[key as keyof ProxmoxNodeVMStatus];
     }
     return transformed as unknown as ProxmoxNodeVMStatus;
+  }
+
+  async getVmNetIfaces(
+    vmid: string,
+  ): Promise<Record<string, ProxmoxNodeVMNetIface>> {
+    const resp = await this.request<{ result: ProxmoxNodeVMNetIface[] }>(
+      "GET",
+      `/nodes/${this.nodeName}/qemu/${vmid}/agent/network-get-interfaces`,
+    );
+
+    const ifaces: Record<string, ProxmoxNodeVMNetIface> = {};
+    if (Array.isArray(resp.result)) {
+      for (const iface of resp.result) {
+        if (iface.name) {
+          ifaces[iface.name] = iface;
+        }
+      }
+    }
+    return ifaces;
+  }
+
+  async pollTask(upid: string): Promise<ProxmoxNodeTaskStatus> {
+    const resp = await this.request<any>(
+      "GET",
+      `/nodes/${this.nodeName}/tasks/${upid}/status`,
+    );
+
+    return resp as ProxmoxNodeTaskStatus;
+  }
+
+  async waitForTaskCompletion(upid: string): Promise<boolean> {
+    const timeoutMs = 120_000;
+    const pollIntervalMs = 2_000;
+    const startedAt = Date.now();
+
+    try {
+      while (Date.now() - startedAt < timeoutMs) {
+        const task = await this.pollTask(upid);
+
+        if (task.status === "stopped") {
+          if (task.exitstatus === "OK") {
+            return true;
+          }
+
+          logger.error(
+            { upid, status: task.status, exitstatus: task.exitstatus },
+            "Proxmox task finished with non-OK exit status",
+          );
+          return false;
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+      }
+
+      logger.error({ upid, timeoutMs }, "Proxmox task polling timed out");
+      return false;
+    } catch (err) {
+      logger.error(
+        { err, upid },
+        "Failed while waiting for Proxmox task completion",
+      );
+      return false;
+    }
+  }
+
+  async cloneVM(
+    from_id: string,
+    new_id: string,
+    name: string,
+    full: number = 0,
+  ): Promise<string> {
+    const resp = await this.request<any>(
+      "POST",
+      `/nodes/${this.nodeName}/qemu/${from_id}/clone`,
+      {
+        form: {
+          newid: new_id,
+          name: normaliseVmName(name),
+          full: full.toString(),
+        },
+      },
+    );
+
+    return resp as string;
+  }
+
+  async configVM(vmid: string, data: Record<string, string>) {
+    await this.request<null>(
+      "PUT",
+      `/nodes/${this.nodeName}/qemu/${vmid}/config`,
+      {
+        form: data,
+      },
+    );
+  }
+
+  async startVM(vmid: string): Promise<string> {
+    return this.request<string>(
+      "POST",
+      `/nodes/${this.nodeName}/qemu/${vmid}/status/start`,
+    );
+  }
+
+  async stopVM(vmid: string): Promise<string> {
+    return this.request<string>(
+      "POST",
+      `/nodes/${this.nodeName}/qemu/${vmid}/status/stop`,
+    );
+  }
+
+  async rebootVM(vmid: string): Promise<string> {
+    return this.request<string>(
+      "POST",
+      `/nodes/${this.nodeName}/qemu/${vmid}/status/reboot`,
+    );
   }
 }

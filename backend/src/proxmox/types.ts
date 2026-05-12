@@ -1,4 +1,4 @@
-export type ProxmoxHTTPMethod = "GET" | "POST" | "DELETE";
+export type ProxmoxHTTPMethod = "GET" | "POST" | "DELETE" | "PUT";
 
 export interface ProxmoxClientConfig {
   baseUrl: string;
@@ -95,4 +95,45 @@ export interface ProxmoxNodeVMStatus {
   tags: string | null;
   template: number | null;
   uptime: number | null;
+}
+
+/**
+ * https://pve.proxmox.com/pve-docs/api-viewer/#/nodes/{node}/qemu/{vmid}/agent/network-get-interfaces
+ */
+
+export interface ProxmoxNodeVMNetIfaceIPAddr {
+  "ip-address": string;
+  "ip-address-type": "ipv4" | "ipv6";
+  prefix: number;
+}
+
+export interface ProxmoxNodeVMNetIfaceStatistics {
+  "rx-bytes": number;
+  "rx-dropped": number;
+  "rx-errs": number;
+  "rx-packets": number;
+  "tx-bytes": number;
+  "tx-dropped": number;
+  "tx-errs": number;
+  "tx-packets": number;
+}
+
+export interface ProxmoxNodeVMNetIface {
+  name: string;
+  "hardware-address": string;
+  "ip-addresses": ProxmoxNodeVMNetIfaceIPAddr[];
+  statistics: ProxmoxNodeVMNetIfaceStatistics;
+}
+
+export interface ProxmoxNodeTaskStatus {
+  id: string;
+  node: string;
+  pid: number;
+  pstart: number;
+  pstarttime: number;
+  status: "running" | "stopped";
+  type: string;
+  upid: string;
+  user: string;
+  exitstatus?: string;
 }
