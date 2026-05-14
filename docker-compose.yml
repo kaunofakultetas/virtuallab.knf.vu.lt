@@ -13,6 +13,10 @@ services:
     env_file: ./.env
     environment:
       - DATABASE_URL=postgresql://postgres:password@postgres:5432/backend_db
+      - NODE_EXTRA_CA_CERTS=/certs/logs.knf.vu.lt.crt
+
+    volumes:
+      - ./certs/logs.knf.vu.lt.crt:/certs/logs.knf.vu.lt.crt:ro
 
     ports:
       - "3000:3000"

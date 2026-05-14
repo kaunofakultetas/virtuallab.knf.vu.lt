@@ -170,7 +170,24 @@ router.get("/:instanceId/reboot", isAuthenticated, async (req, res) => {
 });
 
 // Get GUI connection URL for instance by ID, only if it belongs to current user or user is admin
-router.get("/:instanceId/session", isAuthenticated, (req, res) => {});
+router.get("/:instanceId/session", isAuthenticated, async (req, res) => {
+  if (!req.user?.vu_id) return;
+
+  const targetInstance = parseInt(req.params.instanceId as string);
+  const hasAccess = await Instances.hasAccessTo(
+    req.user?.vu_id,
+    targetInstance,
+  );
+
+  if (!hasAccess) {
+    return res.status(400).json({ error: "Unauthorized" });
+  }
+
+  const instance = await Instances.getById(targetInstance);
+  if (!instance) {
+    return res.status(400).json({ error: "Instance not found" });
+  }
+});
 
 // Get machines ip within the local network
 router.get("/:instanceId/ip", isAuthenticated, async (req, res) => {

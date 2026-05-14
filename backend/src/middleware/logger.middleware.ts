@@ -10,6 +10,11 @@ export const loggerMiddleware = (
   res: Response,
   next: NextFunction,
 ) => {
+  const url = req.originalUrl || req.url;
+  if (url.split("?")[0] === "/health") {
+    return next();
+  }
+
   const start = Date.now();
 
   res.on("finish", () => {
@@ -18,7 +23,7 @@ export const loggerMiddleware = (
     logger.info(
       {
         method: req.method,
-        url: req.originalUrl || req.url,
+        url,
         status: res.statusCode,
         duration: `${duration}ms`,
         ip: req.ip,

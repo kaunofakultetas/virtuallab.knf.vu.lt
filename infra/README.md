@@ -61,4 +61,5 @@ Refer [here](./templates/README.md) for the build and template image creation in
 
 ## 4. Boot up the Backend
 
-Coming soon!
+In Proxmox create a container with the ID 201. Install Ubuntu.
+Set static ip 10.10.10.100/24. Add NAT and forward 80, 443, 2222->22 ports to the VM.
