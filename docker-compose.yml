@@ -1,50 +1,63 @@
 name: virtual-lab
 
 services:
-  backend:
-    build:
-      context: ./backend
-      cache_from:
-        - type=local,src=.docker-cache
-      cache_to:
-        - type=local,dest=.docker-cache,mode=max
-    container_name: backend
+    backend:
+        build:
+            context: ./backend
+        container_name: backend
 
-    env_file: ./.env
-    environment:
-      - DATABASE_URL=postgresql://postgres:password@postgres:5432/backend_db
-      - NODE_EXTRA_CA_CERTS=/certs/logs.knf.vu.lt.crt
+        env_file: ./.env
+        environment:
+            - DATABASE_URL=postgresql://postgres:password@postgres:5432/backend_db
+            - NODE_EXTRA_CA_CERTS=/certs/logs.knf.vu.lt.crt
 
-    volumes:
-      - ./certs/logs.knf.vu.lt.crt:/certs/logs.knf.vu.lt.crt:ro
+        volumes:
+            - ./certs/logs.knf.vu.lt.crt:/certs/logs.knf.vu.lt.crt:ro
 
-    ports:
-      - "3000:3000"
-    read_only: true
-    restart: unless-stopped
+        read_only: true
+        restart: unless-stopped
 
-  postgres:
-    image: postgres:17-alpine
-    container_name: postgres
+    caddy:
+        image: caddy:2-alpine
+        container_name: caddy
 
-    read_only: true
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: backend_db
-    ports:
-      - "25432:5432"
+        ports:
+            - 80:80
+            - 443:443
+            - 443:443/udp
 
-    volumes:
-      - ./_DATA/postgres:/var/lib/postgresql/data
-    tmpfs:
-      - /run/postgresql
-      - /tmp
+        volumes:
+            - ./Caddyfile:/etc/caddy/Caddyfile:ro
+            - caddy_data:/data
+            - caddy_config:/config
 
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -d $$POSTGRES_DB -U $$POSTGRES_USER"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+        restart: unless-stopped
 
-    restart: unless-stopped
+    postgres:
+        image: postgres:17-alpine
+        container_name: postgres
+
+        read_only: true
+        environment:
+            POSTGRES_USER: postgres
+            POSTGRES_PASSWORD: password
+            POSTGRES_DB: backend_db
+
+        volumes:
+            - ./_DATA/postgres:/var/lib/postgresql/data
+        tmpfs:
+            - /run/postgresql
+            - /tmp
+
+        healthcheck:
+            test:
+                ["CMD-SHELL", "pg_isready -d $$POSTGRES_DB -U $$POSTGRES_USER"]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+
+        restart: unless-stopped
+
+volumes:
+    caddy_data:
+    caddy_config:

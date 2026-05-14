@@ -1,0 +1,13 @@
+:80 {
+    handle_path /api/* {
+        reverse_proxy backend:3000
+    }
+
+    handle_path /guac/* {
+        reverse_proxy 10.10.10.50:8080
+    }
+
+    # handle {
+    #     reverse_proxy frontend:3001
+    # }
+}

@@ -1,18 +1,13 @@
 # Build
 FROM node:25-alpine AS builder
-
 WORKDIR /app
-
 COPY package*.json ./
-RUN --mount=type=cache,target=/root/.npm \
-    npm ci
-
+RUN npm ci
 COPY . .
 RUN npm run build
 
 # Deploy
 FROM node:25-alpine AS production
-
 WORKDIR /app
 
 RUN addgroup -g 1001 -S nodejs && \
@@ -22,11 +17,9 @@ COPY --from=builder --chown=nodejs:nodejs /app/dist ./dist
 COPY --from=builder --chown=nodejs:nodejs /app/package*.json ./
 COPY --from=builder --chown=nodejs:nodejs /app/schema.sql ./
 
-RUN --mount=type=cache,target=/root/.npm \
-    npm ci --only=production && npm cache clean --force
+RUN npm ci --only=production && npm cache clean --force
 
 USER nodejs
-
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \

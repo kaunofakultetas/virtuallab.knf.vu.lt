@@ -8,3 +8,6 @@ node_modules/
 
 # App data
 _DATA/
+
+# Certs
+certs/*
