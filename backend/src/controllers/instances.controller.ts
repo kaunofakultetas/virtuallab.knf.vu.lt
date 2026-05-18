@@ -101,7 +101,7 @@ export const Instances = {
         userId: string,
         template: Template,
     ): Promise<number> => {
-        const newId = "10000";
+        const newId = await proxmox.getNextAvailableId(10000);
 
         // Clone template -> new id
         const cloneTask = await proxmox.cloneVM(
@@ -126,12 +126,74 @@ export const Instances = {
 
         const sqlResp = await pool.query(
             `INSERT INTO instances (owner_id, template_id, proxmox_id, name, run_until)
-      VALUES ($1, $2, $3, $4, NOW() + INTERVAL '2 hours') RETURNING id`,
+      VALUES ($1, $2, $3, $4, NOW() + INTERVAL '3 hours') RETURNING id`,
             [userId, template.id, newId, template.name],
         );
 
         proxmox.startVM(newId).then(() => {});
 
         return sqlResp.rows[0].id;
+    },
+
+    updateRuntimeHours: async (
+        instanceId: number,
+        hoursFromNow: number | null,
+    ) => {
+        if (hoursFromNow === null) {
+            await pool.query(
+                `UPDATE instances SET run_until = NULL WHERE id = $1`,
+                [instanceId],
+            );
+        } else {
+            await pool.query(
+                `UPDATE instances SET run_until = NOW() + make_interval(hours => $1) WHERE id = $2`,
+                [hoursFromNow, instanceId],
+            );
+        }
+    },
+
+    fetchAndUpdateStatuses: async () => {
+        const vms = (await proxmox.getVms()).filter((vm) => vm.vmid >= 10000);
+        if (vms.length === 0) return;
+
+        const values: string[] = [];
+        const placeholders: string[] = [];
+
+        vms.forEach((vm, i) => {
+            const base = i * 3;
+            placeholders.push(
+                `($${base + 1}, $${base + 2}::proxmox_status, $${base + 3}::jsonb)`,
+            );
+
+            // Drops these keys from the data written into db
+            const {
+                cpu,
+                mem,
+                vmid,
+                netin,
+                netout,
+                serial,
+                status,
+                memhost,
+                pressureiofull,
+                pressureiosome,
+                pressurecpufull,
+                pressurecpusome,
+                pressurememoryfull,
+                pressurememorysome,
+                ...data
+            } = vm;
+
+            values.push(vmid.toString(), status, JSON.stringify(data));
+        });
+
+        await pool.query(
+            `UPDATE instances AS i
+             SET status = v.status, data = v.data
+             FROM (VALUES ${placeholders.join(", ")})
+                  AS v(proxmox_id, status, data)
+             WHERE i.proxmox_id = v.proxmox_id`,
+            values,
+        );
     },
 };

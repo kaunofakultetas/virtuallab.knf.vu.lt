@@ -294,4 +294,21 @@ export class ProxmoxClient {
             `/nodes/${this.nodeName}/qemu/${vmid}/status/reboot`,
         );
     }
+
+    async getClusterResources(
+        type: "vm" | "storage" | "node" | "sdn",
+    ): Promise<any> {
+        return this.request<any>("GET", `/cluster/resources?type=${type}`);
+    }
+
+    async getNextAvailableId(minId: number = 10000): Promise<string> {
+        const resources: any[] = await this.getClusterResources("vm");
+        const used = new Set<number>(resources.map((r) => r.vmid));
+
+        let candidate = minId;
+        while (used.has(candidate)) {
+            candidate++;
+        }
+        return String(candidate);
+    }
 }

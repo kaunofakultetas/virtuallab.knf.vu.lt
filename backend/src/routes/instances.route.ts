@@ -253,6 +253,30 @@ router.get("/:instanceId/session", isAuthenticated, async (req, res) => {
         .json({ url: await guacamole.getSessionUrl(userId, guacId) });
 });
 
+// Renew machine running hours
+router.get("/:instanceId/renew", isAuthenticated, async (req, res) => {
+    if (!req.user?.vu_id) return;
+
+    const targetInstance = parseInt(req.params.instanceId as string);
+    const hasAccess = await Instances.hasAccessTo(
+        req.user?.vu_id,
+        targetInstance,
+    );
+
+    if (!hasAccess) {
+        return res.status(400).json({ error: "Unauthorized" });
+    }
+
+    const instance = await Instances.getById(targetInstance);
+    if (!instance) {
+        return res.status(400).json({ error: "Instance not found" });
+    }
+
+    await Instances.updateRuntimeHours(instance.id, 3);
+
+    return res.status(200).json({ ok: true });
+});
+
 // Get machines ip within the local network
 router.get("/:instanceId/ip", isAuthenticated, async (req, res) => {
     if (!req.user?.vu_id) return;
