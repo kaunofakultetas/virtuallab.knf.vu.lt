@@ -3,7 +3,12 @@ import { logger } from "@/utils/logger";
 import {
     GuacamoleApiError,
     GuacamoleClientConfig,
+    GuacamoleConnection,
+    GuacamoleConnectionsResponse,
+    GuacamoleConnectionSummary,
     GuacamoleHTTPMethod,
+    GuacamolePermsResponse,
+    GuacamoleUser,
     GuacamoleUsersResponse,
 } from "./types";
 
@@ -18,6 +23,11 @@ export class GuacamoleClient {
 
     private authToken: string | null = null;
     private dataSource: string | null = "postgresql";
+
+    private connectionCache: Record<string, GuacamoleConnectionSummary> = {};
+    private connectionCacheFetching: Promise<GuacamoleConnectionsResponse> | null =
+        null;
+    private connectionCacheOutdated = true;
 
     constructor(config: GuacamoleClientConfig) {
         this.baseUrl = config.baseUrl.replace(/\/+$/, "");
@@ -35,7 +45,28 @@ export class GuacamoleClient {
         });
     }
 
-    private async getToken() {
+    invalidateConnectionCache() {
+        this.connectionCacheOutdated = true;
+    }
+
+    async getConnectionCache(
+        refetch: boolean = false,
+    ): Promise<Record<string, GuacamoleConnectionSummary>> {
+        if (refetch || this.connectionCacheOutdated) {
+            this.connectionCacheFetching ??= this.listConnections().finally(
+                () => {
+                    this.connectionCacheFetching = null;
+                },
+            );
+            await this.connectionCacheFetching;
+        }
+        return this.connectionCache;
+    }
+
+    async getToken(
+        username: string,
+        password: string,
+    ): Promise<{ token: string; dataSource: string }> {
         const url = `${this.baseUrl}/api/tokens`;
         const headers: Record<string, string> = {
             Accept: "application/json",
@@ -43,8 +74,8 @@ export class GuacamoleClient {
         };
 
         const body = new URLSearchParams({
-            username: this.username,
-            password: this.password,
+            username: username,
+            password: password,
         } as Record<string, string>).toString();
 
         const controller = new AbortController();
@@ -62,13 +93,36 @@ export class GuacamoleClient {
             const text = await res.text();
             const parsed = text ? JSON.parse(text) : null;
 
-            this.authToken = parsed.authToken;
-            this.dataSource = parsed.dataSource;
+            return {
+                token: parsed.authToken,
+                dataSource: parsed.dataSource,
+            };
         } catch (err) {
             logger.error(err, "Failed to login to Guacamole");
+            throw new GuacamoleApiError(
+                "Failed to log in",
+                500,
+                "/api/tokens",
+                err,
+            );
         } finally {
             clearTimeout(timeout);
         }
+    }
+
+    async getSessionUrl(userId: string, connectionId: string): Promise<string> {
+        const userAuth = await this.getToken(userId, userId);
+        const urlB64Data = `${connectionId}\0c\0${this.dataSource}`;
+        const encodedUrlData = Buffer.from(urlB64Data).toString("base64url");
+
+        return `${this.publicUrl}/#/client/${encodedUrlData}?token=${userAuth.token}`;
+    }
+
+    private async updateToken() {
+        const data = await this.getToken(this.username, this.password);
+
+        this.authToken = data.token;
+        this.dataSource = data.dataSource;
     }
 
     private async request<T>(
@@ -76,12 +130,12 @@ export class GuacamoleClient {
         path: string,
         opts?: {
             query?: Record<string, string>;
-            body?: Record<string, string>;
+            body?: unknown;
         },
     ): Promise<T> {
         if (this.authToken == null || this.dataSource == null) {
             logger.debug("null Guacamole Authtoken||dataSource, relog");
-            await this.getToken();
+            await this.updateToken();
         }
 
         if (!opts) opts = {};
@@ -119,7 +173,15 @@ export class GuacamoleClient {
                 });
 
                 const text = await res.text();
-                const parsed = text ? JSON.parse(text) : null;
+                let parsed: any = null;
+
+                if (text) {
+                    try {
+                        parsed = JSON.parse(text);
+                    } catch {
+                        parsed = { error: text }; // preserve plain-text errors
+                    }
+                }
 
                 if (!res.ok) {
                     throw new GuacamoleApiError(
@@ -153,5 +215,207 @@ export class GuacamoleClient {
             "GET",
             `/api/session/data/${this.dataSource}/users`,
         );
+    }
+
+    async getUser(username: string): Promise<GuacamoleUser | null> {
+        const resp: Record<string, any> = await this.request<
+            Record<string, any>
+        >("GET", `/api/session/data/${this.dataSource}/users/${username}`);
+
+        if (resp["error"]) {
+            // User doesnt exist
+            if (resp["error"] == "Internal Server Error") return null;
+
+            throw new GuacamoleApiError(
+                `Guacamole getUser failed: ${resp["error"]}`,
+                500,
+                `/api/session/data/${this.dataSource}/users/${username}`,
+                resp["error"],
+            );
+        }
+
+        return resp as GuacamoleUser;
+    }
+
+    async createUser(
+        username: string,
+        password: string,
+    ): Promise<GuacamoleUser> {
+        const payload: Record<string, string> = {
+            username: username,
+            password: password,
+            attributes: JSON.stringify({
+                expired: "",
+                "access-window-start": "",
+                "access-window-end": "",
+                "valid-from": "",
+                "valid-until": "",
+                timezone: null,
+            }),
+        };
+
+        return this.request<GuacamoleUser>(
+            "POST",
+            `/api/session/data/${this.dataSource}/users`,
+            {
+                body: payload,
+            },
+        );
+    }
+
+    async getUserPerms(username: string): Promise<GuacamolePermsResponse> {
+        return this.request<GuacamolePermsResponse>(
+            "GET",
+            `/api/session/data/${this.dataSource}/users/${username}/permissions`,
+        );
+    }
+
+    async createConnection(
+        machineIp: string,
+        machineOwnerId: string,
+        machineId: string,
+    ): Promise<GuacamoleConnection> {
+        const parentIdentifier = "1"; // ID of target folder.
+
+        const payload: Record<string, unknown> = {
+            parentIdentifier: parentIdentifier,
+            name: machineId,
+            protocol: "rdp",
+            parameters: {
+                port: "3389",
+                "read-only": "",
+                "swap-red-blue": "",
+                cursor: "",
+                "color-depth": "",
+                "clipboard-encoding": "",
+                "disable-copy": "",
+                "disable-paste": "",
+                "dest-port": "",
+                "recording-exclude-output": "",
+                "recording-exclude-mouse": "",
+                "recording-include-keys": "",
+                "create-recording-path": "",
+                "enable-sftp": "",
+                "sftp-port": "",
+                "sftp-server-alive-interval": "",
+                "enable-audio": "",
+                security: "any",
+                "disable-auth": "",
+                "ignore-cert": "true",
+                "gateway-port": "",
+                "server-layout": "",
+                timezone: "",
+                console: "",
+                width: "",
+                height: "",
+                dpi: "",
+                "resize-method": "display-update",
+                "console-audio": "",
+                "disable-audio": "",
+                "enable-audio-input": "",
+                "enable-printing": "",
+                "enable-drive": "",
+                "create-drive-path": "",
+                "enable-wallpaper": "",
+                "enable-theming": "",
+                "enable-font-smoothing": "",
+                "enable-full-window-drag": "",
+                "enable-desktop-composition": "",
+                "enable-menu-animations": "",
+                "disable-bitmap-caching": "",
+                "disable-offscreen-caching": "",
+                "disable-glyph-caching": "",
+                "preconnection-id": "",
+                hostname: machineIp,
+                username: "user",
+                password: machineOwnerId,
+                domain: "",
+                "gateway-hostname": "",
+                "gateway-username": "",
+                "gateway-password": "",
+                "gateway-domain": "",
+                "initial-program": "",
+                "client-name": "",
+                "printer-name": "",
+                "drive-name": "",
+                "drive-path": "",
+                "static-channels": "",
+                "remote-app": "",
+                "remote-app-dir": "",
+                "remote-app-args": "",
+                "preconnection-blob": "",
+                "load-balance-info": "",
+                "recording-path": "",
+                "recording-name": "",
+                "sftp-hostname": "",
+                "sftp-host-key": "",
+                "sftp-username": "",
+                "sftp-password": "",
+                "sftp-private-key": "",
+                "sftp-passphrase": "",
+                "sftp-root-directory": "",
+                "sftp-directory": "",
+            },
+            attributes: {
+                "max-connections": "",
+                "max-connections-per-user": "1",
+                weight: "",
+                "failover-only": "",
+                "guacd-port": "",
+                "guacd-encryption": "",
+                "guacd-hostname": "",
+            },
+        };
+
+        this.connectionCacheOutdated = true;
+
+        return this.request<GuacamoleConnection>(
+            "POST",
+            `/api/session/data/${this.dataSource}/connections`,
+            {
+                body: payload,
+            },
+        );
+    }
+
+    async listConnections(): Promise<GuacamoleConnectionsResponse> {
+        const resp = await this.request<GuacamoleConnectionsResponse>(
+            "GET",
+            `/api/session/data/${this.dataSource}/connections`,
+        );
+
+        // Update connectionCache
+        for (const key of Object.keys(this.connectionCache)) {
+            delete this.connectionCache[key];
+        }
+        for (const conn of Object.values(resp)) {
+            this.connectionCache[conn.name] = conn;
+        }
+        this.connectionCacheOutdated = false;
+
+        return resp;
+    }
+
+    async giveUserAccessToMachine(username: string, machineId: string) {
+        return this.request(
+            "PATCH",
+            `/api/session/data/${this.dataSource}/users/${username}/permissions`,
+            {
+                body: [
+                    {
+                        op: "add",
+                        path: `/connectionPermissions/${machineId}`,
+                        value: "READ",
+                    },
+                ],
+            },
+        );
+    }
+
+    async getConnectionSummary(
+        connectionName: string,
+    ): Promise<GuacamoleConnectionSummary | null> {
+        const cData = await this.getConnectionCache();
+        return cData[connectionName] ? cData[connectionName] : null;
     }
 }

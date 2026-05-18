@@ -1,5 +1,7 @@
 #!/bin/bash
 
+sudo touch CaddyAccess.log
+
 mkdir -p ./_DATA/postgres
 sudo chmod 777 ./_DATA/postgres
 

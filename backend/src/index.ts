@@ -17,6 +17,7 @@ import { guacamole } from "./guacamole";
 const app: Application = express();
 const port: number = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 
+app.set("trust proxy", 1);
 app.use(requestIdMiddleware);
 app.use(loggerMiddleware);
 app.use(express.json());
@@ -28,6 +29,17 @@ app.get("/", (req: Request, res: Response) => {
 
 app.get("/health", (req: Request, res: Response) => {
     res.status(200).json({ status: "ok" });
+});
+
+app.get("/g", async (req, res) => {
+    // const r = await guacamole.createConnection(
+    //     "10.10.10.70",
+    //     "1857359",
+    //     "machId",
+    // );
+    const r = await guacamole.listConnections();
+    logger.info(r);
+    res.status(200).send(r);
 });
 
 app.use("/auth", authRouter);

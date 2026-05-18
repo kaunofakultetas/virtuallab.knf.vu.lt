@@ -1,13 +1,79 @@
+########################################################
+##################### NON VU BLOCKER ###################
+########################################################
+(allow_only_vu) {
+    # Local VU networks
+    remote_ip 172.16.0.1/16
+    remote_ip 192.168.0.1/16
+    remote_ip 10.0.0.1/8
+
+    # VU VPN networks
+    remote_ip 193.219.95.0/24
+    remote_ip 10.198.0.0/16
+    remote_ip 158.129.162.0/24
+
+    # VU KNF external network
+    remote_ip 158.129.172.0/24
+}
+# Traffic blocking function/subroutine
+(geo_block_non_vu) {
+    @block_non_vu {
+        not {
+            import allow_only_vu
+        }
+    }
+
+    header @block_non_vu Content-Type "text/html; charset=utf-8"
+    respond @block_non_vu `<!DOCTYPE html>
+    <html>
+        <body>
+            <p>Sistema nepasiekiama iš jūsų IP adreso. Prašome susidiegti VU VPN.</p>
+            <p>Daugiau informacijos: <a href="https://www.vu.lt/it/paslaugos/irenginiai-programos-tinklai-ir-spausdinimas/vu-vpn">VU VPN</a></p>
+            <p>Jūsų IP adresas: {remote_host}</p>
+            <hr>
+            <p>Or if you are a hacker you can review our blueprints for our IT infrastructure here:<br>
+            <a href="https://www.youtube.com/watch?v=dQw4w9WgXcQ">IT Infrastructure Blueprints</a></p>
+            <hr>
+        </body>
+    </html>` 403
+}
+########################################################
+########################################################
+########################################################
+
 :80 {
-    handle_path /api/* {
-        reverse_proxy backend:3000
+    reverse_proxy http://notfound404-endpoint:80 {
+        header_up X-Forwarded-For {remote_host}
+    }
+}
+
+virtuallab.knf.vu.lt {
+    tls admin@knf.vu.lt
+
+    route {
+        import geo_block_non_vu
+
+        handle_path /api/* {
+            reverse_proxy backend:3000 {
+                header_up X-Forwarded-For {remote_host}
+            }
+        }
+
+        handle_path /guac/* {
+            reverse_proxy 10.10.10.50:8080 {
+                header_up X-Forwarded-For {remote_host}
+            }
+        }
+
+        # handle {
+        #     reverse_proxy frontend:3001 {
+        #         header_up X-Forwarded-For {remote_host}
+        #     }
+        # }
     }
 
-    handle_path /guac/* {
-        reverse_proxy 10.10.10.50:8080
+    log {
+        output file /var/log/caddy/access.log
+        format json
     }
-
-    # handle {
-    #     reverse_proxy frontend:3001
-    # }
 }

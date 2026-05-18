@@ -11,3 +11,6 @@ _DATA/
 
 # Certs
 certs/*
+
+# Logs
+CaddyAccess.log

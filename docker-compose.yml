@@ -28,6 +28,7 @@ services:
 
         volumes:
             - ./Caddyfile:/etc/caddy/Caddyfile:ro
+            - ./CaddyAccess.log:/var/log/caddy/access.log
             - caddy_data:/data
             - caddy_config:/config
 
@@ -55,6 +56,14 @@ services:
             interval: 10s
             timeout: 5s
             retries: 5
+
+        restart: unless-stopped
+
+    notfound404-vite:
+        container_name: notfound404
+        image: vuknf/notfound404-vite:latest
+        user: 1000:1000
+        read_only: true
 
         restart: unless-stopped
 
