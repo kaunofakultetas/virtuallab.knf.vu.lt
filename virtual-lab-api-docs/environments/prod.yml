@@ -1,0 +1,8 @@
+name: prod
+variables:
+  - name: API_URL
+    value: https://virtuallab.knf.vu.lt/api
+  - secret: true
+    name: USERNAME
+  - secret: true
+    name: PASSWORD
