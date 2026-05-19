@@ -13,11 +13,12 @@ import LogoutOutlinedIcon from "@mui/icons-material/LogoutOutlined";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import AdminPanelSettingsOutlinedIcon from "@mui/icons-material/AdminPanelSettingsOutlined";
+import ViewModuleOutlinedIcon from "@mui/icons-material/ViewModuleOutlined";
 import { useAuth } from "@/utils/AuthGuard";
 
-const SIDEBAR_W           = 220;
+const SIDEBAR_W = 220;
 const SIDEBAR_W_COLLAPSED = 64;
-const ACTIVE_COLOR        = "#78003F";
+const ACTIVE_COLOR = "#78003F";
 
 interface NavItem {
     label: string;
@@ -35,35 +36,70 @@ const NAV: NavSection[] = [
     {
         section: "Main",
         items: [
-            { label: "Dashboard",    icon: <DashboardOutlinedIcon fontSize="small" />,        path: "/"          },
+            {
+                label: "Dashboard",
+                icon: <DashboardOutlinedIcon fontSize="small" />,
+                path: "/",
+            },
         ],
     },
     {
         section: "Instances",
         items: [
-            { label: "My Instances", icon: <ComputerOutlinedIcon fontSize="small" />,          path: "/instances" },
+            {
+                label: "My Instances",
+                icon: <ComputerOutlinedIcon fontSize="small" />,
+                path: "/instances",
+            },
         ],
     },
     {
         section: "Connections",
         items: [
-            { label: "Sessions",     icon: <CastConnectedOutlinedIcon fontSize="small" />,     path: "/sessions"  },
+            {
+                label: "Sessions",
+                icon: <CastConnectedOutlinedIcon fontSize="small" />,
+                path: "/sessions",
+            },
         ],
     },
     {
         section: "Admin",
         adminOnly: true,
         items: [
-            { label: "Users",        icon: <PeopleOutlinedIcon fontSize="small" />,             path: "/admin/users"      },
-            { label: "Instances",    icon: <AdminPanelSettingsOutlinedIcon fontSize="small" />, path: "/admin/instances"  },
+            {
+                label: "Users",
+                icon: <PeopleOutlinedIcon fontSize="small" />,
+                path: "/admin/users",
+            },
+            {
+                label: "Instances",
+                icon: <AdminPanelSettingsOutlinedIcon fontSize="small" />,
+                path: "/admin/instances",
+            },
+            {
+                label: "Templates",
+                icon: <ViewModuleOutlinedIcon fontSize="small" />,
+                path: "/admin/templates",
+            },
         ],
     },
 ];
 
-function SidebarItem({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
+function SidebarItem({
+    item,
+    collapsed,
+}: {
+    item: NavItem;
+    collapsed: boolean;
+}) {
     return (
         <Tooltip title={collapsed ? item.label : ""} placement="right" arrow>
-            <NavLink to={item.path} end={item.path === "/"} style={{ textDecoration: "none" }}>
+            <NavLink
+                to={item.path}
+                end={item.path === "/"}
+                style={{ textDecoration: "none" }}
+            >
                 {({ isActive }) => (
                     <Box
                         sx={{
@@ -77,8 +113,14 @@ function SidebarItem({ item, collapsed }: { item: NavItem; collapsed: boolean })
                             cursor: "pointer",
                             justifyContent: collapsed ? "center" : "flex-start",
                             bgcolor: isActive ? ACTIVE_COLOR : "transparent",
-                            "& svg": { color: isActive ? "#fff" : "text.secondary" },
-                            "&:hover": { bgcolor: isActive ? ACTIVE_COLOR : "action.hover" },
+                            "& svg": {
+                                color: isActive ? "#fff" : "text.secondary",
+                            },
+                            "&:hover": {
+                                bgcolor: isActive
+                                    ? ACTIVE_COLOR
+                                    : "action.hover",
+                            },
                             transition: "background 150ms ease",
                         }}
                     >
@@ -88,7 +130,9 @@ function SidebarItem({ item, collapsed }: { item: NavItem; collapsed: boolean })
                                 variant="body2"
                                 fontWeight={isActive ? 600 : 400}
                                 noWrap
-                                sx={{ color: isActive ? "#fff" : "text.primary" }}
+                                sx={{
+                                    color: isActive ? "#fff" : "text.primary",
+                                }}
                             >
                                 {item.label}
                             </Typography>
@@ -134,16 +178,23 @@ export function Sidebar({ onLogout }: SidebarProps) {
                     p: 0.75,
                 }}
             >
-                <IconButton size="small" onClick={() => setCollapsed((c) => !c)}>
-                    {collapsed
-                        ? <ChevronRightIcon fontSize="small" />
-                        : <ChevronLeftIcon  fontSize="small" />}
+                <IconButton
+                    size="small"
+                    onClick={() => setCollapsed((c) => !c)}
+                >
+                    {collapsed ? (
+                        <ChevronRightIcon fontSize="small" />
+                    ) : (
+                        <ChevronLeftIcon fontSize="small" />
+                    )}
                 </IconButton>
             </Box>
 
             <Divider />
 
-            <Box sx={{ flex: 1, overflowY: "auto", overflowX: "hidden", py: 1 }}>
+            <Box
+                sx={{ flex: 1, overflowY: "auto", overflowX: "hidden", py: 1 }}
+            >
                 {visibleSections.map((section) => (
                     <Box key={section.section} sx={{ mb: 1.5 }}>
                         {!collapsed && (
@@ -164,7 +215,11 @@ export function Sidebar({ onLogout }: SidebarProps) {
                             </Typography>
                         )}
                         {section.items.map((item) => (
-                            <SidebarItem key={item.path} item={item} collapsed={collapsed} />
+                            <SidebarItem
+                                key={item.path}
+                                item={item}
+                                collapsed={collapsed}
+                            />
                         ))}
                     </Box>
                 ))}
@@ -193,9 +248,16 @@ export function Sidebar({ onLogout }: SidebarProps) {
                         transition: "background 150ms ease",
                     }}
                 >
-                    <LogoutOutlinedIcon fontSize="small" sx={{ color: "text.secondary" }} />
+                    <LogoutOutlinedIcon
+                        fontSize="small"
+                        sx={{ color: "text.secondary" }}
+                    />
                     {!collapsed && (
-                        <Typography variant="body2" sx={{ color: "text.secondary" }} noWrap>
+                        <Typography
+                            variant="body2"
+                            sx={{ color: "text.secondary" }}
+                            noWrap
+                        >
                             Logout
                         </Typography>
                     )}

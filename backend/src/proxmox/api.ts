@@ -71,6 +71,17 @@ export class ProxmoxClient {
         return { Cookie: `PVEAuthCookie=${token}` };
     }
 
+    private isRetryable(err: any): boolean {
+        if (err instanceof ProxmoxApiError) {
+            // Retry on auth issues (401, 403) as per user request
+            return err.status === 401 || err.status === 403;
+        }
+        // Connectivity issues:
+        // - TypeError: Network errors in fetch
+        // - AbortError: Timeout/Cancellation
+        return err instanceof TypeError || err.name === "AbortError";
+    }
+
     private async request<T>(
         method: ProxmoxHTTPMethod,
         path: string,
@@ -127,7 +138,7 @@ export class ProxmoxClient {
                 return envelope.data;
             } catch (err) {
                 const lastAttempt = attempt === attempts;
-                if (lastAttempt) throw err;
+                if (lastAttempt || !this.isRetryable(err)) throw err;
 
                 logger.warn(
                     { err, attempt, method, path },
