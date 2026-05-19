@@ -4,6 +4,7 @@ import {
     GuacamoleApiError,
     GuacamoleClientConfig,
     GuacamoleConnection,
+    GuacamoleConnectionParameters,
     GuacamoleConnectionsResponse,
     GuacamoleConnectionSummary,
     GuacamoleHTTPMethod,
@@ -11,6 +12,8 @@ import {
     GuacamoleUser,
     GuacamoleUsersResponse,
 } from "./types";
+
+const parentIdentifier = "1"; // ID of target folder.
 
 export class GuacamoleClient {
     private readonly baseUrl: string;
@@ -275,8 +278,6 @@ export class GuacamoleClient {
         machineOwnerId: string,
         machineId: string,
     ): Promise<GuacamoleConnection> {
-        const parentIdentifier = "1"; // ID of target folder.
-
         const payload: Record<string, unknown> = {
             parentIdentifier: parentIdentifier,
             name: machineId,
@@ -378,6 +379,114 @@ export class GuacamoleClient {
         );
     }
 
+    async updateConnectionIp(
+        machineId: string,
+        machineOwnerId: string,
+        newMachineIp: string,
+        guacIdentifier: string,
+    ): Promise<GuacamoleConnection> {
+        const payload: Record<string, unknown> = {
+            parentIdentifier: parentIdentifier,
+            identifier: guacIdentifier,
+            name: machineId,
+            protocol: "rdp",
+            parameters: {
+                port: "3389",
+                "read-only": "",
+                "swap-red-blue": "",
+                cursor: "",
+                "color-depth": "",
+                "clipboard-encoding": "",
+                "disable-copy": "",
+                "disable-paste": "",
+                "dest-port": "",
+                "recording-exclude-output": "",
+                "recording-exclude-mouse": "",
+                "recording-include-keys": "",
+                "create-recording-path": "",
+                "enable-sftp": "",
+                "sftp-port": "",
+                "sftp-server-alive-interval": "",
+                "enable-audio": "",
+                security: "any",
+                "disable-auth": "",
+                "ignore-cert": "true",
+                "gateway-port": "",
+                "server-layout": "",
+                timezone: "",
+                console: "",
+                width: "",
+                height: "",
+                dpi: "",
+                "resize-method": "display-update",
+                "console-audio": "",
+                "disable-audio": "",
+                "enable-audio-input": "",
+                "enable-printing": "",
+                "enable-drive": "",
+                "create-drive-path": "",
+                "enable-wallpaper": "",
+                "enable-theming": "",
+                "enable-font-smoothing": "",
+                "enable-full-window-drag": "",
+                "enable-desktop-composition": "",
+                "enable-menu-animations": "",
+                "disable-bitmap-caching": "",
+                "disable-offscreen-caching": "",
+                "disable-glyph-caching": "",
+                "preconnection-id": "",
+                hostname: newMachineIp,
+                username: "user",
+                password: machineOwnerId,
+                domain: "",
+                "gateway-hostname": "",
+                "gateway-username": "",
+                "gateway-password": "",
+                "gateway-domain": "",
+                "initial-program": "",
+                "client-name": "",
+                "printer-name": "",
+                "drive-name": "",
+                "drive-path": "",
+                "static-channels": "",
+                "remote-app": "",
+                "remote-app-dir": "",
+                "remote-app-args": "",
+                "preconnection-blob": "",
+                "load-balance-info": "",
+                "recording-path": "",
+                "recording-name": "",
+                "sftp-hostname": "",
+                "sftp-host-key": "",
+                "sftp-username": "",
+                "sftp-password": "",
+                "sftp-private-key": "",
+                "sftp-passphrase": "",
+                "sftp-root-directory": "",
+                "sftp-directory": "",
+            },
+            attributes: {
+                "max-connections": "",
+                "max-connections-per-user": "1",
+                weight: "",
+                "failover-only": "",
+                "guacd-port": "",
+                "guacd-encryption": "",
+                "guacd-hostname": "",
+            },
+        };
+
+        this.connectionCacheOutdated = true;
+
+        return this.request<GuacamoleConnection>(
+            "PUT",
+            `/api/session/data/${this.dataSource}/connections/${guacIdentifier}`,
+            {
+                body: payload,
+            },
+        );
+    }
+
     async listConnections(): Promise<GuacamoleConnectionsResponse> {
         const resp = await this.request<GuacamoleConnectionsResponse>(
             "GET",
@@ -409,6 +518,15 @@ export class GuacamoleClient {
                     },
                 ],
             },
+        );
+    }
+
+    async fetchConnectionParams(
+        connectionName: string,
+    ): Promise<GuacamoleConnectionParameters> {
+        return this.request<GuacamoleConnectionParameters>(
+            "GET",
+            `/api/session/data/${this.dataSource}/connections/${connectionName}/parameters`,
         );
     }
 

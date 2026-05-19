@@ -1,4 +1,4 @@
-export type GuacamoleHTTPMethod = "GET" | "POST" | "PATCH";
+export type GuacamoleHTTPMethod = "GET" | "POST" | "PATCH" | "PUT";
 
 export interface GuacamoleClientConfig {
     baseUrl: string;
@@ -169,3 +169,14 @@ export type GuacamoleConnectionsResponse = Record<
     string,
     GuacamoleConnectionSummary
 >;
+
+export interface GuacamoleConnectionParameters {
+    "color-depth": string;
+    hostname: string;
+    password: string;
+    security: string;
+    "ignore-cert": "true" | "false";
+    port: string;
+    "resize-method": string;
+    username: string;
+}

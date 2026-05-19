@@ -12,7 +12,7 @@ export const loggerMiddleware = (
     next: NextFunction,
 ) => {
     const url = req.originalUrl || req.url;
-    if (url.split("?")[0] === "/health") {
+    if (["/health", "/metrics", "/auth"].includes(url.split("?")[0])) {
         return next();
     }
 

@@ -65,11 +65,11 @@ virtuallab.knf.vu.lt {
             }
         }
 
-        # handle {
-        #     reverse_proxy frontend:3001 {
-        #         header_up X-Forwarded-For {remote_host}
-        #     }
-        # }
+        handle {
+            reverse_proxy frontend:5173 {
+                header_up X-Forwarded-For {remote_host}
+            }
+        }
     }
 
     log {

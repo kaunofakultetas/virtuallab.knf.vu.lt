@@ -1,19 +1,20 @@
-import express, { Application, Request, Response } from "express";
-import cookieParser from "cookie-parser";
-
 import { pool } from "@/utils/db";
 import { logger } from "@/utils/logger";
+import { metadata } from "@/utils/metadata";
 import { authRouter } from "@/routes/auth.route";
+import { instancesRouter } from "@/routes/instances.route";
 import { templatesRouter } from "@/routes/templates.route";
+import { Instances } from "@/controllers/instances.controller";
 import { loggerMiddleware } from "@/middleware/logger.middleware";
 import { requestIdMiddleware } from "@/middleware/request-id.middleware";
 import { errorHandlerMiddleware } from "@/middleware/error-handler.middleware";
 
-import fs from "fs";
-import path from "path";
-import { instancesRouter } from "./routes/instances.route";
 import { SimpleIntervalJob, Task, ToadScheduler } from "toad-scheduler";
-import { Instances } from "./controllers/instances.controller";
+import express, { Application, Request, Response } from "express";
+import cookieParser from "cookie-parser";
+import { Server } from "http";
+import path from "path";
+import fs from "fs";
 
 const app: Application = express();
 const port: number = process.env.PORT ? parseInt(process.env.PORT) : 3000;
@@ -39,12 +40,54 @@ app.use("/instances", instancesRouter);
 
 app.use(errorHandlerMiddleware);
 
+let server: Server | undefined;
+let shuttingDown = false;
+
+const shutdown = async (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    logger.info({ signal }, "shutdown signal received");
+
+    const forceTimeout = setTimeout(() => {
+        logger.error("forced shutdown after 10s");
+        process.exit(1);
+    }, 10_000);
+    forceTimeout.unref();
+
+    try {
+        // 1. Stop accepting new HTTP connections, wait for in-flight to finish
+        if (server) {
+            await new Promise<void>((resolve, reject) => {
+                server!.close((err) => (err ? reject(err) : resolve()));
+            });
+            logger.info("http server closed");
+        }
+
+        // 2. Stop the scheduler; an in-flight task is given a moment to finish
+        scheduler.stop();
+        logger.info("scheduler stopped");
+
+        // 3. Close the DB pool last — after HTTP and scheduler are done with it
+        await pool.end();
+        logger.info("db pool closed");
+
+        clearTimeout(forceTimeout);
+        process.exit(0);
+    } catch (err) {
+        logger.error(err, "error during shutdown");
+        process.exit(1);
+    }
+};
+
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
+process.on("SIGINT", () => void shutdown("SIGINT"));
+
 async function bootstrap() {
     try {
         const schemaPath = path.join(__dirname, "..", "schema.sql");
         const schema = fs.readFileSync(schemaPath, "utf-8");
-
         await pool.query(schema);
+        await metadata.initDefaults();
         logger.info("Database schema is up to date");
 
         // Task to update db entries of instance statuses
@@ -61,12 +104,13 @@ async function bootstrap() {
         );
         scheduler.addSimpleIntervalJob(updInstanceStJob);
 
-        app.listen(port, "0.0.0.0", () => {
+        server = app.listen(port, "0.0.0.0", () => {
             logger.info(`Server is running on http://0.0.0.0:${port}`);
         });
     } catch (err) {
         logger.error(err, "Error setting up database schema");
         scheduler.stop();
+        await pool.end().catch(() => {});
         process.exit(1);
     }
 }
@@ -74,9 +118,10 @@ async function bootstrap() {
 void bootstrap();
 
 // TODO:
-// - Create an in-db stored config that can be edited at runtime thru web
 // - Limit student allowed concurrent created vms
 // - Add route to delete specific vm
 // - Auto-removal of expired vms
+// - Admin routes for guac management
 // - Admin route to make vms not expireable / make em expireable again
 // - Add validation to all routes
+// - Routes for providing statistics to the frontend?

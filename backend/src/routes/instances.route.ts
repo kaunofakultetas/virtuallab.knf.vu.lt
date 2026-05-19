@@ -202,6 +202,8 @@ router.get("/:instanceId/session", isAuthenticated, async (req, res) => {
         return res.status(400).json({ error: "Instance not found" });
     }
 
+    const instanceOwnerId = instance.owner_id;
+
     // If instance is not running - start it and wait for ip.
     await proxmox.startVM(instance.proxmox_id);
 
@@ -211,31 +213,63 @@ router.get("/:instanceId/session", isAuthenticated, async (req, res) => {
         guacUser = await guacamole.createUser(userId, userId);
     }
 
+    // Get instance IP
+    const instanceIp = await Instances.getInsideNetIPv4(instance.proxmox_id);
+
+    if (instanceIp == null) {
+        return res
+            .status(500)
+            .json({ error: "Timed out, is server starting up?" });
+    }
+
     // Does guacamole connection to the machine exist?
     const guacName = instance.id.toString();
     let guacConn = await guacamole.getConnectionSummary(guacName);
     if (!guacConn) {
-        // Get instance IP
-        const instanceIp = await Instances.getInsideNetIPv4(
-            instance.proxmox_id,
-        );
-
-        if (instanceIp == null) {
-            return res
-                .status(500)
-                .json({ error: "Timed out, is server starting up?" });
-        }
-
+        // Create a new guac connection
         logger.info(
             {
                 userId: userId,
                 instanceIp: instanceIp,
                 instanceId: guacName,
+                requestId: req.id || null,
             },
             "Creating Guacamole connection",
         );
 
-        await guacamole.createConnection(instanceIp, userId, guacName);
+        await guacamole.createConnection(instanceIp, instanceOwnerId, guacName);
+        guacConn = await guacamole.getConnectionSummary(guacName);
+    } else {
+        // Check if IP is up to date
+        const summary = await guacamole.fetchConnectionParams(guacName);
+
+        if (!summary) {
+            logger.error(
+                `Failed to get connection summary by guacName: ${guacName}`,
+            );
+            return res.status(500).json({ error: "Server error." });
+        }
+
+        const guacIp = summary["hostname"];
+
+        if (guacIp != instanceIp) {
+            logger.info(
+                {
+                    userId: userId,
+                    instanceIp: instanceIp,
+                    instanceId: guacName,
+                    requestId: req.id || null,
+                },
+                "Updating Guacamole connection IP",
+            );
+        }
+
+        await guacamole.updateConnectionIp(
+            guacName,
+            instanceOwnerId,
+            instanceIp,
+            guacConn.identifier,
+        );
         guacConn = await guacamole.getConnectionSummary(guacName);
     }
 

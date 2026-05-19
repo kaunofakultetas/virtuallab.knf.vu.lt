@@ -55,3 +55,9 @@ CREATE TABLE IF NOT EXISTS instances (
     FOREIGN KEY (owner_id) REFERENCES users(vu_id) ON DELETE SET NULL,
     FOREIGN KEY (template_id) REFERENCES templates(id) ON DELETE SET NULL
 );
+
+CREATE TABLE IF NOT EXISTS metadata (
+  key        TEXT PRIMARY KEY,
+  value      JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

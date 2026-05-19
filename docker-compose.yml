@@ -1,6 +1,16 @@
 name: virtual-lab
 
 services:
+    frontend:
+        # TODO: Change to build when prod-ready
+        image: node:22-alpine
+        container_name: frontend
+        working_dir: /app
+        command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+        volumes:
+            - ./frontend:/app
+        restart: unless-stopped
+
     backend:
         build:
             context: ./backend
