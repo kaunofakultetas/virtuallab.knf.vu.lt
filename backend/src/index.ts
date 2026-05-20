@@ -4,6 +4,7 @@ import { metadata } from "@/utils/metadata";
 import { authRouter } from "@/routes/auth.route";
 import { instancesRouter } from "@/routes/instances.route";
 import { templatesRouter } from "@/routes/templates.route";
+import { guacamoleRouter } from "@/routes/guacamole.route";
 import { Instances } from "@/controllers/instances.controller";
 import { loggerMiddleware } from "@/middleware/logger.middleware";
 import { requestIdMiddleware } from "@/middleware/request-id.middleware";
@@ -37,6 +38,7 @@ app.get("/health", (req: Request, res: Response) => {
 app.use("/auth", authRouter);
 app.use("/templates", templatesRouter);
 app.use("/instances", instancesRouter);
+app.use("/guacamole", guacamoleRouter);
 
 app.use(errorHandlerMiddleware);
 

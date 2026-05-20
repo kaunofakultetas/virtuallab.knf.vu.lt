@@ -8,12 +8,12 @@ import Typography from "@mui/material/Typography";
 import DashboardOutlinedIcon from "@mui/icons-material/DashboardOutlined";
 import ComputerOutlinedIcon from "@mui/icons-material/ComputerOutlined";
 import PeopleOutlinedIcon from "@mui/icons-material/PeopleOutlined";
-import CastConnectedOutlinedIcon from "@mui/icons-material/CastConnectedOutlined";
 import LogoutOutlinedIcon from "@mui/icons-material/LogoutOutlined";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import AdminPanelSettingsOutlinedIcon from "@mui/icons-material/AdminPanelSettingsOutlined";
 import ViewModuleOutlinedIcon from "@mui/icons-material/ViewModuleOutlined";
+import DesktopWindowsOutlinedIcon from "@mui/icons-material/DesktopWindowsOutlined";
 import { useAuth } from "@/utils/AuthGuard";
 
 const SIDEBAR_W = 220;
@@ -54,16 +54,6 @@ const NAV: NavSection[] = [
         ],
     },
     {
-        section: "Connections",
-        items: [
-            {
-                label: "Sessions",
-                icon: <CastConnectedOutlinedIcon fontSize="small" />,
-                path: "/sessions",
-            },
-        ],
-    },
-    {
         section: "Admin",
         adminOnly: true,
         items: [
@@ -81,6 +71,11 @@ const NAV: NavSection[] = [
                 label: "Templates",
                 icon: <ViewModuleOutlinedIcon fontSize="small" />,
                 path: "/admin/templates",
+            },
+            {
+                label: "Guacamole",
+                icon: <DesktopWindowsOutlinedIcon fontSize="small" />,
+                path: "/admin/guacamole",
             },
         ],
     },

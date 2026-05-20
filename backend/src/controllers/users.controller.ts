@@ -72,6 +72,38 @@ export const Users = {
         return true;
     },
 
+    async update(
+        vu_id: string,
+        updates: { password?: string; role?: string },
+    ): Promise<{ vu_id: string; role: string }> {
+        const fields: string[] = [];
+        const values: any[] = [];
+        let idx = 1;
+
+        if (updates.password) {
+            const hashedPassword = await bcrypt.hash(updates.password, 10);
+            fields.push(`password = $${idx++}`);
+            values.push(hashedPassword);
+        }
+
+        if (updates.role) {
+            fields.push(`role = $${idx++}`);
+            values.push(updates.role);
+        }
+
+        if (fields.length === 0) {
+            throw new Error("No fields to update");
+        }
+
+        values.push(vu_id);
+        const res = await pool.query(
+            `UPDATE users SET ${fields.join(", ")} WHERE vu_id = $${idx} RETURNING vu_id, role`,
+            values,
+        );
+
+        return res.rows[0];
+    },
+
     async getAll(): Promise<ExtendedUser[]> {
         const res = await pool.query(
             `SELECT vu_id, role, last_login, created_at FROM users`,

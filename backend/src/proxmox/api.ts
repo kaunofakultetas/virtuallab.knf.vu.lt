@@ -306,6 +306,15 @@ export class ProxmoxClient {
         );
     }
 
+    async deleteVM(vmid: string): Promise<string> {
+        // stop=1 forcibly powers off before deletion so it works even on running VMs
+        return this.request<string>(
+            "DELETE",
+            `/nodes/${this.nodeName}/qemu/${vmid}`,
+            { query: { purge: "1", "destroy-unreferenced-disks": "1" } },
+        );
+    }
+
     async getClusterResources(
         type: "vm" | "storage" | "node" | "sdn",
     ): Promise<any> {

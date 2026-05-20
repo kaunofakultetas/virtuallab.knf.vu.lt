@@ -8,6 +8,10 @@ import PageLayout from "@/pages/PageLayout";
 import ErrorPage from "@/pages/ErrorPage";
 import AdminTemplates from "@/pages/admin/Templates";
 import AdminTemplateDetails from "@/pages/admin/TemplateDetails";
+import AdminUsers from "@/pages/admin/Users";
+import AdminGuacamole from "@/pages/admin/Guacamole";
+import AdminInstances from "@/pages/admin/AdminInstances";
+import Instances from "@/pages/Instances";
 import { AuthProvider, RequireAuth, RequireAdmin } from "@/utils/AuthGuard";
 import { extractTemplate, extractTemplates } from "@/utils/templates";
 
@@ -92,6 +96,10 @@ export const router = createBrowserRouter([
         errorElement: <ErrorPage />,
         children: [
             { index: true, element: <Index /> },
+            {
+                path: "instances",
+                element: <Instances />,
+            },
             { path: "home", element: <About /> },
             {
                 path: "admin/templates",
@@ -110,6 +118,30 @@ export const router = createBrowserRouter([
                     </RequireAdmin>
                 ),
                 loader: templateDetailsLoader,
+            },
+            {
+                path: "admin/users",
+                element: (
+                    <RequireAdmin>
+                        <AdminUsers />
+                    </RequireAdmin>
+                ),
+            },
+            {
+                path: "admin/instances",
+                element: (
+                    <RequireAdmin>
+                        <AdminInstances />
+                    </RequireAdmin>
+                ),
+            },
+            {
+                path: "admin/guacamole",
+                element: (
+                    <RequireAdmin>
+                        <AdminGuacamole />
+                    </RequireAdmin>
+                ),
             },
         ],
     },

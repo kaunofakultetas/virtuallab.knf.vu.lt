@@ -1,4 +1,4 @@
-export type GuacamoleHTTPMethod = "GET" | "POST" | "PATCH" | "PUT";
+export type GuacamoleHTTPMethod = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
 
 export interface GuacamoleClientConfig {
     baseUrl: string;

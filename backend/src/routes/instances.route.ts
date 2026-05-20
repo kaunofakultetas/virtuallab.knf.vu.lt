@@ -128,7 +128,23 @@ router.post(
 );
 
 // Deletes instance by ID, only if it belongs to current user or user is admin
-router.delete("/:instanceId", isAuthenticated, (req, res) => {});
+router.delete("/:instanceId", isAuthenticated, async (req, res) => {
+    if (!req.user?.vu_id) return res.status(401).json({ error: "Unauthorized" });
+
+    const instanceId = parseInt(req.params.instanceId as string);
+    if (isNaN(instanceId)) return res.status(400).json({ error: "Invalid instance ID" });
+
+    const hasAccess = await Instances.hasAccessTo(req.user.vu_id, instanceId);
+    if (!hasAccess) return res.status(403).json({ error: "Unauthorized" });
+
+    try {
+        await Instances.deleteInstance(instanceId);
+        return res.json({ message: "Instance deleted" });
+    } catch (err) {
+        logger.error({ err, instanceId }, "Error deleting instance");
+        return res.status(500).json({ error: "Failed to delete instance" });
+    }
+});
 
 // Start instance by ID, only if it belongs to current user or user is admin
 router.get("/:instanceId/start", isAuthenticated, async (req, res) => {
@@ -218,8 +234,8 @@ router.get("/:instanceId/session", isAuthenticated, async (req, res) => {
 
     if (instanceIp == null) {
         return res
-            .status(500)
-            .json({ error: "Timed out, is server starting up?" });
+            .status(503)
+            .json({ error: "VM is still starting up — please try again in a moment." });
     }
 
     // Does guacamole connection to the machine exist?
@@ -241,7 +257,7 @@ router.get("/:instanceId/session", isAuthenticated, async (req, res) => {
         guacConn = await guacamole.getConnectionSummary(guacName);
     } else {
         // Check if IP is up to date
-        const summary = await guacamole.fetchConnectionParams(guacName);
+        const summary = await guacamole.fetchConnectionParams(guacConn.identifier);
 
         if (!summary) {
             logger.error(

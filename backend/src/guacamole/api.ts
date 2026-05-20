@@ -536,4 +536,12 @@ export class GuacamoleClient {
         const cData = await this.getConnectionCache();
         return cData[connectionName] ? cData[connectionName] : null;
     }
+
+    async deleteConnection(identifier: string): Promise<void> {
+        await this.request<void>(
+            "DELETE",
+            `/api/session/data/${this.dataSource}/connections/${identifier}`,
+        );
+        this.connectionCacheOutdated = true;
+    }
 }

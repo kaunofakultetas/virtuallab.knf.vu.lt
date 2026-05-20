@@ -1,4 +1,5 @@
 import { proxmox } from "@/proxmox";
+import { guacamole } from "@/guacamole";
 import { Instance } from "@/types/instances";
 import { Template } from "@/types/templates";
 import { pool } from "@/utils/db";
@@ -40,14 +41,23 @@ export const Instances = {
     },
 
     getInsideNetIPv4: async (proxmoxId: string): Promise<string | null> => {
-        const timeoutMs = 20_000;
+        const timeoutMs = 60_000;
         const intervalMs = 2_000;
         const deadline = Date.now() + timeoutMs;
 
         while (Date.now() < deadline) {
-            const ips = await Instances.getIPv4(proxmoxId);
-            const match = ips?.find((ip) => ip.startsWith("10.10."));
-            if (match) return match;
+            try {
+                const ips = await Instances.getIPv4(proxmoxId);
+                const match = ips?.find((ip) => ip.startsWith("10.10."));
+                if (match) return match;
+            } catch (err: any) {
+                const msg: string =
+                    err?.details?.message ?? err?.message ?? "";
+                const isTransient =
+                    /guest agent is not running/i.test(msg) ||
+                    /vm \d+ is not running/i.test(msg);
+                if (!isTransient) throw err;
+            }
 
             const remaining = deadline - Date.now();
             if (remaining <= 0) break;
@@ -133,6 +143,34 @@ export const Instances = {
         proxmox.startVM(newId).then(() => {});
 
         return sqlResp.rows[0].id;
+    },
+
+    deleteInstance: async (instanceId: number): Promise<void> => {
+        const instance = await Instances.getById(instanceId);
+        if (!instance) throw new Error("Instance not found");
+
+        // 1. Stop then delete from Proxmox (stop=1 handles running VMs gracefully)
+        try {
+            await proxmox.stopVM(instance.proxmox_id);
+        } catch (err) {
+            logger.warn({ err, proxmox_id: instance.proxmox_id }, "Could not stop VM before deletion (may already be stopped)");
+        }
+
+        const deleteTask = await proxmox.deleteVM(instance.proxmox_id);
+        await proxmox.waitForTaskCompletion(deleteTask);
+
+        // 2. Delete Guacamole connection (connection name == instance id string)
+        try {
+            const conn = await guacamole.getConnectionSummary(String(instanceId));
+            if (conn?.identifier) {
+                await guacamole.deleteConnection(conn.identifier);
+            }
+        } catch (err) {
+            logger.warn({ err, instanceId }, "Could not delete Guacamole connection (may not exist)");
+        }
+
+        // 3. Remove from DB
+        await pool.query(`DELETE FROM instances WHERE id = $1`, [instanceId]);
     },
 
     updateRuntimeHours: async (
