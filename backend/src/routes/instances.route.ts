@@ -38,6 +38,18 @@ router.get("/all", isAuthenticated, isAdmin, (req, res) => {
         });
 });
 
+// Gets all currently running VM instances from Proxmox, admin only (view-only)
+router.get("/all/running", isAuthenticated, isAdmin, async (_req, res) => {
+    try {
+        const vms = await proxmox.getVms();
+        const running = vms.filter((vm) => vm.status === "running");
+        return res.json(running);
+    } catch (err) {
+        logger.error({ err }, "Error getting running Proxmox instances");
+        return res.status(500).json({ message: "Internal server error" });
+    }
+});
+
 // Gets instance by ID, only if it belongs to current user or user is admin
 router.get("/:instanceId", isAuthenticated, (req, res) => {
     if (!req.user) {
@@ -129,10 +141,12 @@ router.post(
 
 // Deletes instance by ID, only if it belongs to current user or user is admin
 router.delete("/:instanceId", isAuthenticated, async (req, res) => {
-    if (!req.user?.vu_id) return res.status(401).json({ error: "Unauthorized" });
+    if (!req.user?.vu_id)
+        return res.status(401).json({ error: "Unauthorized" });
 
     const instanceId = parseInt(req.params.instanceId as string);
-    if (isNaN(instanceId)) return res.status(400).json({ error: "Invalid instance ID" });
+    if (isNaN(instanceId))
+        return res.status(400).json({ error: "Invalid instance ID" });
 
     const hasAccess = await Instances.hasAccessTo(req.user.vu_id, instanceId);
     if (!hasAccess) return res.status(403).json({ error: "Unauthorized" });
@@ -145,6 +159,44 @@ router.delete("/:instanceId", isAuthenticated, async (req, res) => {
         return res.status(500).json({ error: "Failed to delete instance" });
     }
 });
+
+// Set whether an instance is expirable (admin only)
+router.patch(
+    "/:instanceId/expirable",
+    isAuthenticated,
+    isAdmin,
+    async (req, res) => {
+        const instanceId = parseInt(req.params.instanceId as string);
+        if (isNaN(instanceId)) {
+            return res.status(400).json({ error: "Invalid instance ID" });
+        }
+
+        const expirable = req.body?.expirable;
+        if (typeof expirable !== "boolean") {
+            return res
+                .status(400)
+                .json({ error: "expirable must be a boolean" });
+        }
+
+        const instance = await Instances.getById(instanceId);
+        if (!instance) {
+            return res.status(404).json({ error: "Instance not found" });
+        }
+
+        try {
+            await Instances.setExpirable(instanceId, expirable);
+            return res.status(200).json({ ok: true });
+        } catch (err) {
+            logger.error(
+                { err, instanceId, expirable },
+                "Error setting instance expirable state",
+            );
+            return res
+                .status(500)
+                .json({ error: "Failed to update expirable state" });
+        }
+    },
+);
 
 // Start instance by ID, only if it belongs to current user or user is admin
 router.get("/:instanceId/start", isAuthenticated, async (req, res) => {
@@ -233,9 +285,9 @@ router.get("/:instanceId/session", isAuthenticated, async (req, res) => {
     const instanceIp = await Instances.getInsideNetIPv4(instance.proxmox_id);
 
     if (instanceIp == null) {
-        return res
-            .status(503)
-            .json({ error: "VM is still starting up — please try again in a moment." });
+        return res.status(503).json({
+            error: "VM is still starting up — please try again in a moment.",
+        });
     }
 
     // Does guacamole connection to the machine exist?
@@ -257,7 +309,9 @@ router.get("/:instanceId/session", isAuthenticated, async (req, res) => {
         guacConn = await guacamole.getConnectionSummary(guacName);
     } else {
         // Check if IP is up to date
-        const summary = await guacamole.fetchConnectionParams(guacConn.identifier);
+        const summary = await guacamole.fetchConnectionParams(
+            guacConn.identifier,
+        );
 
         if (!summary) {
             logger.error(

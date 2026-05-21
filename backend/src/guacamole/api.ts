@@ -198,7 +198,11 @@ export class GuacamoleClient {
                 return parsed;
             } catch (err) {
                 const lastAttempt = attempt === attempts;
-                if (lastAttempt) throw err;
+                const isClientError =
+                    err instanceof GuacamoleApiError &&
+                    err.status >= 400 &&
+                    err.status < 500;
+                if (lastAttempt || isClientError) throw err;
 
                 logger.warn(
                     { err, attempt, method, path },
@@ -221,40 +225,34 @@ export class GuacamoleClient {
     }
 
     async getUser(username: string): Promise<GuacamoleUser | null> {
-        const resp: Record<string, any> = await this.request<
-            Record<string, any>
-        >("GET", `/api/session/data/${this.dataSource}/users/${username}`);
-
-        if (resp["error"]) {
-            // User doesnt exist
-            if (resp["error"] == "Internal Server Error") return null;
-
-            throw new GuacamoleApiError(
-                `Guacamole getUser failed: ${resp["error"]}`,
-                500,
+        try {
+            return await this.request<GuacamoleUser>(
+                "GET",
                 `/api/session/data/${this.dataSource}/users/${username}`,
-                resp["error"],
             );
+        } catch (err) {
+            if (err instanceof GuacamoleApiError && err.status === 404) {
+                return null;
+            }
+            throw err;
         }
-
-        return resp as GuacamoleUser;
     }
 
     async createUser(
         username: string,
         password: string,
     ): Promise<GuacamoleUser> {
-        const payload: Record<string, string> = {
+        const payload: Record<string, unknown> = {
             username: username,
             password: password,
-            attributes: JSON.stringify({
+            attributes: {
                 expired: "",
                 "access-window-start": "",
                 "access-window-end": "",
                 "valid-from": "",
                 "valid-until": "",
                 timezone: null,
-            }),
+            },
         };
 
         return this.request<GuacamoleUser>(

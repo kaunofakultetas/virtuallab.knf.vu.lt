@@ -14,6 +14,7 @@ import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import AdminPanelSettingsOutlinedIcon from "@mui/icons-material/AdminPanelSettingsOutlined";
 import ViewModuleOutlinedIcon from "@mui/icons-material/ViewModuleOutlined";
 import DesktopWindowsOutlinedIcon from "@mui/icons-material/DesktopWindowsOutlined";
+import MonitorHeartOutlinedIcon from "@mui/icons-material/MonitorHeartOutlined";
 import { useAuth } from "@/utils/AuthGuard";
 
 const SIDEBAR_W = 220;
@@ -76,6 +77,11 @@ const NAV: NavSection[] = [
                 label: "Guacamole",
                 icon: <DesktopWindowsOutlinedIcon fontSize="small" />,
                 path: "/admin/guacamole",
+            },
+            {
+                label: "Proxmox Dashboard",
+                icon: <MonitorHeartOutlinedIcon fontSize="small" />,
+                path: "/admin/proxmox-dashboard",
             },
         ],
     },

@@ -51,8 +51,7 @@ export const Instances = {
                 const match = ips?.find((ip) => ip.startsWith("10.10."));
                 if (match) return match;
             } catch (err: any) {
-                const msg: string =
-                    err?.details?.message ?? err?.message ?? "";
+                const msg: string = err?.details?.message ?? err?.message ?? "";
                 const isTransient =
                     /guest agent is not running/i.test(msg) ||
                     /vm \d+ is not running/i.test(msg);
@@ -151,9 +150,13 @@ export const Instances = {
 
         // 1. Stop then delete from Proxmox (stop=1 handles running VMs gracefully)
         try {
-            await proxmox.stopVM(instance.proxmox_id);
+            const stopTask = await proxmox.stopVM(instance.proxmox_id);
+            await proxmox.waitForTaskCompletion(stopTask);
         } catch (err) {
-            logger.warn({ err, proxmox_id: instance.proxmox_id }, "Could not stop VM before deletion (may already be stopped)");
+            logger.warn(
+                { err, proxmox_id: instance.proxmox_id },
+                "Could not stop VM before deletion (may already be stopped)",
+            );
         }
 
         const deleteTask = await proxmox.deleteVM(instance.proxmox_id);
@@ -161,12 +164,17 @@ export const Instances = {
 
         // 2. Delete Guacamole connection (connection name == instance id string)
         try {
-            const conn = await guacamole.getConnectionSummary(String(instanceId));
+            const conn = await guacamole.getConnectionSummary(
+                String(instanceId),
+            );
             if (conn?.identifier) {
                 await guacamole.deleteConnection(conn.identifier);
             }
         } catch (err) {
-            logger.warn({ err, instanceId }, "Could not delete Guacamole connection (may not exist)");
+            logger.warn(
+                { err, instanceId },
+                "Could not delete Guacamole connection (may not exist)",
+            );
         }
 
         // 3. Remove from DB
@@ -188,6 +196,49 @@ export const Instances = {
                 [hoursFromNow, instanceId],
             );
         }
+    },
+
+    setExpirable: async (instanceId: number, expirable: boolean) => {
+        if (expirable) {
+            await pool.query(
+                `UPDATE instances
+                 SET run_until = COALESCE(run_until, NOW() + INTERVAL '3 hours')
+                 WHERE id = $1`,
+                [instanceId],
+            );
+        } else {
+            await pool.query(
+                `UPDATE instances SET run_until = NULL WHERE id = $1`,
+                [instanceId],
+            );
+        }
+    },
+
+    removeExpiredInstances: async (): Promise<number> => {
+        const res = await pool.query<{ id: number }>(
+            `SELECT id
+             FROM instances
+             WHERE run_until IS NOT NULL
+               AND run_until <= NOW()`,
+        );
+
+        if (res.rowCount === 0) return 0;
+
+        let deletedCount = 0;
+
+        for (const row of res.rows) {
+            try {
+                await Instances.deleteInstance(row.id);
+                deletedCount += 1;
+            } catch (err) {
+                logger.error(
+                    { err, instanceId: row.id },
+                    "Failed to remove expired instance",
+                );
+            }
+        }
+
+        return deletedCount;
     },
 
     fetchAndUpdateStatuses: async () => {

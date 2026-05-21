@@ -35,6 +35,8 @@ import AddOutlinedIcon from "@mui/icons-material/AddOutlined";
 import DeleteOutlinedIcon from "@mui/icons-material/DeleteOutlined";
 import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined";
 import type { Instance, Template } from "@/types/instances";
+import Switch from "@mui/material/Switch";
+import FormControlLabel from "@mui/material/FormControlLabel";
 
 type TypeFilter = "all" | "student_vm" | "lab_vm";
 
@@ -68,19 +70,27 @@ export default function AdminInstances() {
     } | null>(null);
 
     const [createOpen, setCreateOpen] = useState(false);
-    const [selectedTemplateId, setSelectedTemplateId] = useState<number | "">("");
+    const [selectedTemplateId, setSelectedTemplateId] = useState<number | "">(
+        "",
+    );
     const [createLoading, setCreateLoading] = useState(false);
 
-    const [actionLoading, setActionLoading] = useState<Record<string, boolean>>({});
+    const [actionLoading, setActionLoading] = useState<Record<string, boolean>>(
+        {},
+    );
     const [deletingId, setDeletingId] = useState<string | null>(null);
     const [copyingIpId, setCopyingIpId] = useState<string | null>(null);
 
     const prevInstancesRef = useRef<Instance[]>([]);
-    const fetchInstancesRef = useRef<((showLoading?: boolean) => Promise<void>) | null>(null);
+    const fetchInstancesRef = useRef<
+        ((showLoading?: boolean) => Promise<void>) | null
+    >(null);
 
     const templateMap = useRef<Record<number, Template>>({});
     useEffect(() => {
-        templateMap.current = Object.fromEntries(templates.map((t) => [t.id, t]));
+        templateMap.current = Object.fromEntries(
+            templates.map((t) => [t.id, t]),
+        );
     }, [templates]);
 
     fetchInstancesRef.current = async (showLoading = true) => {
@@ -106,7 +116,8 @@ export default function AdminInstances() {
                 setInstances(next);
             }
         } catch (err) {
-            if (showLoading) setError(getErrorMessage(err, "Failed to load instances."));
+            if (showLoading)
+                setError(getErrorMessage(err, "Failed to load instances."));
         } finally {
             if (showLoading) setFetching(false);
         }
@@ -132,7 +143,10 @@ export default function AdminInstances() {
         }
     };
 
-    const withAction = async (instanceId: string, action: () => Promise<void>) => {
+    const withAction = async (
+        instanceId: string,
+        action: () => Promise<void>,
+    ) => {
         setActionLoading((prev) => ({ ...prev, [instanceId]: true }));
         try {
             await action();
@@ -165,50 +179,109 @@ export default function AdminInstances() {
     const handleRenew = (instance: Instance) =>
         withAction(String(instance.id), async () => {
             await axios.get(`/api/instances/${instance.id}/renew`);
-            setSnackbar({ message: "Runtime extended by 3 hours.", severity: "success" });
+            setSnackbar({
+                message: "Runtime extended by 3 hours.",
+                severity: "success",
+            });
             await fetchInstancesRef.current?.(false);
         });
 
     const handleConnect = async (instance: Instance) => {
-        setActionLoading((prev) => ({ ...prev, [`session-${instance.id}`]: true }));
+        setActionLoading((prev) => ({
+            ...prev,
+            [`session-${instance.id}`]: true,
+        }));
         try {
-            const res = await axios.get<{ url: string }>(`/api/instances/${instance.id}/session`);
+            const res = await axios.get<{ url: string }>(
+                `/api/instances/${instance.id}/session`,
+            );
             if (res.data.url) window.open(res.data.url, "_blank");
         } catch (err) {
-            setSnackbar({ message: getErrorMessage(err, "Failed to open session."), severity: "error" });
+            setSnackbar({
+                message: getErrorMessage(err, "Failed to open session."),
+                severity: "error",
+            });
         } finally {
-            setActionLoading((prev) => ({ ...prev, [`session-${instance.id}`]: false }));
+            setActionLoading((prev) => ({
+                ...prev,
+                [`session-${instance.id}`]: false,
+            }));
         }
     };
 
     const handleCopyIp = async (instance: Instance) => {
         setCopyingIpId(String(instance.id));
         try {
-            const res = await axios.get<string[]>(`/api/instances/${instance.id}/ip`);
+            const res = await axios.get<string[]>(
+                `/api/instances/${instance.id}/ip`,
+            );
             const ip = res.data.find((a) => a.startsWith("10.10."));
             if (!ip) {
-                setSnackbar({ message: "No internal IP found (10.10.x.x). Is the VM running?", severity: "error" });
+                setSnackbar({
+                    message:
+                        "No internal IP found (10.10.x.x). Is the VM running?",
+                    severity: "error",
+                });
                 return;
             }
             await navigator.clipboard.writeText(ip);
             setSnackbar({ message: `Copied: ${ip}`, severity: "success" });
         } catch (err) {
-            setSnackbar({ message: getErrorMessage(err, "Failed to get IP."), severity: "error" });
+            setSnackbar({
+                message: getErrorMessage(err, "Failed to get IP."),
+                severity: "error",
+            });
         } finally {
             setCopyingIpId(null);
         }
     };
 
+    const handleToggleExpirable = (instance: Instance, expirable: boolean) =>
+        withAction(`expirable-${instance.id}`, async () => {
+            await axios.patch(`/api/instances/${instance.id}/expirable`, {
+                expirable,
+            });
+            setInstances((prev) =>
+                prev.map((i) =>
+                    i.id === instance.id
+                        ? {
+                              ...i,
+                              run_until: expirable
+                                  ? (i.run_until ??
+                                    new Date(
+                                        Date.now() + 3 * 60 * 60 * 1000,
+                                    ).toISOString())
+                                  : null,
+                          }
+                        : i,
+                ),
+            );
+            setSnackbar({
+                message: expirable
+                    ? "Instance is now expirable."
+                    : "Instance is now non-expirable.",
+                severity: "success",
+            });
+        });
+
     const handleDelete = async (instance: Instance) => {
         const label = instance.name ?? `#${instance.id}`;
-        if (!window.confirm(`Delete instance "${label}"? This will permanently destroy the VM.`)) return;
+        if (
+            !window.confirm(
+                `Delete instance "${label}"? This will permanently destroy the VM.`,
+            )
+        )
+            return;
         setDeletingId(String(instance.id));
         try {
             await axios.delete(`/api/instances/${instance.id}`);
             setInstances((prev) => prev.filter((i) => i.id !== instance.id));
             setSnackbar({ message: "Instance deleted.", severity: "success" });
         } catch (err) {
-            setSnackbar({ message: getErrorMessage(err, "Failed to delete instance."), severity: "error" });
+            setSnackbar({
+                message: getErrorMessage(err, "Failed to delete instance."),
+                severity: "error",
+            });
         } finally {
             setDeletingId(null);
         }
@@ -218,13 +291,21 @@ export default function AdminInstances() {
         if (!selectedTemplateId) return;
         setCreateLoading(true);
         try {
-            await axios.post("/api/instances", { template_id: selectedTemplateId });
-            setSnackbar({ message: "Instance created successfully.", severity: "success" });
+            await axios.post("/api/instances", {
+                template_id: selectedTemplateId,
+            });
+            setSnackbar({
+                message: "Instance created successfully.",
+                severity: "success",
+            });
             setCreateOpen(false);
             setSelectedTemplateId("");
             await fetchInstancesRef.current?.(false);
         } catch (err) {
-            setSnackbar({ message: getErrorMessage(err, "Failed to create instance."), severity: "error" });
+            setSnackbar({
+                message: getErrorMessage(err, "Failed to create instance."),
+                severity: "error",
+            });
         } finally {
             setCreateLoading(false);
         }
@@ -246,12 +327,23 @@ export default function AdminInstances() {
         return tmpl?.type === typeFilter;
     });
 
-    const studentCount = instances.filter((i) => templateMap.current[i.template_id]?.type === "student_vm").length;
-    const labCount = instances.filter((i) => templateMap.current[i.template_id]?.type === "lab_vm").length;
+    const studentCount = instances.filter(
+        (i) => templateMap.current[i.template_id]?.type === "student_vm",
+    ).length;
+    const labCount = instances.filter(
+        (i) => templateMap.current[i.template_id]?.type === "lab_vm",
+    ).length;
 
     return (
         <Stack spacing={2}>
-            <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 2 }}>
+            <Box
+                sx={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "flex-start",
+                    gap: 2,
+                }}
+            >
                 <Box>
                     <Typography variant="h5" sx={{ fontWeight: 700 }}>
                         All Instances
@@ -273,11 +365,17 @@ export default function AdminInstances() {
             <ToggleButtonGroup
                 value={typeFilter}
                 exclusive
-                onChange={(_e, v) => { if (v) setTypeFilter(v); }}
+                onChange={(_e, v) => {
+                    if (v) setTypeFilter(v);
+                }}
                 size="small"
             >
-                <ToggleButton value="all">All ({instances.length})</ToggleButton>
-                <ToggleButton value="student_vm">Student VM ({studentCount})</ToggleButton>
+                <ToggleButton value="all">
+                    All ({instances.length})
+                </ToggleButton>
+                <ToggleButton value="student_vm">
+                    Student VM ({studentCount})
+                </ToggleButton>
                 <ToggleButton value="lab_vm">Lab VM ({labCount})</ToggleButton>
             </ToggleButtonGroup>
 
@@ -300,7 +398,13 @@ export default function AdminInstances() {
                         {fetching ? (
                             <TableRow>
                                 <TableCell colSpan={7}>
-                                    <Box sx={{ display: "flex", justifyContent: "center", py: 3 }}>
+                                    <Box
+                                        sx={{
+                                            display: "flex",
+                                            justifyContent: "center",
+                                            py: 3,
+                                        }}
+                                    >
                                         <CircularProgress size={24} />
                                     </Box>
                                 </TableCell>
@@ -308,25 +412,36 @@ export default function AdminInstances() {
                         ) : filteredInstances.length === 0 ? (
                             <TableRow>
                                 <TableCell colSpan={7}>
-                                    <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>
+                                    <Typography
+                                        variant="body2"
+                                        color="text.secondary"
+                                        sx={{ py: 2 }}
+                                    >
                                         No instances found.
                                     </Typography>
                                 </TableCell>
                             </TableRow>
                         ) : (
                             filteredInstances.map((instance) => {
-                                const tmpl = templateMap.current[instance.template_id];
+                                const tmpl =
+                                    templateMap.current[instance.template_id];
                                 const isLoading =
                                     actionLoading[String(instance.id)] ||
                                     actionLoading[`session-${instance.id}`];
-                                const isDeleting = deletingId === String(instance.id);
-                                const isCopyingIp = copyingIpId === String(instance.id);
+                                const isDeleting =
+                                    deletingId === String(instance.id);
+                                const isCopyingIp =
+                                    copyingIpId === String(instance.id);
 
                                 return (
                                     <TableRow key={instance.id}>
                                         <TableCell>
-                                            <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                                                {instance.name ?? `Instance ${instance.id}`}{" "}
+                                            <Typography
+                                                variant="body2"
+                                                sx={{ fontWeight: 600 }}
+                                            >
+                                                {instance.name ??
+                                                    `Instance ${instance.id}`}{" "}
                                                 <Typography
                                                     component="span"
                                                     variant="caption"
@@ -337,7 +452,10 @@ export default function AdminInstances() {
                                             </Typography>
                                         </TableCell>
                                         <TableCell>
-                                            <Typography variant="body2" color="text.secondary">
+                                            <Typography
+                                                variant="body2"
+                                                color="text.secondary"
+                                            >
                                                 {instance.owner_id}
                                             </Typography>
                                         </TableCell>
@@ -345,12 +463,21 @@ export default function AdminInstances() {
                                             {tmpl ? (
                                                 <Chip
                                                     size="small"
-                                                    label={typeLabel[tmpl.type] ?? tmpl.type}
-                                                    color={typeColor[tmpl.type] ?? "default"}
+                                                    label={
+                                                        typeLabel[tmpl.type] ??
+                                                        tmpl.type
+                                                    }
+                                                    color={
+                                                        typeColor[tmpl.type] ??
+                                                        "default"
+                                                    }
                                                     variant="outlined"
                                                 />
                                             ) : (
-                                                <Typography variant="caption" color="text.disabled">
+                                                <Typography
+                                                    variant="caption"
+                                                    color="text.disabled"
+                                                >
                                                     —
                                                 </Typography>
                                             )}
@@ -358,19 +485,34 @@ export default function AdminInstances() {
                                         <TableCell>
                                             <Chip
                                                 size="small"
-                                                label={instance.status ?? "unknown"}
-                                                color={statusColor[instance.status ?? "unknown"] ?? "default"}
+                                                label={
+                                                    instance.status ?? "unknown"
+                                                }
+                                                color={
+                                                    statusColor[
+                                                        instance.status ??
+                                                            "unknown"
+                                                    ] ?? "default"
+                                                }
                                             />
                                         </TableCell>
                                         <TableCell>
-                                            <Typography variant="body2" color="text.secondary">
-                                                {formatRunUntil(instance.run_until)}
+                                            <Typography
+                                                variant="body2"
+                                                color="text.secondary"
+                                            >
+                                                {formatRunUntil(
+                                                    instance.run_until,
+                                                )}
                                             </Typography>
                                         </TableCell>
                                         <TableCell>
                                             <Typography
                                                 variant="caption"
-                                                sx={{ fontFamily: "monospace", color: "text.secondary" }}
+                                                sx={{
+                                                    fontFamily: "monospace",
+                                                    color: "text.secondary",
+                                                }}
                                             >
                                                 {instance.proxmox_id}
                                             </Typography>
@@ -382,11 +524,25 @@ export default function AdminInstances() {
                                                         <span>
                                                             <IconButton
                                                                 size="small"
-                                                                onClick={() => handleConnect(instance)}
-                                                                disabled={actionLoading[`session-${instance.id}`]}
+                                                                onClick={() =>
+                                                                    handleConnect(
+                                                                        instance,
+                                                                    )
+                                                                }
+                                                                disabled={
+                                                                    actionLoading[
+                                                                        `session-${instance.id}`
+                                                                    ]
+                                                                }
                                                             >
-                                                                {actionLoading[`session-${instance.id}`] ? (
-                                                                    <CircularProgress size={18} />
+                                                                {actionLoading[
+                                                                    `session-${instance.id}`
+                                                                ] ? (
+                                                                    <CircularProgress
+                                                                        size={
+                                                                            18
+                                                                        }
+                                                                    />
                                                                 ) : (
                                                                     <OpenInNewOutlinedIcon fontSize="small" />
                                                                 )}
@@ -397,8 +553,14 @@ export default function AdminInstances() {
                                                         <span>
                                                             <IconButton
                                                                 size="small"
-                                                                onClick={() => handleReboot(instance)}
-                                                                disabled={isLoading}
+                                                                onClick={() =>
+                                                                    handleReboot(
+                                                                        instance,
+                                                                    )
+                                                                }
+                                                                disabled={
+                                                                    isLoading
+                                                                }
                                                             >
                                                                 <RestartAltOutlinedIcon fontSize="small" />
                                                             </IconButton>
@@ -408,8 +570,14 @@ export default function AdminInstances() {
                                                         <span>
                                                             <IconButton
                                                                 size="small"
-                                                                onClick={() => handleStop(instance)}
-                                                                disabled={isLoading}
+                                                                onClick={() =>
+                                                                    handleStop(
+                                                                        instance,
+                                                                    )
+                                                                }
+                                                                disabled={
+                                                                    isLoading
+                                                                }
                                                             >
                                                                 <StopOutlinedIcon fontSize="small" />
                                                             </IconButton>
@@ -422,7 +590,11 @@ export default function AdminInstances() {
                                                     <span>
                                                         <IconButton
                                                             size="small"
-                                                            onClick={() => handleStart(instance)}
+                                                            onClick={() =>
+                                                                handleStart(
+                                                                    instance,
+                                                                )
+                                                            }
                                                             disabled={isLoading}
                                                         >
                                                             <PowerSettingsNewOutlinedIcon fontSize="small" />
@@ -434,11 +606,21 @@ export default function AdminInstances() {
                                                 <span>
                                                     <IconButton
                                                         size="small"
-                                                        onClick={() => handleCopyIp(instance)}
-                                                        disabled={isCopyingIp || instance.status !== "running"}
+                                                        onClick={() =>
+                                                            handleCopyIp(
+                                                                instance,
+                                                            )
+                                                        }
+                                                        disabled={
+                                                            isCopyingIp ||
+                                                            instance.status !==
+                                                                "running"
+                                                        }
                                                     >
                                                         {isCopyingIp ? (
-                                                            <CircularProgress size={18} />
+                                                            <CircularProgress
+                                                                size={18}
+                                                            />
                                                         ) : (
                                                             <ContentCopyOutlinedIcon fontSize="small" />
                                                         )}
@@ -449,11 +631,46 @@ export default function AdminInstances() {
                                                 <span>
                                                     <IconButton
                                                         size="small"
-                                                        onClick={() => handleRenew(instance)}
+                                                        onClick={() =>
+                                                            handleRenew(
+                                                                instance,
+                                                            )
+                                                        }
                                                         disabled={isLoading}
                                                     >
                                                         <UpdateOutlinedIcon fontSize="small" />
                                                     </IconButton>
+                                                </span>
+                                            </Tooltip>
+                                            <Tooltip
+                                                title={
+                                                    instance.run_until !== null
+                                                        ? "Expirable enabled"
+                                                        : "Non-expirable"
+                                                }
+                                            >
+                                                <span>
+                                                    <Switch
+                                                        size="small"
+                                                        checked={
+                                                            instance.run_until !==
+                                                            null
+                                                        }
+                                                        onChange={(
+                                                            _,
+                                                            checked,
+                                                        ) =>
+                                                            void handleToggleExpirable(
+                                                                instance,
+                                                                checked,
+                                                            )
+                                                        }
+                                                        disabled={Boolean(
+                                                            actionLoading[
+                                                                `expirable-${instance.id}`
+                                                            ],
+                                                        )}
+                                                    />
                                                 </span>
                                             </Tooltip>
                                             <Tooltip title="Delete">
@@ -461,11 +678,18 @@ export default function AdminInstances() {
                                                     <IconButton
                                                         size="small"
                                                         color="error"
-                                                        onClick={() => handleDelete(instance)}
+                                                        onClick={() =>
+                                                            handleDelete(
+                                                                instance,
+                                                            )
+                                                        }
                                                         disabled={isDeleting}
                                                     >
                                                         {isDeleting ? (
-                                                            <CircularProgress size={18} color="error" />
+                                                            <CircularProgress
+                                                                size={18}
+                                                                color="error"
+                                                            />
                                                         ) : (
                                                             <DeleteOutlinedIcon fontSize="small" />
                                                         )}
@@ -484,7 +708,10 @@ export default function AdminInstances() {
             {/* Create Instance Dialog */}
             <Dialog
                 open={createOpen}
-                onClose={() => { setCreateOpen(false); setSelectedTemplateId(""); }}
+                onClose={() => {
+                    setCreateOpen(false);
+                    setSelectedTemplateId("");
+                }}
                 maxWidth="sm"
                 fullWidth
             >
@@ -496,15 +723,28 @@ export default function AdminInstances() {
                             <Select
                                 value={selectedTemplateId}
                                 label="Template"
-                                onChange={(e) => setSelectedTemplateId(Number(e.target.value))}
+                                onChange={(e) =>
+                                    setSelectedTemplateId(
+                                        Number(e.target.value),
+                                    )
+                                }
                             >
                                 {templates.map((t) => (
                                     <MenuItem key={t.id} value={t.id}>
-                                        <Stack direction="row" spacing={1} alignItems="center">
+                                        <Stack
+                                            direction="row"
+                                            spacing={1}
+                                            alignItems="center"
+                                        >
                                             <Chip
                                                 size="small"
-                                                label={typeLabel[t.type] ?? t.type}
-                                                color={typeColor[t.type] ?? "default"}
+                                                label={
+                                                    typeLabel[t.type] ?? t.type
+                                                }
+                                                color={
+                                                    typeColor[t.type] ??
+                                                    "default"
+                                                }
                                                 variant="outlined"
                                                 sx={{ fontSize: 10 }}
                                             />
@@ -518,7 +758,10 @@ export default function AdminInstances() {
                 </DialogContent>
                 <DialogActions>
                     <Button
-                        onClick={() => { setCreateOpen(false); setSelectedTemplateId(""); }}
+                        onClick={() => {
+                            setCreateOpen(false);
+                            setSelectedTemplateId("");
+                        }}
                         disabled={createLoading}
                     >
                         Cancel
@@ -528,7 +771,11 @@ export default function AdminInstances() {
                         onClick={handleCreate}
                         disabled={!selectedTemplateId || createLoading}
                     >
-                        {createLoading ? <CircularProgress size={20} /> : "Create"}
+                        {createLoading ? (
+                            <CircularProgress size={20} />
+                        ) : (
+                            "Create"
+                        )}
                     </Button>
                 </DialogActions>
             </Dialog>
@@ -539,7 +786,11 @@ export default function AdminInstances() {
                 onClose={() => setSnackbar(null)}
             >
                 {snackbar && (
-                    <Alert onClose={() => setSnackbar(null)} severity={snackbar.severity} sx={{ width: "100%" }}>
+                    <Alert
+                        onClose={() => setSnackbar(null)}
+                        severity={snackbar.severity}
+                        sx={{ width: "100%" }}
+                    >
                         {snackbar.message}
                     </Alert>
                 )}

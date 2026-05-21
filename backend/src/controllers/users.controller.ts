@@ -1,4 +1,5 @@
 import { ExtendedUser, User, UserRole } from "@/types/auth";
+import { Instances } from "@/controllers/instances.controller";
 import { pool } from "@/utils/db";
 import { logger } from "@/utils/logger";
 import bcrypt from "bcryptjs";
@@ -68,6 +69,20 @@ export const Users = {
     },
 
     async delete(vu_id: string): Promise<boolean> {
+        const ownedInstances = await Instances.getAllForUser(vu_id);
+
+        for (const instance of ownedInstances) {
+            try {
+                await Instances.deleteInstance(instance.id);
+            } catch (err) {
+                logger.error(
+                    { err, vu_id, instanceId: instance.id },
+                    "Failed to delete user's instance before user deletion",
+                );
+                throw new Error("Failed to delete user instances");
+            }
+        }
+
         await pool.query(`DELETE FROM users WHERE vu_id = $1`, [vu_id]);
         return true;
     },

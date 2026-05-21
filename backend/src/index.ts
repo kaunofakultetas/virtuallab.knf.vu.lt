@@ -106,6 +106,23 @@ async function bootstrap() {
         );
         scheduler.addSimpleIntervalJob(updInstanceStJob);
 
+        // Task to remove expired instances (instances with run_until = NULL are non-expirable)
+        const removeExpiredInstancesJob = new SimpleIntervalJob(
+            { minutes: 1 },
+            new Task(
+                "remove expired instances",
+                async () => {
+                    const removed = await Instances.removeExpiredInstances();
+                    if (removed > 0) {
+                        logger.info({ removed }, "Removed expired instances");
+                    }
+                },
+                (err) =>
+                    logger.error(err, "Failed to remove expired instances"),
+            ),
+        );
+        scheduler.addSimpleIntervalJob(removeExpiredInstancesJob);
+
         server = app.listen(port, "0.0.0.0", () => {
             logger.info(`Server is running on http://0.0.0.0:${port}`);
         });
