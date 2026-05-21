@@ -6,6 +6,7 @@ import Avatar from "@mui/material/Avatar";
 import LogoutOutlinedIcon from "@mui/icons-material/LogoutOutlined";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useAuth } from "@/utils/AuthGuard";
+import { useNavigate } from "react-router-dom";
 import vuLogo from "@/assets/vuLogo.svg";
 
 interface NavbarProps {
@@ -14,6 +15,7 @@ interface NavbarProps {
 
 export function Navbar({ onLogout }: NavbarProps) {
     const auth = useAuth();
+    const navigate = useNavigate();
 
     return (
         <Box
@@ -29,7 +31,18 @@ export function Navbar({ onLogout }: NavbarProps) {
                 zIndex: 10,
             }}
         >
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+            <Box
+                onClick={() => navigate("/")}
+                sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 1.5,
+                    cursor: "pointer",
+                    borderRadius: 1,
+                    px: 0.5,
+                    "&:hover": { bgcolor: "rgba(255,255,255,0.1)" },
+                }}
+            >
                 <img
                     src={vuLogo}
                     alt="VU"

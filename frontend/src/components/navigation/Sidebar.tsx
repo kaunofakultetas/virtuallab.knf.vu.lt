@@ -15,6 +15,7 @@ import AdminPanelSettingsOutlinedIcon from "@mui/icons-material/AdminPanelSettin
 import ViewModuleOutlinedIcon from "@mui/icons-material/ViewModuleOutlined";
 import DesktopWindowsOutlinedIcon from "@mui/icons-material/DesktopWindowsOutlined";
 import MonitorHeartOutlinedIcon from "@mui/icons-material/MonitorHeartOutlined";
+import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
 import { useAuth } from "@/utils/AuthGuard";
 
 const SIDEBAR_W = 220;
@@ -82,6 +83,11 @@ const NAV: NavSection[] = [
                 label: "Proxmox Dashboard",
                 icon: <MonitorHeartOutlinedIcon fontSize="small" />,
                 path: "/admin/proxmox-dashboard",
+            },
+            {
+                label: "Settings",
+                icon: <TuneOutlinedIcon fontSize="small" />,
+                path: "/admin/settings",
             },
         ],
     },

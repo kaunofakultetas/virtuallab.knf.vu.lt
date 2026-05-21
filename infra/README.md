@@ -16,7 +16,7 @@ Create a Linux Bridge with the following configuration:
 
 Click "Apply Configuration".
 
-Enable DCHP for vmbr1 by running the following commands on the proxmox host shell:
+Enable DHCP for vmbr1 by running the following commands on the proxmox host shell:
 ```sh
 sudo apt install -y dnsmasq
 sudo tee /etc/dnsmasq.d/vmbr1.conf <<'EOF'
@@ -38,7 +38,7 @@ Create a Linux Bridge with the following configuration:
 
 Click "Apply Configuration".
 
-Enable DCHP for vmbr20 by running the following commands on the proxmox host shell:
+Enable DHCP for vmbr20 by running the following commands on the proxmox host shell:
 ```sh
 apt install -y dnsmasq
 cat >/etc/dnsmasq.d/vmbr20.conf <<'EOF'
@@ -63,3 +63,4 @@ Refer [here](./templates/README.md) for the build and template image creation in
 
 In Proxmox create a container with the ID 201. Install Ubuntu.
 Set static ip 10.10.10.100/24. Add NAT and forward 80, 443, 2222->22 ports to the VM.
+Clone the repository, run `./runUpdateThisStack.sh`.

@@ -31,6 +31,7 @@ import type { SelectChangeEvent } from "@mui/material/Select";
 import InputLabel from "@mui/material/InputLabel";
 import FormControl from "@mui/material/FormControl";
 import type { User, CreateUserResponse } from "@/types/users";
+import { getErrorMessage } from "@/utils/errors";
 
 const roleOptions = [
     { value: "student", label: "Student" },
@@ -626,15 +627,3 @@ export default function Users() {
     );
 }
 
-function getErrorMessage(err: unknown, fallback: string): string {
-    if (axios.isAxiosError(err)) {
-        return (
-            err.response?.data?.error ??
-            err.response?.data?.message ??
-            err.message ??
-            fallback
-        );
-    }
-    if (err instanceof Error) return err.message;
-    return fallback;
-}

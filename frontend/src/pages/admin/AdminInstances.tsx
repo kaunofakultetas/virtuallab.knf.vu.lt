@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import axios from "axios";
+import { getErrorMessage } from "@/utils/errors";
 import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
@@ -627,7 +628,7 @@ export default function AdminInstances() {
                                                     </IconButton>
                                                 </span>
                                             </Tooltip>
-                                            <Tooltip title="Extend runtime (+3h)">
+                                            <Tooltip title={instance.run_until === null ? "Non-expirable — enable expiry first" : "Extend runtime (+3h)"}>
                                                 <span>
                                                     <IconButton
                                                         size="small"
@@ -636,7 +637,7 @@ export default function AdminInstances() {
                                                                 instance,
                                                             )
                                                         }
-                                                        disabled={isLoading}
+                                                        disabled={isLoading || instance.run_until === null}
                                                     >
                                                         <UpdateOutlinedIcon fontSize="small" />
                                                     </IconButton>
@@ -799,15 +800,3 @@ export default function AdminInstances() {
     );
 }
 
-function getErrorMessage(err: unknown, fallback: string): string {
-    if (axios.isAxiosError(err)) {
-        return (
-            err.response?.data?.error ??
-            err.response?.data?.message ??
-            err.message ??
-            fallback
-        );
-    }
-    if (err instanceof Error) return err.message;
-    return fallback;
-}

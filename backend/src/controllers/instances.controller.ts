@@ -4,6 +4,7 @@ import { Instance } from "@/types/instances";
 import { Template } from "@/types/templates";
 import { pool } from "@/utils/db";
 import { logger } from "@/utils/logger";
+import { metadata } from "@/utils/metadata";
 
 export const Instances = {
     getAllForUser: async (userId: string): Promise<Instance[]> => {
@@ -41,14 +42,20 @@ export const Instances = {
     },
 
     getInsideNetIPv4: async (proxmoxId: string): Promise<string | null> => {
-        const timeoutMs = 60_000;
-        const intervalMs = 2_000;
-        const deadline = Date.now() + timeoutMs;
+        const [timeoutMs, intervalMs, ipPrefix] = await Promise.all([
+            metadata.get<number>("settings.instances.ipWaitTimeoutMs"),
+            metadata.get<number>("settings.instances.ipPollIntervalMs"),
+            metadata.get<string>("settings.network.insideIpPrefix"),
+        ]);
+        const timeout = timeoutMs ?? 60_000;
+        const interval = intervalMs ?? 2_000;
+        const prefix = ipPrefix ?? "10.10.";
+        const deadline = Date.now() + timeout;
 
         while (Date.now() < deadline) {
             try {
                 const ips = await Instances.getIPv4(proxmoxId);
-                const match = ips?.find((ip) => ip.startsWith("10.10."));
+                const match = ips?.find((ip) => ip.startsWith(prefix));
                 if (match) return match;
             } catch (err: any) {
                 const msg: string = err?.details?.message ?? err?.message ?? "";
@@ -61,7 +68,7 @@ export const Instances = {
             const remaining = deadline - Date.now();
             if (remaining <= 0) break;
             await new Promise((r) =>
-                setTimeout(r, Math.min(intervalMs, remaining)),
+                setTimeout(r, Math.min(interval, remaining)),
             );
         }
 
@@ -85,7 +92,7 @@ export const Instances = {
             [userId, instanceId],
         );
 
-        return res.rows[0].has_access || true;
+        return res.rows[0].has_access === true;
     },
 
     startInstance: async (instanceId: number): Promise<string> => {
@@ -110,7 +117,11 @@ export const Instances = {
         userId: string,
         template: Template,
     ): Promise<number> => {
-        const newId = await proxmox.getNextAvailableId(10000);
+        const [minVmId, defaultRuntimeHours] = await Promise.all([
+            metadata.get<number>("settings.proxmox.minVmId"),
+            metadata.get<number>("settings.instances.defaultRuntimeHours"),
+        ]);
+        const newId = await proxmox.getNextAvailableId(minVmId ?? 10_000);
 
         // Clone template -> new id
         const cloneTask = await proxmox.cloneVM(
@@ -135,8 +146,14 @@ export const Instances = {
 
         const sqlResp = await pool.query(
             `INSERT INTO instances (owner_id, template_id, proxmox_id, name, run_until)
-      VALUES ($1, $2, $3, $4, NOW() + INTERVAL '3 hours') RETURNING id`,
-            [userId, template.id, newId, template.name],
+      VALUES ($1, $2, $3, $4, NOW() + make_interval(hours => $5)) RETURNING id`,
+            [
+                userId,
+                template.id,
+                newId,
+                template.name,
+                defaultRuntimeHours ?? 3,
+            ],
         );
 
         proxmox.startVM(newId).then(() => {});
@@ -200,11 +217,15 @@ export const Instances = {
 
     setExpirable: async (instanceId: number, expirable: boolean) => {
         if (expirable) {
+            const defaultRuntimeHours =
+                (await metadata.get<number>(
+                    "settings.instances.defaultRuntimeHours",
+                )) ?? 3;
             await pool.query(
                 `UPDATE instances
-                 SET run_until = COALESCE(run_until, NOW() + INTERVAL '3 hours')
+                 SET run_until = COALESCE(run_until, NOW() + make_interval(hours => $2))
                  WHERE id = $1`,
-                [instanceId],
+                [instanceId, defaultRuntimeHours],
             );
         } else {
             await pool.query(
@@ -242,7 +263,9 @@ export const Instances = {
     },
 
     fetchAndUpdateStatuses: async () => {
-        const vms = (await proxmox.getVms()).filter((vm) => vm.vmid >= 10000);
+        const minVmId =
+            (await metadata.get<number>("settings.proxmox.minVmId")) ?? 10_000;
+        const vms = (await proxmox.getVms()).filter((vm) => vm.vmid >= minVmId);
         if (vms.length === 0) return;
 
         const values: string[] = [];

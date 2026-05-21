@@ -12,6 +12,7 @@ import AdminUsers from "@/pages/admin/Users";
 import AdminGuacamole from "@/pages/admin/Guacamole";
 import AdminProxmoxDashboard from "@/pages/admin/ProxmoxDashboard";
 import AdminInstances from "@/pages/admin/AdminInstances";
+import AdminSettings from "@/pages/admin/Settings";
 import Instances from "@/pages/Instances";
 import { AuthProvider, RequireAuth, RequireAdmin } from "@/utils/AuthGuard";
 import { extractTemplate, extractTemplates } from "@/utils/templates";
@@ -149,6 +150,14 @@ export const router = createBrowserRouter([
                 element: (
                     <RequireAdmin>
                         <AdminProxmoxDashboard />
+                    </RequireAdmin>
+                ),
+            },
+            {
+                path: "admin/settings",
+                element: (
+                    <RequireAdmin>
+                        <AdminSettings />
                     </RequireAdmin>
                 ),
             },

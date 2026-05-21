@@ -10,6 +10,13 @@ export type MetaValue =
 
 const defaults: Record<string, MetaValue> = {
     "settings.limits.vmPerStudent": 1,
+    "settings.network.insideIpPrefix": "10.10.",
+    "settings.instances.ipWaitTimeoutMs": 60_000,
+    "settings.instances.ipPollIntervalMs": 2_000,
+    "settings.proxmox.minVmId": 10_000,
+    "settings.instances.defaultRuntimeHours": 3,
+    "settings.guacamole.parentIdentifier": "1",
+    "settings.guacamole.requestTimeoutMs": 10_000,
 };
 
 async function get<T extends MetaValue = MetaValue>(
@@ -50,6 +57,34 @@ async function list(prefix?: string): Promise<string[]> {
     return rows.map((r) => r.key);
 }
 
+async function getAll(): Promise<
+    Array<{
+        key: string;
+        value: MetaValue;
+        default: MetaValue;
+        updated_at: Date | null;
+    }>
+> {
+    const { rows } = await pool.query<{
+        key: string;
+        value: MetaValue;
+        updated_at: Date;
+    }>("SELECT key, value, updated_at FROM metadata WHERE key = ANY($1)", [
+        Object.keys(defaults),
+    ]);
+    const dbMap = new Map(rows.map((r) => [r.key, r]));
+
+    return Object.entries(defaults).map(([key, defaultValue]) => {
+        const row = dbMap.get(key);
+        return {
+            key,
+            value: row?.value ?? defaultValue,
+            default: defaultValue,
+            updated_at: row?.updated_at ?? null,
+        };
+    });
+}
+
 async function initDefaults(): Promise<void> {
     const entries = Object.entries(defaults);
     if (entries.length === 0) return;
@@ -75,5 +110,6 @@ export const metadata = {
     set,
     del,
     list,
+    getAll,
     initDefaults,
 };

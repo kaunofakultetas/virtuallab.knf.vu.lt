@@ -1,57 +1,57 @@
 import bcrypt from "bcryptjs";
 
 type Args = {
-  password: string;
-  rounds: number;
+    password: string;
+    rounds: number;
 };
 
 function parseArgs(): Args {
-  const argv = process.argv.slice(2);
-  let password = "";
-  let rounds = 10;
-  const positionals: string[] = [];
+    const argv = process.argv.slice(2);
+    let password = "";
+    let rounds = 10;
+    const positionals: string[] = [];
 
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
+    for (let i = 0; i < argv.length; i++) {
+        const arg = argv[i];
 
-    if (arg === "--password" || arg === "-p") {
-      password = argv[i + 1] ?? "";
-      i++;
-      continue;
+        if (arg === "--password" || arg === "-p") {
+            password = argv[i + 1] ?? "";
+            i++;
+            continue;
+        }
+
+        if (arg === "--rounds" || arg === "-r") {
+            const parsed = Number(argv[i + 1]);
+            if (Number.isInteger(parsed) && parsed >= 4 && parsed <= 31) {
+                rounds = parsed;
+            }
+            i++;
+            continue;
+        }
+
+        positionals.push(arg);
     }
 
-    if (arg === "--rounds" || arg === "-r") {
-      const parsed = Number(argv[i + 1]);
-      if (Number.isInteger(parsed) && parsed >= 4 && parsed <= 31) {
-        rounds = parsed;
-      }
-      i++;
-      continue;
+    if (!password && positionals[0]) {
+        password = positionals[0];
     }
 
-    positionals.push(arg);
-  }
+    if (!password) {
+        throw new Error(
+            "Usage: npm run hash-password -- --password <password> [--rounds 10]",
+        );
+    }
 
-  if (!password && positionals[0]) {
-    password = positionals[0];
-  }
-
-  if (!password) {
-    throw new Error(
-      "Usage: npm run hash-password -- --password <password> [--rounds 10]",
-    );
-  }
-
-  return { password, rounds };
+    return { password, rounds };
 }
 
 async function main() {
-  const { password, rounds } = parseArgs();
-  const hash = await bcrypt.hash(password, rounds);
-  console.log(hash);
+    const { password, rounds } = parseArgs();
+    const hash = await bcrypt.hash(password, rounds);
+    console.log(hash);
 }
 
 void main().catch((err: Error) => {
-  console.error(err.message);
-  process.exitCode = 1;
+    console.error(err.message);
+    process.exitCode = 1;
 });

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
+import { getErrorMessage } from "@/utils/errors";
 import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
@@ -184,15 +185,3 @@ export default function AdminGuacamole() {
     );
 }
 
-function getErrorMessage(err: unknown, fallback: string): string {
-    if (axios.isAxiosError(err)) {
-        return (
-            err.response?.data?.error ??
-            err.response?.data?.message ??
-            err.message ??
-            fallback
-        );
-    }
-    if (err instanceof Error) return err.message;
-    return fallback;
-}

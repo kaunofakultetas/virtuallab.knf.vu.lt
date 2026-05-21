@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
+import { getErrorMessage } from "@/utils/errors";
 import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
@@ -41,7 +42,8 @@ export default function AdminProxmoxDashboard() {
             const res = await axios.get<RunningProxmoxVm[]>(
                 "/api/instances/all/running",
             );
-            setInstances(Array.isArray(res.data) ? res.data : []);
+            const data = Array.isArray(res.data) ? res.data : [];
+            setInstances(data.sort((a, b) => a.vmid - b.vmid));
             setLastRefreshed(new Date());
         } catch (err) {
             if (showLoading) {
@@ -194,15 +196,3 @@ function formatUptime(uptimeSec: number | null): string {
     return `${minutes}m`;
 }
 
-function getErrorMessage(err: unknown, fallback: string): string {
-    if (axios.isAxiosError(err)) {
-        return (
-            err.response?.data?.error ??
-            err.response?.data?.message ??
-            err.message ??
-            fallback
-        );
-    }
-    if (err instanceof Error) return err.message;
-    return fallback;
-}

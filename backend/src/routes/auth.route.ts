@@ -34,33 +34,38 @@ router.post(
     "/login",
     validateRequest({ body: loginSchema }),
     async (req, res) => {
-        const { username, password } = req.body;
-        const user = await Users.passwordLogin(username, password);
+        try {
+            const { username, password } = req.body;
+            const user = await Users.passwordLogin(username, password);
 
-        if (!user) {
-            return res
-                .status(401)
-                .json({ error: "Invalid username or password" });
+            if (!user) {
+                return res
+                    .status(401)
+                    .json({ error: "Invalid username or password" });
+            }
+
+            const tokenPayload: TokenPayload = {
+                vu_id: user.vu_id,
+                role: user.role,
+            };
+
+            const token = jwt.sign(
+                tokenPayload,
+                process.env.BACKEND_JWT_SECRET as string,
+                {
+                    expiresIn: "24h",
+                },
+            );
+
+            res.cookie("token", token, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === "production",
+                sameSite: "strict",
+            }).json({ message: "Login successful", user: tokenPayload });
+        } catch (err) {
+            logger.error(err, "Error during login:");
+            res.status(500).json({ error: "Login failed" });
         }
-
-        const tokenPayload: TokenPayload = {
-            vu_id: user.vu_id,
-            role: user.role,
-        };
-
-        const token = jwt.sign(
-            tokenPayload,
-            process.env.BACKEND_JWT_SECRET as string,
-            {
-                expiresIn: "24h",
-            },
-        );
-
-        res.cookie("token", token, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === "production",
-            sameSite: "strict",
-        }).json({ message: "Login successful", user: tokenPayload });
     },
 );
 
@@ -79,25 +84,25 @@ router.post(
     isAuthenticated,
     validateRequest({ body: changePasswordSchema }),
     async (req, res) => {
-        const user = req.user as TokenPayload;
+        try {
+            const user = req.user as TokenPayload;
+            const { currentPassword, newPassword } = req.body;
 
-        const { currentPassword, newPassword } = req.body;
+            const isCurrentPasswordValid = await Users.passwordLogin(
+                user.vu_id,
+                currentPassword,
+            );
 
-        const isCurrentPasswordValid = await Users.passwordLogin(
-            user.vu_id,
-            currentPassword,
-        );
+            if (!isCurrentPasswordValid) {
+                return res.status(401).json({ error: "Incorrect password" });
+            }
 
-        if (!isCurrentPasswordValid) {
-            return res.status(401).json({ error: "Incorrect password" });
+            await Users.change(user.vu_id, newPassword);
+            res.json({ message: "Password changed successfully" });
+        } catch (err) {
+            logger.error(err, "Error changing password:");
+            res.status(500).json({ error: "Failed to change password" });
         }
-
-        Users.change(user.vu_id, newPassword)
-            .then(() => res.json({ message: "Password changed successfully" }))
-            .catch((err) => {
-                logger.error(err, "Error changing password:");
-                res.status(500).json({ error: "Failed to change password" });
-            });
     },
 );
 

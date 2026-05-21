@@ -1,5 +1,5 @@
-import axios from "axios";
 import type { Template } from "@/types/templates";
+export { getErrorMessage } from "@/utils/errors";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
     typeof value === "object" && value !== null;
@@ -57,19 +57,6 @@ export const extractTemplate = (data: unknown): Template | null => {
         return normalizeTemplate(data as Template);
     }
     return null;
-};
-
-export const getErrorMessage = (err: unknown, fallback: string) => {
-    if (axios.isAxiosError(err)) {
-        const apiMessage = err.response?.data?.error;
-        if (typeof apiMessage === "string") {
-            return apiMessage;
-        }
-    }
-    if (err instanceof Error) {
-        return err.message;
-    }
-    return fallback;
 };
 
 export const getResponseMessage = (data: unknown, fallback: string) => {

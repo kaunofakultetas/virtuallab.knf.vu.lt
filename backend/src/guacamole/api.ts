@@ -1,5 +1,6 @@
 import { Agent, fetch } from "undici";
 import { logger } from "@/utils/logger";
+import { metadata } from "@/utils/metadata";
 import {
     GuacamoleApiError,
     GuacamoleClientConfig,
@@ -13,16 +14,17 @@ import {
     GuacamoleUsersResponse,
 } from "./types";
 
-const parentIdentifier = "1"; // ID of target folder.
-
 export class GuacamoleClient {
     private readonly baseUrl: string;
     private readonly publicUrl: string | null;
     private readonly username: string;
     private readonly password: string;
     private readonly maxGetRetries = 3;
-    private readonly timeoutMs = 10000;
     private readonly httpAgent: Agent;
+    private settingsCache: {
+        parentIdentifier: string;
+        timeoutMs: number;
+    } | null = null;
 
     private authToken: string | null = null;
     private dataSource: string | null = "postgresql";
@@ -46,6 +48,22 @@ export class GuacamoleClient {
                 rejectUnauthorized: config.rejectUnauthorized ?? true,
             },
         });
+    }
+
+    private async getSettings(): Promise<{
+        parentIdentifier: string;
+        timeoutMs: number;
+    }> {
+        if (this.settingsCache) return this.settingsCache;
+        const [parentIdentifier, timeoutMs] = await Promise.all([
+            metadata.get<string>("settings.guacamole.parentIdentifier"),
+            metadata.get<number>("settings.guacamole.requestTimeoutMs"),
+        ]);
+        this.settingsCache = {
+            parentIdentifier: parentIdentifier ?? "1",
+            timeoutMs: timeoutMs ?? 10_000,
+        };
+        return this.settingsCache;
     }
 
     invalidateConnectionCache() {
@@ -81,8 +99,9 @@ export class GuacamoleClient {
             password: password,
         } as Record<string, string>).toString();
 
+        const { timeoutMs } = await this.getSettings();
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+        const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
         try {
             const res = await fetch(url, {
@@ -159,12 +178,10 @@ export class GuacamoleClient {
 
         const attempts = method === "GET" ? this.maxGetRetries + 1 : 1;
 
+        const { timeoutMs } = await this.getSettings();
         for (let attempt = 1; attempt <= attempts; attempt++) {
             const controller = new AbortController();
-            const timeout = setTimeout(
-                () => controller.abort(),
-                this.timeoutMs,
-            );
+            const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
             try {
                 const res = await fetch(url, {
@@ -276,6 +293,7 @@ export class GuacamoleClient {
         machineOwnerId: string,
         machineId: string,
     ): Promise<GuacamoleConnection> {
+        const { parentIdentifier } = await this.getSettings();
         const payload: Record<string, unknown> = {
             parentIdentifier: parentIdentifier,
             name: machineId,
@@ -383,6 +401,7 @@ export class GuacamoleClient {
         newMachineIp: string,
         guacIdentifier: string,
     ): Promise<GuacamoleConnection> {
+        const { parentIdentifier } = await this.getSettings();
         const payload: Record<string, unknown> = {
             parentIdentifier: parentIdentifier,
             identifier: guacIdentifier,

@@ -32,6 +32,7 @@ import UpdateOutlinedIcon from "@mui/icons-material/UpdateOutlined";
 import AddOutlinedIcon from "@mui/icons-material/AddOutlined";
 import DeleteOutlinedIcon from "@mui/icons-material/DeleteOutlined";
 import type { Instance, Template } from "@/types/instances";
+import { getErrorMessage } from "@/utils/errors";
 
 const statusColor: Record<string, "success" | "warning" | "error" | "default"> =
     {
@@ -56,6 +57,10 @@ export default function Instances() {
         "",
     );
     const [createLoading, setCreateLoading] = useState(false);
+    const [createDialogError, setCreateDialogError] = useState<{
+        message: string;
+        severity: "error" | "warning";
+    } | null>(null);
 
     const [actionLoading, setActionLoading] = useState<Record<string, boolean>>(
         {},
@@ -238,22 +243,33 @@ export default function Instances() {
     const handleCreate = async () => {
         if (!selectedTemplateId) return;
         setCreateLoading(true);
+        setCreateDialogError(null);
         try {
             await axios.post("/api/instances", {
                 template_id: selectedTemplateId,
             });
+            setCreateOpen(false);
+            setSelectedTemplateId("");
+            setCreateDialogError(null);
             setSnackbar({
                 message: "Instance created successfully.",
                 severity: "success",
             });
-            setCreateOpen(false);
-            setSelectedTemplateId("");
             await fetchInstancesRef.current?.(false);
         } catch (err) {
-            setSnackbar({
-                message: getErrorMessage(err, "Failed to create instance."),
-                severity: "error",
-            });
+            if (axios.isAxiosError(err) && err.response?.status === 429) {
+                setCreateDialogError({
+                    message:
+                        err.response?.data?.error ??
+                        "You have reached the maximum number of allowed instances. Delete an existing one to create a new instance.",
+                    severity: "warning",
+                });
+            } else {
+                setCreateDialogError({
+                    message: getErrorMessage(err, "Failed to create instance."),
+                    severity: "error",
+                });
+            }
         } finally {
             setCreateLoading(false);
         }
@@ -526,6 +542,7 @@ export default function Instances() {
                 onClose={() => {
                     setCreateOpen(false);
                     setSelectedTemplateId("");
+                    setCreateDialogError(null);
                 }}
                 maxWidth="sm"
                 fullWidth
@@ -533,6 +550,11 @@ export default function Instances() {
                 <DialogTitle>Create instance</DialogTitle>
                 <DialogContent>
                     <Stack spacing={2} sx={{ mt: 1 }}>
+                        {createDialogError && (
+                            <Alert severity={createDialogError.severity}>
+                                {createDialogError.message}
+                            </Alert>
+                        )}
                         <FormControl fullWidth>
                             <InputLabel>Template</InputLabel>
                             <Select
@@ -558,6 +580,7 @@ export default function Instances() {
                         onClick={() => {
                             setCreateOpen(false);
                             setSelectedTemplateId("");
+                            setCreateDialogError(null);
                         }}
                         disabled={createLoading}
                     >
@@ -596,15 +619,3 @@ export default function Instances() {
     );
 }
 
-function getErrorMessage(err: unknown, fallback: string): string {
-    if (axios.isAxiosError(err)) {
-        return (
-            err.response?.data?.error ??
-            err.response?.data?.message ??
-            err.message ??
-            fallback
-        );
-    }
-    if (err instanceof Error) return err.message;
-    return fallback;
-}

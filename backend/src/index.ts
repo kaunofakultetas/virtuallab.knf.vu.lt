@@ -5,6 +5,7 @@ import { authRouter } from "@/routes/auth.route";
 import { instancesRouter } from "@/routes/instances.route";
 import { templatesRouter } from "@/routes/templates.route";
 import { guacamoleRouter } from "@/routes/guacamole.route";
+import { metadataRouter } from "@/routes/metadata.route";
 import { Instances } from "@/controllers/instances.controller";
 import { loggerMiddleware } from "@/middleware/logger.middleware";
 import { requestIdMiddleware } from "@/middleware/request-id.middleware";
@@ -39,6 +40,7 @@ app.use("/auth", authRouter);
 app.use("/templates", templatesRouter);
 app.use("/instances", instancesRouter);
 app.use("/guacamole", guacamoleRouter);
+app.use("/metadata", metadataRouter);
 
 app.use(errorHandlerMiddleware);
 
@@ -135,12 +137,3 @@ async function bootstrap() {
 }
 
 void bootstrap();
-
-// TODO:
-// - Limit student allowed concurrent created vms
-// - Add route to delete specific vm
-// - Auto-removal of expired vms
-// - Admin routes for guac management
-// - Admin route to make vms not expireable / make em expireable again
-// - Add validation to all routes
-// - Routes for providing statistics to the frontend?
