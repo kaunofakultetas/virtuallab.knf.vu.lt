@@ -1,6 +1,7 @@
 import { Agent, fetch } from "undici";
 import { logger } from "@/utils/logger";
 import { metadata } from "@/utils/metadata";
+import { guacamoleApiErrorsTotal } from "@/utils/metrics";
 import {
     GuacamoleApiError,
     GuacamoleClientConfig,
@@ -162,12 +163,6 @@ export class GuacamoleClient {
 
         if (!opts) opts = {};
         if (!opts.query) opts.query = {};
-        opts.query["token"] = this.authToken!;
-
-        const queryString = opts?.query
-            ? `?${new URLSearchParams(opts.query).toString()}`
-            : "";
-        const url = `${this.baseUrl}${path}${queryString}`;
 
         const body = opts?.body || undefined;
 
@@ -177,9 +172,14 @@ export class GuacamoleClient {
         if (body) headers["Content-Type"] = "application/json";
 
         const attempts = method === "GET" ? this.maxGetRetries + 1 : 1;
+        let tokenRefreshed = false;
 
         const { timeoutMs } = await this.getSettings();
         for (let attempt = 1; attempt <= attempts; attempt++) {
+            opts.query["token"] = this.authToken!;
+            const queryString = `?${new URLSearchParams(opts.query).toString()}`;
+            const url = `${this.baseUrl}${path}${queryString}`;
+
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -214,12 +214,47 @@ export class GuacamoleClient {
 
                 return parsed;
             } catch (err) {
+                if (
+                    err instanceof GuacamoleApiError &&
+                    err.status === 403 &&
+                    !tokenRefreshed
+                ) {
+                    tokenRefreshed = true;
+                    logger.warn(
+                        { method, path },
+                        "Guacamole token expired, re-authenticating",
+                    );
+                    await this.updateToken();
+                    attempt--;
+                    continue;
+                }
+
                 const lastAttempt = attempt === attempts;
                 const isClientError =
                     err instanceof GuacamoleApiError &&
                     err.status >= 400 &&
                     err.status < 500;
-                if (lastAttempt || isClientError) throw err;
+                if (lastAttempt || isClientError) {
+                    // 404 in this codebase is regularly used as a normal "missing" signal
+                    // (e.g. getUser / deleteUser / getConnectionSummary) — don't count those.
+                    const status =
+                        err instanceof GuacamoleApiError ? err.status : 0;
+                    if (status !== 404) {
+                        const opPath = path
+                            .replace(
+                                /\/session\/data\/[^/]+/,
+                                "/session/data/:ds",
+                            )
+                            .replace(
+                                /\/(users|connections)\/[^/?]+/g,
+                                "/$1/:id",
+                            );
+                        guacamoleApiErrorsTotal.inc({
+                            op: `${method} ${opPath}`,
+                        });
+                    }
+                    throw err;
+                }
 
                 logger.warn(
                     { err, attempt, method, path },
@@ -560,5 +595,19 @@ export class GuacamoleClient {
             `/api/session/data/${this.dataSource}/connections/${identifier}`,
         );
         this.connectionCacheOutdated = true;
+    }
+
+    async deleteUser(username: string): Promise<void> {
+        try {
+            await this.request<void>(
+                "DELETE",
+                `/api/session/data/${this.dataSource}/users/${username}`,
+            );
+        } catch (err) {
+            if (err instanceof GuacamoleApiError && err.status === 404) {
+                return;
+            }
+            throw err;
+        }
     }
 }

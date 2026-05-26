@@ -29,7 +29,7 @@ if (lokiBaseUrl) {
     };
 
     if (parsedLokiUrl.pathname && parsedLokiUrl.pathname !== "/") {
-        lokiOptions.endpoint = `${parsedLokiUrl.pathname}${parsedLokiUrl.search}`;
+        lokiOptions.endpoint = `${parsedLokiUrl.pathname}/loki/api/v1/push`;
     }
 
     transportTargets.push({

@@ -1,13 +1,16 @@
 import { pool } from "@/utils/db";
 import { logger } from "@/utils/logger";
 import { metadata } from "@/utils/metadata";
+import { pollMetrics } from "@/utils/metrics-poller";
 import { authRouter } from "@/routes/auth.route";
 import { instancesRouter } from "@/routes/instances.route";
 import { templatesRouter } from "@/routes/templates.route";
 import { guacamoleRouter } from "@/routes/guacamole.route";
 import { metadataRouter } from "@/routes/metadata.route";
+import { metricsRouter } from "@/routes/metrics.route";
 import { Instances } from "@/controllers/instances.controller";
 import { loggerMiddleware } from "@/middleware/logger.middleware";
+import { metricsMiddleware } from "@/middleware/metrics.middleware";
 import { requestIdMiddleware } from "@/middleware/request-id.middleware";
 import { errorHandlerMiddleware } from "@/middleware/error-handler.middleware";
 
@@ -25,6 +28,7 @@ const scheduler = new ToadScheduler();
 app.set("trust proxy", 1);
 app.use(requestIdMiddleware);
 app.use(loggerMiddleware);
+app.use(metricsMiddleware);
 app.use(express.json());
 app.use(cookieParser());
 
@@ -36,6 +40,7 @@ app.get("/health", (req: Request, res: Response) => {
     res.status(200).json({ status: "ok" });
 });
 
+app.use("/metrics", metricsRouter);
 app.use("/auth", authRouter);
 app.use("/templates", templatesRouter);
 app.use("/instances", instancesRouter);
@@ -107,6 +112,20 @@ async function bootstrap() {
             ),
         );
         scheduler.addSimpleIntervalJob(updInstanceStJob);
+
+        // Refresh Prometheus gauges (Postgres counts + Proxmox + Guacamole)
+        const metricsPollJob = new SimpleIntervalJob(
+            { seconds: 15 },
+            new Task(
+                "metrics poll",
+                async () => {
+                    await pollMetrics();
+                },
+                (err) => logger.error(err, "Failed to poll metrics"),
+            ),
+            { preventOverrun: true },
+        );
+        scheduler.addSimpleIntervalJob(metricsPollJob);
 
         // Task to remove expired instances (instances with run_until = NULL are non-expirable)
         const removeExpiredInstancesJob = new SimpleIntervalJob(

@@ -88,7 +88,7 @@ plugins=cloudbaseinit.plugins.common.sethostname.SetHostNamePlugin,
         cloudbaseinit.plugins.windows.networkconfig.NetworkConfigPlugin
 ```
 
-## 6. Enable RDP
+## 6. Enable RDP & SSH
 
 ```powershell
 # Enable RDP
@@ -99,6 +99,19 @@ Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
 # Allow connections from any version (not NLA-only) — required for Guacamole
 Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name UserAuthentication -Value 0
+
+# Install OpenSSH Server (built into Windows 10 1809+ / Server 2019+ as a Feature on Demand)
+Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+
+# Start the service and set it to auto-start on boot
+Start-Service sshd
+Set-Service -Name sshd -StartupType Automatic
+
+# Firewall rule (the installer usually creates this, but verify)
+if (!(Get-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -ErrorAction SilentlyContinue)) {
+    New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName 'OpenSSH Server (sshd)' `
+        -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22
+}
 ```
 
 ## 7. Set up the environment
@@ -142,7 +155,7 @@ The script clears logs, temp files, and cloudbase-init state, then runs Sysprep 
 
 Run on the Proxmox host after the VM has shut down:
 ```sh
-# Remove the Windows and VirtIO ISOs
+# Remove the Windows and VirtIO ISOs (if not done already)
 qm set 9001 --delete cdrom,ide0
 
 # Add cloud-init drive and ensure guest agent is enabled

@@ -9,6 +9,8 @@ services:
         command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
         volumes:
             - ./frontend:/app
+        networks:
+            - isolated
         restart: unless-stopped
 
     backend:
@@ -25,6 +27,10 @@ services:
             - ./certs/logs.knf.vu.lt.crt:/certs/logs.knf.vu.lt.crt:ro
 
         read_only: true
+        networks:
+            - isolated
+        extra_hosts:
+            - "logs.knf.vu.lt:172.18.3.30"
         restart: unless-stopped
 
     caddy:
@@ -42,6 +48,22 @@ services:
             - caddy_data:/data
             - caddy_config:/config
 
+        networks:
+            - external
+            - isolated
+        restart: unless-stopped
+
+    exit:
+        image: vuknf/caddy-l4:2.11
+        container_name: exit
+        user: 1000:1000
+        read_only: true
+        volumes:
+            - ./exit/Caddyfile:/etc/caddy/Caddyfile:ro
+        networks:
+            isolated:
+                ipv4_address: 172.18.3.30
+            external: {}
         restart: unless-stopped
 
     postgres:
@@ -67,6 +89,8 @@ services:
             timeout: 5s
             retries: 5
 
+        networks:
+            - isolated
         restart: unless-stopped
 
     notfound404-vite:
@@ -75,8 +99,23 @@ services:
         user: 1000:1000
         read_only: true
 
+        networks:
+            - isolated
         restart: unless-stopped
 
 volumes:
     caddy_data:
     caddy_config:
+
+networks:
+    external:
+        external: true
+
+    isolated:
+        name: vl-isolated
+        driver: bridge
+        internal: true
+        ipam:
+            config:
+                - subnet: 172.18.3.0/24
+                  gateway: 172.18.3.1

@@ -10,6 +10,7 @@ import TableBody from "@mui/material/TableBody";
 import TableCell from "@mui/material/TableCell";
 import TableHead from "@mui/material/TableHead";
 import TableRow from "@mui/material/TableRow";
+import TableSortLabel from "@mui/material/TableSortLabel";
 import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
 import Chip from "@mui/material/Chip";
@@ -67,6 +68,8 @@ export default function Users() {
 
     const [deletingId, setDeletingId] = useState<string | null>(null);
     const [copiedId, setCopiedId] = useState<string | null>(null);
+    const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+    const [passwordRevealed, setPasswordRevealed] = useState(false);
 
     useEffect(() => {
         void fetchUsers();
@@ -151,11 +154,18 @@ export default function Users() {
         }
     };
 
+    const sortedUsers = [...users].sort((a, b) => {
+        const aTime = a.last_login ? new Date(a.last_login).getTime() : 0;
+        const bTime = b.last_login ? new Date(b.last_login).getTime() : 0;
+        return sortOrder === "desc" ? bTime - aTime : aTime - bTime;
+    });
+
     const openEditDialog = (user: User) => {
         setEditUser(user);
         setEditRole(user.role ?? "student");
         setEditPassword("");
         setEditGeneratedPassword(null);
+        setPasswordRevealed(false);
         setEditOpen(true);
     };
 
@@ -163,6 +173,7 @@ export default function Users() {
         setEditOpen(false);
         setEditUser(null);
         setEditGeneratedPassword(null);
+        setPasswordRevealed(false);
     };
 
     const handleEdit = async () => {
@@ -268,13 +279,26 @@ export default function Users() {
                         <TableRow>
                             <TableCell>VU ID</TableCell>
                             <TableCell>Role</TableCell>
+                            <TableCell>
+                                <TableSortLabel
+                                    active
+                                    direction={sortOrder}
+                                    onClick={() =>
+                                        setSortOrder((o) =>
+                                            o === "desc" ? "asc" : "desc",
+                                        )
+                                    }
+                                >
+                                    Last Login
+                                </TableSortLabel>
+                            </TableCell>
                             <TableCell align="right">Actions</TableCell>
                         </TableRow>
                     </TableHead>
                     <TableBody>
                         {fetching ? (
                             <TableRow>
-                                <TableCell colSpan={3}>
+                                <TableCell colSpan={4}>
                                     <Box
                                         sx={{
                                             display: "flex",
@@ -288,7 +312,7 @@ export default function Users() {
                             </TableRow>
                         ) : users.length === 0 ? (
                             <TableRow>
-                                <TableCell colSpan={3}>
+                                <TableCell colSpan={4}>
                                     <Typography
                                         variant="body2"
                                         color="text.secondary"
@@ -300,7 +324,7 @@ export default function Users() {
                                 </TableCell>
                             </TableRow>
                         ) : (
-                            users.map((user) => (
+                            sortedUsers.map((user) => (
                                 <TableRow key={user.vu_id}>
                                     <TableCell>
                                         <Typography
@@ -320,6 +344,18 @@ export default function Users() {
                                                     : "default"
                                             }
                                         />
+                                    </TableCell>
+                                    <TableCell>
+                                        <Typography
+                                            variant="body2"
+                                            color="text.secondary"
+                                        >
+                                            {user.last_login
+                                                ? new Date(
+                                                      user.last_login,
+                                                  ).toLocaleString()
+                                                : "—"}
+                                        </Typography>
                                     </TableCell>
                                     <TableCell align="right">
                                         <Tooltip title="Edit">
@@ -570,12 +606,34 @@ export default function Users() {
                                     spacing={1}
                                     sx={{ mt: 0.5, alignItems: "center" }}
                                 >
-                                    <Typography
-                                        variant="body2"
-                                        sx={{ fontFamily: "monospace" }}
+                                    <Tooltip
+                                        title={
+                                            passwordRevealed
+                                                ? "Click to hide"
+                                                : "Click to reveal"
+                                        }
                                     >
-                                        {editGeneratedPassword}
-                                    </Typography>
+                                        <Typography
+                                            variant="body2"
+                                            sx={{
+                                                fontFamily: "monospace",
+                                                cursor: "pointer",
+                                                userSelect: passwordRevealed
+                                                    ? "text"
+                                                    : "none",
+                                                letterSpacing: passwordRevealed
+                                                    ? undefined
+                                                    : "0.15em",
+                                            }}
+                                            onClick={() =>
+                                                setPasswordRevealed((v) => !v)
+                                            }
+                                        >
+                                            {passwordRevealed
+                                                ? editGeneratedPassword
+                                                : "••••••••"}
+                                        </Typography>
+                                    </Tooltip>
                                     <Tooltip title="Copy password">
                                         <IconButton
                                             size="small"

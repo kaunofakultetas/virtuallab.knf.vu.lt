@@ -2,6 +2,7 @@ export interface User {
     vu_id: string;
     role?: string;
     password?: string;
+    last_login?: string;
 }
 
 export interface CreateUserRequest {

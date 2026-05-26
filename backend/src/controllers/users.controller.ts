@@ -2,6 +2,7 @@ import { ExtendedUser, User, UserRole } from "@/types/auth";
 import { Instances } from "@/controllers/instances.controller";
 import { pool } from "@/utils/db";
 import { logger } from "@/utils/logger";
+import { guacamole } from "@/guacamole";
 import bcrypt from "bcryptjs";
 
 export const Users = {
@@ -84,6 +85,13 @@ export const Users = {
         }
 
         await pool.query(`DELETE FROM users WHERE vu_id = $1`, [vu_id]);
+
+        try {
+            await guacamole.deleteUser(vu_id);
+        } catch (err) {
+            logger.warn({ err, vu_id }, "Failed to delete Guacamole user");
+        }
+
         return true;
     },
 

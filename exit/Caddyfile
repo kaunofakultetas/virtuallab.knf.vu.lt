@@ -1,0 +1,24 @@
+{
+	layer4 {
+		:443 {
+			@exit_logs tls sni logs.knf.vu.lt
+			route @exit_logs {
+				proxy logs.knf.vu.lt:443
+			}
+		}
+
+		# Proxmox API — blind TCP forward, no SNI (raw IP backend)
+		:8006 {
+			route {
+				proxy 172.16.0.122:8006
+			}
+		}
+
+		# Guacamole — plain HTTP, no SNI; set GUACAMOLE_URL=http://exit:8080 in .env
+		:8080 {
+			route {
+				proxy 10.10.10.50:8080
+			}
+		}
+	}
+}

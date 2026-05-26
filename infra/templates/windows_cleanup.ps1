@@ -81,8 +81,18 @@ Write-Host "Clearing shell history..."
 Remove-Item -Path (Get-PSReadLineOption).HistorySavePath -Force -ErrorAction SilentlyContinue
 Remove-Item -Path "C:\Users\*\AppData\Roaming\Microsoft\Windows\PowerShell\PSReadLine\*" -Force -ErrorAction SilentlyContinue
 
+# reset win pass complexity
+Write-Host "Relaxing password policy (lab-only)..."
+secedit /export /cfg C:\Windows\Temp\secpol.cfg | Out-Null
+(Get-Content C:\Windows\Temp\secpol.cfg) `
+    -replace 'PasswordComplexity\s*=\s*1', 'PasswordComplexity = 0' `
+    -replace 'MinimumPasswordLength\s*=\s*\d+', 'MinimumPasswordLength = 0' |
+    Set-Content C:\Windows\Temp\secpol.cfg
+secedit /configure /db C:\Windows\security\local.sdb /cfg C:\Windows\Temp\secpol.cfg /areas SECURITYPOLICY | Out-Null
+Remove-Item C:\Windows\Temp\secpol.cfg -Force
+
 # ── Sysprep — generalize and shut down ───────────────────────────────────────
 # This removes the SID, machine GUID, and activation state so each clone gets
 # a unique identity. The VM will shut down — do NOT reboot.
 Write-Host "Running Sysprep (generalize + shutdown)..." -ForegroundColor Yellow
-& "$env:SystemRoot\System32\Sysprep\sysprep.exe" /generalize /oobe /shutdown /quiet
+& "$env:SystemRoot\System32\Sysprep\sysprep.exe" /generalize /oobe /shutdown /quiet /unattend:"C:\Program Files\Cloudbase Solutions\Cloudbase-Init\conf\Unattend.xml"

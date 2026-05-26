@@ -10,6 +10,7 @@ import {
     ProxmoxNodeVMStatus,
 } from "./types";
 import { logger } from "@/utils/logger";
+import { proxmoxApiErrorsTotal } from "@/utils/metrics";
 
 export function normaliseVmName(input: string, fallback = "vm"): string {
     const MAX_LABEL = 63;
@@ -138,7 +139,12 @@ export class ProxmoxClient {
                 return envelope.data;
             } catch (err) {
                 const lastAttempt = attempt === attempts;
-                if (lastAttempt || !this.isRetryable(err)) throw err;
+                if (lastAttempt || !this.isRetryable(err)) {
+                    // Normalise numeric ids out of the path so label cardinality stays bounded.
+                    const opPath = path.replace(/\/\d+/g, "/:id");
+                    proxmoxApiErrorsTotal.inc({ op: `${method} ${opPath}` });
+                    throw err;
+                }
 
                 logger.warn(
                     { err, attempt, method, path },

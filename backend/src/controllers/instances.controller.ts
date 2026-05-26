@@ -5,6 +5,11 @@ import { Template } from "@/types/templates";
 import { pool } from "@/utils/db";
 import { logger } from "@/utils/logger";
 import { metadata } from "@/utils/metadata";
+import {
+    vlabInstanceCreateDurationSeconds,
+    vlabInstanceLifecycleTotal,
+    vlabInstancesExpiredRemovedTotal,
+} from "@/utils/metrics";
 
 export const Instances = {
     getAllForUser: async (userId: string): Promise<Instance[]> => {
@@ -98,104 +103,149 @@ export const Instances = {
     startInstance: async (instanceId: number): Promise<string> => {
         const instance = await Instances.getById(instanceId);
         if (!instance) throw Error("Instance not found");
-        return await proxmox.startVM(instance.proxmox_id);
+        try {
+            const upid = await proxmox.startVM(instance.proxmox_id);
+            vlabInstanceLifecycleTotal.inc({ op: "start", result: "success" });
+            return upid;
+        } catch (err) {
+            vlabInstanceLifecycleTotal.inc({ op: "start", result: "error" });
+            throw err;
+        }
     },
 
     stopInstance: async (instanceId: number): Promise<string> => {
         const instance = await Instances.getById(instanceId);
         if (!instance) throw Error("Instance not found");
-        return await proxmox.stopVM(instance.proxmox_id);
+        try {
+            const upid = await proxmox.stopVM(instance.proxmox_id);
+            vlabInstanceLifecycleTotal.inc({ op: "stop", result: "success" });
+            return upid;
+        } catch (err) {
+            vlabInstanceLifecycleTotal.inc({ op: "stop", result: "error" });
+            throw err;
+        }
     },
 
     rebootInstance: async (instanceId: number): Promise<string> => {
         const instance = await Instances.getById(instanceId);
         if (!instance) throw Error("Instance not found");
-        return await proxmox.rebootVM(instance.proxmox_id);
+        try {
+            const upid = await proxmox.rebootVM(instance.proxmox_id);
+            vlabInstanceLifecycleTotal.inc({ op: "reboot", result: "success" });
+            return upid;
+        } catch (err) {
+            vlabInstanceLifecycleTotal.inc({ op: "reboot", result: "error" });
+            throw err;
+        }
     },
 
     createInstance: async (
         userId: string,
         template: Template,
     ): Promise<number> => {
-        const [minVmId, defaultRuntimeHours] = await Promise.all([
-            metadata.get<number>("settings.proxmox.minVmId"),
-            metadata.get<number>("settings.instances.defaultRuntimeHours"),
-        ]);
-        const newId = await proxmox.getNextAvailableId(minVmId ?? 10_000);
+        const stopTimer = vlabInstanceCreateDurationSeconds.startTimer();
+        try {
+            const [minVmId, defaultRuntimeHours] = await Promise.all([
+                metadata.get<number>("settings.proxmox.minVmId"),
+                metadata.get<number>("settings.instances.defaultRuntimeHours"),
+            ]);
+            const newId = await proxmox.getNextAvailableId(minVmId ?? 10_000);
 
-        // Clone template -> new id
-        const cloneTask = await proxmox.cloneVM(
-            template.proxmox_id,
-            newId,
-            template.name,
-        );
-
-        const cloneSuccess = await proxmox.waitForTaskCompletion(cloneTask);
-
-        if (!cloneSuccess) {
-            throw Error("Failed to clone VM");
-        }
-
-        await proxmox.configVM(newId, {
-            ciuser: "user",
-            cipassword: userId,
-            ipconfig0: "ip=dhcp",
-            net0: "virtio,bridge=vmbr20,firewall=1",
-            tags: `vm;owner${userId}`,
-        });
-
-        const sqlResp = await pool.query(
-            `INSERT INTO instances (owner_id, template_id, proxmox_id, name, run_until)
-      VALUES ($1, $2, $3, $4, NOW() + make_interval(hours => $5)) RETURNING id`,
-            [
-                userId,
-                template.id,
+            // Clone template -> new id
+            const cloneTask = await proxmox.cloneVM(
+                template.proxmox_id,
                 newId,
                 template.name,
-                defaultRuntimeHours ?? 3,
-            ],
-        );
+            );
 
-        proxmox.startVM(newId).then(() => {});
+            const cloneSuccess = await proxmox.waitForTaskCompletion(cloneTask);
 
-        return sqlResp.rows[0].id;
+            if (!cloneSuccess) {
+                throw Error("Failed to clone VM");
+            }
+
+            await proxmox.configVM(newId, {
+                ciuser: "user",
+                cipassword: userId,
+                ipconfig0: "ip=dhcp",
+                net0: "virtio,bridge=vmbr20,firewall=1",
+                tags: `vm;owner${userId}`,
+            });
+
+            const sqlResp = await pool.query(
+                `INSERT INTO instances (owner_id, template_id, proxmox_id, name, run_until)
+      VALUES ($1, $2, $3, $4, NOW() + make_interval(hours => $5)) RETURNING id`,
+                [
+                    userId,
+                    template.id,
+                    newId,
+                    template.name,
+                    defaultRuntimeHours ?? 3,
+                ],
+            );
+
+            proxmox.startVM(newId).then(() => {});
+
+            vlabInstanceLifecycleTotal.inc({
+                op: "create",
+                result: "success",
+            });
+            return sqlResp.rows[0].id;
+        } catch (err) {
+            vlabInstanceLifecycleTotal.inc({ op: "create", result: "error" });
+            throw err;
+        } finally {
+            stopTimer();
+        }
     },
 
     deleteInstance: async (instanceId: number): Promise<void> => {
         const instance = await Instances.getById(instanceId);
         if (!instance) throw new Error("Instance not found");
 
-        // 1. Stop then delete from Proxmox (stop=1 handles running VMs gracefully)
         try {
-            const stopTask = await proxmox.stopVM(instance.proxmox_id);
-            await proxmox.waitForTaskCompletion(stopTask);
-        } catch (err) {
-            logger.warn(
-                { err, proxmox_id: instance.proxmox_id },
-                "Could not stop VM before deletion (may already be stopped)",
-            );
-        }
-
-        const deleteTask = await proxmox.deleteVM(instance.proxmox_id);
-        await proxmox.waitForTaskCompletion(deleteTask);
-
-        // 2. Delete Guacamole connection (connection name == instance id string)
-        try {
-            const conn = await guacamole.getConnectionSummary(
-                String(instanceId),
-            );
-            if (conn?.identifier) {
-                await guacamole.deleteConnection(conn.identifier);
+            // 1. Stop then delete from Proxmox (stop=1 handles running VMs gracefully)
+            try {
+                const stopTask = await proxmox.stopVM(instance.proxmox_id);
+                await proxmox.waitForTaskCompletion(stopTask);
+            } catch (err) {
+                logger.warn(
+                    { err, proxmox_id: instance.proxmox_id },
+                    "Could not stop VM before deletion (may already be stopped)",
+                );
             }
-        } catch (err) {
-            logger.warn(
-                { err, instanceId },
-                "Could not delete Guacamole connection (may not exist)",
-            );
-        }
 
-        // 3. Remove from DB
-        await pool.query(`DELETE FROM instances WHERE id = $1`, [instanceId]);
+            const deleteTask = await proxmox.deleteVM(instance.proxmox_id);
+            await proxmox.waitForTaskCompletion(deleteTask);
+
+            // 2. Delete Guacamole connection (connection name == instance id string)
+            try {
+                const conn = await guacamole.getConnectionSummary(
+                    String(instanceId),
+                );
+                if (conn?.identifier) {
+                    await guacamole.deleteConnection(conn.identifier);
+                }
+            } catch (err) {
+                logger.warn(
+                    { err, instanceId },
+                    "Could not delete Guacamole connection (may not exist)",
+                );
+            }
+
+            // 3. Remove from DB
+            await pool.query(`DELETE FROM instances WHERE id = $1`, [
+                instanceId,
+            ]);
+
+            vlabInstanceLifecycleTotal.inc({
+                op: "delete",
+                result: "success",
+            });
+        } catch (err) {
+            vlabInstanceLifecycleTotal.inc({ op: "delete", result: "error" });
+            throw err;
+        }
     },
 
     updateRuntimeHours: async (
@@ -257,6 +307,10 @@ export const Instances = {
                     "Failed to remove expired instance",
                 );
             }
+        }
+
+        if (deletedCount > 0) {
+            vlabInstancesExpiredRemovedTotal.inc(deletedCount);
         }
 
         return deletedCount;
