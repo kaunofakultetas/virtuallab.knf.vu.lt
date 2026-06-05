@@ -55,8 +55,7 @@ export function Navbar({ onLogout }: NavbarProps) {
                 />
                 <Typography
                     variant="subtitle1"
-                    fontWeight={600}
-                    sx={{ color: "#fff", whiteSpace: "nowrap" }}
+                    sx={{ color: "#fff", whiteSpace: "nowrap", fontWeight: 600 }}
                 >
                     Virtual Lab
                 </Typography>
@@ -95,8 +94,7 @@ export function Navbar({ onLogout }: NavbarProps) {
                         >
                             <Typography
                                 variant="body2"
-                                fontWeight={600}
-                                sx={{ color: "#fff", lineHeight: 1.1 }}
+                                sx={{ color: "#fff", lineHeight: 1.1, fontWeight: 600 }}
                             >
                                 {auth.vu_id}
                             </Typography>

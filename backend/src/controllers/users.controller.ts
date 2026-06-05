@@ -44,6 +44,12 @@ export const Users = {
         }
 
         const user = res.rows[0];
+
+        // SSO-only users have no password set
+        if (!user.password) {
+            return null;
+        }
+
         const isPasswordValid = await bcrypt.compare(password, user.password);
 
         if (!isPasswordValid) {
@@ -56,6 +62,17 @@ export const Users = {
             vu_id: user.vu_id,
             role: user.role,
         };
+    },
+
+    async upsertSsoUser(vu_id: string): Promise<User> {
+        const res = await pool.query(
+            `INSERT INTO users (vu_id, password, role)
+             VALUES ($1, NULL, 'student')
+             ON CONFLICT (vu_id) DO UPDATE SET last_login = NOW()
+             RETURNING vu_id, role`,
+            [vu_id],
+        );
+        return res.rows[0] as User;
     },
 
     async change(vu_id: string, newPassword: string): Promise<boolean> {

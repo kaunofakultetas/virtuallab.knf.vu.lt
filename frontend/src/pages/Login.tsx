@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams, Link as RouterLink } from "react-router-dom";
 import axios from "axios";
 import Box from "@mui/material/Box";
+import Link from "@mui/material/Link";
 import Paper from "@mui/material/Paper";
 import TextField from "@mui/material/TextField";
 import Button from "@mui/material/Button";
@@ -15,10 +16,15 @@ import knfLogo from "@/assets/knfLogoText.svg";
 
 export default function Login() {
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
     const { mode } = useColorMode();
     const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
-    const [error, setError] = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(
+        searchParams.get("error") === "sso_failed"
+            ? "SSO login failed. Please try again or use your password."
+            : null,
+    );
     const [loading, setLoading] = useState(false);
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -71,13 +77,12 @@ export default function Login() {
 
                 <Typography
                     variant="h5"
-                    fontWeight={700}
-                    mb={0.5}
+                    sx={{ fontWeight: 700, mb: 0.5 }}
                     color="primary"
                 >
                     Virtual Lab
                 </Typography>
-                <Typography variant="body2" color="text.secondary" mb={4}>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 4 }}>
                     Sign in to your account
                 </Typography>
 
@@ -139,6 +144,17 @@ export default function Login() {
                     >
                         Login through VU SSO
                     </Button>
+                </Box>
+
+                <Box sx={{ mt: 2, textAlign: "center" }}>
+                    <Link
+                        component={RouterLink}
+                        to="/privacy"
+                        variant="caption"
+                        color="text.disabled"
+                    >
+                        Privacy Policy
+                    </Link>
                 </Box>
             </Paper>
         </div>

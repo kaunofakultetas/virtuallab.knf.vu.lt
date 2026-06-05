@@ -48,8 +48,9 @@ export default function ErrorPage() {
             <AnimatedBackground />
             {/* Big status number */}
             <Typography
-                sx={{ position: "relative", zIndex: 1 }}
                 sx={{
+                    position: "relative",
+                    zIndex: 1,
                     fontSize: { xs: "6rem", sm: "9rem" },
                     fontWeight: 800,
                     lineHeight: 1,
@@ -76,7 +77,7 @@ export default function ErrorPage() {
                     maxWidth: 420,
                 }}
             >
-                <Typography variant="h5" fontWeight={700} color="text.primary">
+                <Typography variant="h5" sx={{ fontWeight: 700 }} color="text.primary">
                     {title}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">

@@ -157,7 +157,7 @@ export default function TemplateDetails() {
         <Stack spacing={2}>
             <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2 }}>
                 <Box>
-                    <Typography variant="h5" fontWeight={700}>
+                    <Typography variant="h5" sx={{ fontWeight: 700 }}>
                         Template details
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
@@ -177,7 +177,7 @@ export default function TemplateDetails() {
                 <Paper sx={{ p: 3 }}>
                     <Stack spacing={2}>
                         <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
-                            <Typography variant="h6" fontWeight={700}>
+                            <Typography variant="h6" sx={{ fontWeight: 700 }}>
                                 {template.name ?? `Template ${template.id}`}
                             </Typography>
                             <Chip
@@ -204,7 +204,7 @@ export default function TemplateDetails() {
                                 <Typography variant="caption" color="text.secondary">
                                     Template ID
                                 </Typography>
-                                <Typography variant="body2" fontWeight={600}>
+                                <Typography variant="body2" sx={{ fontWeight: 600 }}>
                                     {template.id}
                                 </Typography>
                             </Box>
@@ -212,7 +212,7 @@ export default function TemplateDetails() {
                                 <Typography variant="caption" color="text.secondary">
                                     Type
                                 </Typography>
-                                <Typography variant="body2" fontWeight={600}>
+                                <Typography variant="body2" sx={{ fontWeight: 600 }}>
                                     {template.type ?? "-"}
                                 </Typography>
                             </Box>
@@ -220,7 +220,7 @@ export default function TemplateDetails() {
                                 <Typography variant="caption" color="text.secondary">
                                     Proxmox ID
                                 </Typography>
-                                <Typography variant="body2" fontWeight={600}>
+                                <Typography variant="body2" sx={{ fontWeight: 600 }}>
                                     {template.proxmox_id ?? "-"}
                                 </Typography>
                             </Box>
@@ -228,7 +228,7 @@ export default function TemplateDetails() {
                                 <Typography variant="caption" color="text.secondary">
                                     Description
                                 </Typography>
-                                <Typography variant="body2" fontWeight={600}>
+                                <Typography variant="body2" sx={{ fontWeight: 600 }}>
                                     {template.description || "No description"}
                                 </Typography>
                             </Box>
@@ -287,15 +287,13 @@ export default function TemplateDetails() {
                 autoHideDuration={4000}
                 onClose={() => setSnackbar(null)}
             >
-                {snackbar && (
-                    <Alert
-                        onClose={() => setSnackbar(null)}
-                        severity={snackbar.severity}
-                        sx={{ width: "100%" }}
-                    >
-                        {snackbar.message}
-                    </Alert>
-                )}
+                <Alert
+                    onClose={() => setSnackbar(null)}
+                    severity={snackbar?.severity ?? "info"}
+                    sx={{ width: "100%" }}
+                >
+                    {snackbar?.message}
+                </Alert>
             </Snackbar>
         </Stack>
     );

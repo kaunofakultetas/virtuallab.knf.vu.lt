@@ -10,9 +10,10 @@ import {
     userParamsSchema,
 } from "@/types/validators/auth.zod";
 import { logger } from "@/utils/logger";
+import { getSamlInstances, buildSpMetadata } from "@/utils/saml";
 import { randomBytes } from "crypto";
 
-import { Router } from "express";
+import express, { Router } from "express";
 import jwt from "jsonwebtoken";
 
 const router = Router();
@@ -232,5 +233,78 @@ router.patch(
         }
     },
 );
+
+// Initiate SAML login — redirects browser to IdP
+router.get("/sso", (req, res) => {
+    const saml = getSamlInstances();
+    if (!saml) {
+        return res.status(503).json({ error: "SSO is not configured" });
+    }
+    const { context } = saml.sp.createLoginRequest(saml.idp, "redirect");
+    res.redirect(context as string);
+});
+
+// SAML assertion consumer — IdP posts SAMLResponse here
+router.post(
+    "/sso/callback",
+    express.urlencoded({ extended: false }),
+    async (req, res) => {
+        const saml = getSamlInstances();
+        if (!saml) {
+            return res.status(503).json({ error: "SSO is not configured" });
+        }
+        try {
+            const { extract } = await saml.sp.parseLoginResponse(
+                saml.idp,
+                "post",
+                req,
+            );
+
+            // eduPersonTargetedID — opaque persistent per-SP identifier (preferred)
+            // Falls back to NameID (persistent format) if not present as attribute
+            const attrs = extract.attributes as Record<string, string | string[]>;
+            const raw =
+                attrs["urn:oid:1.3.6.1.4.1.5923.1.1.1.10"] ??
+                extract.nameID;
+            const vu_id = Array.isArray(raw) ? raw[0] : raw;
+
+            if (!vu_id) {
+                logger.warn({ extract }, "SAML response missing user identifier");
+                return res.redirect("/login?error=sso_failed");
+            }
+
+            const user = await Users.upsertSsoUser(vu_id);
+
+            const tokenPayload: TokenPayload = {
+                vu_id: user.vu_id,
+                role: user.role,
+            };
+
+            const token = jwt.sign(
+                tokenPayload,
+                process.env.BACKEND_JWT_SECRET as string,
+                { expiresIn: "24h" },
+            );
+
+            res.cookie("token", token, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === "production",
+                sameSite: "strict",
+            }).redirect("/");
+        } catch (err) {
+            logger.error(err, "SAML callback error");
+            res.redirect("/login?error=sso_failed");
+        }
+    },
+);
+
+// Serve SP metadata XML for federation registration
+router.get("/saml/metadata", (req, res) => {
+    const saml = getSamlInstances();
+    if (!saml) {
+        return res.status(503).json({ error: "SSO is not configured" });
+    }
+    res.type("application/xml").send(buildSpMetadata(saml.signingCert));
+});
 
 export { router as authRouter };

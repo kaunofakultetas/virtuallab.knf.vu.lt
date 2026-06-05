@@ -1,3 +1,5 @@
+import React from "react";
+import Box from "@mui/material/Box";
 import Dialog from "@mui/material/Dialog";
 import DialogTitle from "@mui/material/DialogTitle";
 import DialogContent from "@mui/material/DialogContent";
@@ -47,26 +49,12 @@ export function TemplateFormDialog({
     const hasTypeOptions = Boolean(typeOptions?.length);
 
     return (
-        <Dialog
-            open={open}
-            onClose={onClose}
-            fullWidth
-            maxWidth="sm"
-            PaperComponent="form"
-            slotProps={{
-                paper: {
-                    onSubmit: (event) => {
-                        event.preventDefault();
-                        onSubmit();
-                    },
-                    sx: {
-                        bgcolor: "background.paper",
-                        backgroundImage: "none",
-                        borderRadius: 2,
-                    },
-                },
-            }}
-        >
+        <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
+            <Box
+                component="form"
+                onSubmit={(e: React.FormEvent) => { e.preventDefault(); onSubmit(); }}
+                sx={{ bgcolor: "background.paper", backgroundImage: "none", borderRadius: 2 }}
+            >
             <DialogTitle>{title}</DialogTitle>
             <DialogContent>
                 <Stack spacing={2} sx={{ mt: 1 }}>
@@ -159,6 +147,7 @@ export function TemplateFormDialog({
                     {submitLabel}
                 </Button>
             </DialogActions>
+            </Box>
         </Dialog>
     );
 }

@@ -21,11 +21,14 @@ END $$;
 
 CREATE TABLE IF NOT EXISTS users (
     vu_id VARCHAR(255) PRIMARY KEY,
-    password VARCHAR(255) NOT NULL,
+    password VARCHAR(255),
     role user_role NOT NULL DEFAULT 'student',
     last_login TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Allow NULL passwords for SSO-only users (idempotent)
+ALTER TABLE users ALTER COLUMN password DROP NOT NULL;
 
 CREATE TABLE IF NOT EXISTS templates (
     id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

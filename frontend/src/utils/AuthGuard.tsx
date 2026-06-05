@@ -82,7 +82,7 @@ export const RequireAdmin = ({ children }: RequireAdminProps) => {
                     gap: 1.5,
                 }}
             >
-                <Typography variant="h5" fontWeight={700}>
+                <Typography variant="h5" sx={{ fontWeight: 700 }}>
                     Access restricted
                 </Typography>
                 <Typography variant="body2" color="text.secondary">

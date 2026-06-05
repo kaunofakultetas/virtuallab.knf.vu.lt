@@ -66,7 +66,7 @@ virtuallab.knf.vu.lt {
         }
 
         handle {
-            reverse_proxy frontend:5173 {
+            reverse_proxy frontend:80 {
                 header_up X-Forwarded-For {remote_host}
             }
         }

@@ -2,13 +2,11 @@ name: virtual-lab
 
 services:
     frontend:
-        # TODO: Change to build when prod-ready
-        image: node:22-alpine
+        build:
+            context: ./frontend
         container_name: frontend
-        working_dir: /app
-        command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
-        volumes:
-            - ./frontend:/app
+        # Dev mode (replace with image: node:22-alpine, working_dir: /app, volumes: [./frontend:/app]):
+        # command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
         networks:
             - isolated
         restart: unless-stopped
@@ -24,13 +22,14 @@ services:
             - NODE_EXTRA_CA_CERTS=/certs/logs.knf.vu.lt.crt
 
         volumes:
-            - ./certs/logs.knf.vu.lt.crt:/certs/logs.knf.vu.lt.crt:ro
+            - ./certs/:/certs/:ro
 
         read_only: true
         networks:
             - isolated
         extra_hosts:
             - "logs.knf.vu.lt:172.18.3.30"
+            - "sso.vu.lt:172.18.3.30"
         restart: unless-stopped
 
     caddy:
@@ -44,13 +43,36 @@ services:
 
         volumes:
             - ./Caddyfile:/etc/caddy/Caddyfile:ro
-            - ./CaddyAccess.log:/var/log/caddy/access.log
+            - ./_DATA/caddy_logs:/var/log/caddy:rw
             - caddy_data:/data
             - caddy_config:/config
 
         networks:
             - external
             - isolated
+        restart: unless-stopped
+
+    caddy-fluentbit:
+        container_name: caddy-fluentbit
+        image: fluent/fluent-bit:5.0.6
+        user: 1000:1000
+        read_only: true
+        environment:
+            - LOKI_HOST=logs.knf.vu.lt
+            - LOKI_USER=${CADDY_LOKI_USER}
+            - LOKI_PASSWORD=${CADDY_LOKI_PASS}
+            - LOKI_PORT=443
+            - LOG_LEVEL=info
+            - SERVICE_NAME=${CADDY_LOKI_USER}
+        tmpfs:
+            - /tmp:uid=1000,gid=1000
+        volumes:
+            # FluentBit configuration files
+            - ./fluentbit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+            - ./fluentbit/parsers.conf:/fluent-bit/etc/parsers.conf:ro
+
+            # Caddy logs directory
+            - ./_DATA/caddy_logs:/var/log/caddy:ro
         restart: unless-stopped
 
     exit:

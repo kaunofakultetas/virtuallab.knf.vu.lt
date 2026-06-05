@@ -257,7 +257,7 @@ export default function Templates() {
                 }}
             >
                 <Box>
-                    <Typography variant="h5" fontWeight={700}>
+                    <Typography variant="h5" sx={{ fontWeight: 700 }}>
                         Templates
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
@@ -325,7 +325,7 @@ export default function Templates() {
                                 return (
                                     <TableRow key={String(template.id)}>
                                         <TableCell>
-                                            <Typography variant="body2" fontWeight={600}>
+                                            <Typography variant="body2" sx={{ fontWeight: 600 }}>
                                                 {template.name ?? `Template ${template.id}`}
                                             </Typography>
                                         </TableCell>
@@ -448,15 +448,13 @@ export default function Templates() {
                 autoHideDuration={4000}
                 onClose={() => setSnackbar(null)}
             >
-                {snackbar && (
-                    <Alert
-                        onClose={() => setSnackbar(null)}
-                        severity={snackbar.severity}
-                        sx={{ width: "100%" }}
-                    >
-                        {snackbar.message}
-                    </Alert>
-                )}
+                <Alert
+                    onClose={() => setSnackbar(null)}
+                    severity={snackbar?.severity ?? "info"}
+                    sx={{ width: "100%" }}
+                >
+                    {snackbar?.message}
+                </Alert>
             </Snackbar>
         </Stack>
     );

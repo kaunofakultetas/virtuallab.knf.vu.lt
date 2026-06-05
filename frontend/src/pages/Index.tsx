@@ -106,7 +106,7 @@ function StatCard({ icon, label, value, color, href }: StatCardProps) {
                 {icon}
             </Box>
             <Box>
-                <Typography variant="h4" fontWeight={700} lineHeight={1.1}>
+                <Typography variant="h4" sx={{ fontWeight: 700, lineHeight: 1.1 }}>
                     {value}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
@@ -183,7 +183,7 @@ function AdminDashboard() {
                 }}
             >
                 <Box>
-                    <Typography variant="h5" fontWeight={700}>
+                    <Typography variant="h5" sx={{ fontWeight: 700 }}>
                         Dashboard
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
@@ -268,7 +268,7 @@ function AdminDashboard() {
                         mb: 1,
                     }}
                 >
-                    <Typography variant="subtitle1" fontWeight={600}>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
                         Expiring within the hour
                     </Typography>
                     {expiringSoon.length > 0 && (
@@ -310,7 +310,7 @@ function AdminDashboard() {
                                             <TableCell>
                                                 <Typography
                                                     variant="body2"
-                                                    fontWeight={600}
+                                                    sx={{ fontWeight: 600 }}
                                                 >
                                                     {instance.name ??
                                                         `Instance ${instance.id}`}
@@ -345,7 +345,7 @@ function AdminDashboard() {
                                                 <Typography
                                                     variant="body2"
                                                     color="warning.main"
-                                                    fontWeight={600}
+                                                    sx={{ fontWeight: 600 }}
                                                 >
                                                     {runtime.text}
                                                 </Typography>
@@ -505,7 +505,7 @@ function StudentDashboard() {
                 }}
             >
                 <Box>
-                    <Typography variant="h5" fontWeight={700}>
+                    <Typography variant="h5" sx={{ fontWeight: 700 }}>
                         Dashboard
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
@@ -553,7 +553,7 @@ function StudentDashboard() {
                             sx={{ fontSize: 48, color: "text.disabled" }}
                         />
                         <Box sx={{ textAlign: "center" }}>
-                            <Typography variant="h6" fontWeight={600}>
+                            <Typography variant="h6" sx={{ fontWeight: 600 }}>
                                 No active instances
                             </Typography>
                             <Typography
@@ -615,8 +615,8 @@ function StudentDashboard() {
                                         >
                                             <Typography
                                                 variant="subtitle1"
-                                                fontWeight={600}
                                                 noWrap
+                                                sx={{ fontWeight: 600 }}
                                             >
                                                 {instance.name ??
                                                     `Instance ${instance.id}`}
@@ -641,9 +641,7 @@ function StudentDashboard() {
                                                     ? "warning.main"
                                                     : "text.secondary"
                                             }
-                                            fontWeight={
-                                                runtime.warning ? 600 : 400
-                                            }
+                                            sx={{ fontWeight: runtime.warning ? 600 : 400 }}
                                         >
                                             {runtime.text}
                                         </Typography>
@@ -775,15 +773,13 @@ function StudentDashboard() {
                 autoHideDuration={4000}
                 onClose={() => setSnackbar(null)}
             >
-                {snackbar && (
-                    <Alert
-                        onClose={() => setSnackbar(null)}
-                        severity={snackbar.severity}
-                        sx={{ width: "100%" }}
-                    >
-                        {snackbar.message}
-                    </Alert>
-                )}
+                <Alert
+                    onClose={() => setSnackbar(null)}
+                    severity={snackbar?.severity ?? "info"}
+                    sx={{ width: "100%" }}
+                >
+                    {snackbar?.message}
+                </Alert>
             </Snackbar>
         </Stack>
     );

@@ -242,7 +242,7 @@ export default function Settings() {
                                             )}
                                         </TableCell>
                                         <TableCell>
-                                            <Stack direction="row" spacing={1} alignItems="center">
+                                            <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
                                                 <Typography
                                                     variant="body2"
                                                     sx={{ fontFamily: "monospace" }}
@@ -346,15 +346,13 @@ export default function Settings() {
                 autoHideDuration={4000}
                 onClose={() => setSnackbar(null)}
             >
-                {snackbar && (
-                    <Alert
-                        onClose={() => setSnackbar(null)}
-                        severity={snackbar.severity}
-                        sx={{ width: "100%" }}
-                    >
-                        {snackbar.message}
-                    </Alert>
-                )}
+                <Alert
+                    onClose={() => setSnackbar(null)}
+                    severity={snackbar?.severity ?? "info"}
+                    sx={{ width: "100%" }}
+                >
+                    {snackbar?.message}
+                </Alert>
             </Snackbar>
         </Stack>
     );

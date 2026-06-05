@@ -5,6 +5,11 @@
 			route @exit_logs {
 				proxy logs.knf.vu.lt:443
 			}
+
+			@exit_vu_sso tls sni sso.vu.lt
+			route @exit_vu_sso {
+				proxy sso.vu.lt:443
+			}
 		}
 
 		# Proxmox API — blind TCP forward, no SNI (raw IP backend)

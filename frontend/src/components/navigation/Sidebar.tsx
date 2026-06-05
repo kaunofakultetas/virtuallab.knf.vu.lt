@@ -135,10 +135,10 @@ function SidebarItem({
                         {!collapsed && (
                             <Typography
                                 variant="body2"
-                                fontWeight={isActive ? 600 : 400}
                                 noWrap
                                 sx={{
                                     color: isActive ? "#fff" : "text.primary",
+                                    fontWeight: isActive ? 600 : 400,
                                 }}
                             >
                                 {item.label}

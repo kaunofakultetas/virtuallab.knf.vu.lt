@@ -37,7 +37,6 @@ import DeleteOutlinedIcon from "@mui/icons-material/DeleteOutlined";
 import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined";
 import type { Instance, Template } from "@/types/instances";
 import Switch from "@mui/material/Switch";
-import FormControlLabel from "@mui/material/FormControlLabel";
 
 type TypeFilter = "all" | "student_vm" | "lab_vm";
 
@@ -735,7 +734,7 @@ export default function AdminInstances() {
                                         <Stack
                                             direction="row"
                                             spacing={1}
-                                            alignItems="center"
+                                            sx={{ alignItems: "center" }}
                                         >
                                             <Chip
                                                 size="small"
@@ -786,15 +785,13 @@ export default function AdminInstances() {
                 autoHideDuration={4000}
                 onClose={() => setSnackbar(null)}
             >
-                {snackbar && (
-                    <Alert
-                        onClose={() => setSnackbar(null)}
-                        severity={snackbar.severity}
-                        sx={{ width: "100%" }}
-                    >
-                        {snackbar.message}
-                    </Alert>
-                )}
+                <Alert
+                    onClose={() => setSnackbar(null)}
+                    severity={snackbar?.severity ?? "info"}
+                    sx={{ width: "100%" }}
+                >
+                    {snackbar?.message}
+                </Alert>
             </Snackbar>
         </Stack>
     );

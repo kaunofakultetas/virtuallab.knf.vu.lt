@@ -24,7 +24,7 @@ const normalizeVisibility = (value: unknown): boolean | undefined => {
 };
 
 const normalizeTemplate = (template: Template): Template => {
-    const rawVisibility = (template as Record<string, unknown>)
+    const rawVisibility = (template as unknown as Record<string, unknown>)
         .visible_to_students;
     const normalizedVisibility = normalizeVisibility(rawVisibility);
     if (normalizedVisibility === undefined) {
@@ -51,10 +51,10 @@ export const extractTemplate = (data: unknown): Template | null => {
         return null;
     }
     if (isRecord(data) && isRecord(data.template)) {
-        return normalizeTemplate(data.template as Template);
+        return normalizeTemplate(data.template as unknown as Template);
     }
     if (isRecord(data)) {
-        return normalizeTemplate(data as Template);
+        return normalizeTemplate(data as unknown as Template);
     }
     return null;
 };

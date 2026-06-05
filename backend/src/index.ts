@@ -1,6 +1,7 @@
 import { pool } from "@/utils/db";
 import { logger } from "@/utils/logger";
 import { metadata } from "@/utils/metadata";
+import { initSaml } from "@/utils/saml";
 import { pollMetrics } from "@/utils/metrics-poller";
 import { authRouter } from "@/routes/auth.route";
 import { instancesRouter } from "@/routes/instances.route";
@@ -98,6 +99,11 @@ async function bootstrap() {
         await pool.query(schema);
         await metadata.initDefaults();
         logger.info("Database schema is up to date");
+
+        await initSaml();
+        logger.info(
+            process.env.SAML_SP_ENTITY_ID ? "SAML SSO initialised" : "SAML SSO disabled",
+        );
 
         // Task to update db entries of instance statuses
         const updInstanceStJob = new SimpleIntervalJob(

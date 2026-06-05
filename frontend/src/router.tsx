@@ -1,21 +1,27 @@
+import { lazy, Suspense } from "react";
 import { createBrowserRouter } from "react-router-dom";
 import axios from "axios";
 
-import Index from "@/pages/Index";
-import About from "@/pages/About";
-import Login from "@/pages/Login";
-import PageLayout from "@/pages/PageLayout";
-import ErrorPage from "@/pages/ErrorPage";
-import AdminTemplates from "@/pages/admin/Templates";
-import AdminTemplateDetails from "@/pages/admin/TemplateDetails";
-import AdminUsers from "@/pages/admin/Users";
-import AdminGuacamole from "@/pages/admin/Guacamole";
-import AdminProxmoxDashboard from "@/pages/admin/ProxmoxDashboard";
-import AdminInstances from "@/pages/admin/AdminInstances";
-import AdminSettings from "@/pages/admin/Settings";
-import Instances from "@/pages/Instances";
+const Index = lazy(() => import("@/pages/Index"));
+const About = lazy(() => import("@/pages/About"));
+const Login = lazy(() => import("@/pages/Login"));
+const Privacy = lazy(() => import("@/pages/Privacy"));
+const PageLayout = lazy(() => import("@/pages/PageLayout"));
+const ErrorPage = lazy(() => import("@/pages/ErrorPage"));
+const AdminTemplates = lazy(() => import("@/pages/admin/Templates"));
+const AdminTemplateDetails = lazy(() => import("@/pages/admin/TemplateDetails"));
+const AdminUsers = lazy(() => import("@/pages/admin/Users"));
+const AdminGuacamole = lazy(() => import("@/pages/admin/Guacamole"));
+const AdminProxmoxDashboard = lazy(() => import("@/pages/admin/ProxmoxDashboard"));
+const AdminInstances = lazy(() => import("@/pages/admin/AdminInstances"));
+const AdminSettings = lazy(() => import("@/pages/admin/Settings"));
+const Instances = lazy(() => import("@/pages/Instances"));
 import { AuthProvider, RequireAuth, RequireAdmin } from "@/utils/AuthGuard";
 import { extractTemplate, extractTemplates } from "@/utils/templates";
+
+const S = ({ children }: { children: React.ReactNode }) => (
+    <Suspense fallback={null}>{children}</Suspense>
+);
 
 const toRouteError = (err: unknown, fallbackStatus = 500) => {
     if (err instanceof Response) {
@@ -83,83 +89,58 @@ const templateDetailsLoader = async ({
 export const router = createBrowserRouter([
     {
         path: "/login",
-        element: <Login />,
-        errorElement: <ErrorPage />,
+        element: <S><Login /></S>,
+        errorElement: <S><ErrorPage /></S>,
+    },
+    {
+        path: "/privacy",
+        element: <S><Privacy /></S>,
     },
     {
         path: "/",
         element: (
-            <AuthProvider>
-                <RequireAuth>
-                    <PageLayout />
-                </RequireAuth>
-            </AuthProvider>
+            <S>
+                <AuthProvider>
+                    <RequireAuth>
+                        <PageLayout />
+                    </RequireAuth>
+                </AuthProvider>
+            </S>
         ),
-        errorElement: <ErrorPage />,
+        errorElement: <S><ErrorPage /></S>,
         children: [
-            { index: true, element: <Index /> },
-            {
-                path: "instances",
-                element: <Instances />,
-            },
-            { path: "home", element: <About /> },
+            { index: true, element: <S><Index /></S> },
+            { path: "instances", element: <S><Instances /></S> },
+            { path: "home", element: <S><About /></S> },
             {
                 path: "admin/templates",
-                element: (
-                    <RequireAdmin>
-                        <AdminTemplates />
-                    </RequireAdmin>
-                ),
+                element: <S><RequireAdmin><AdminTemplates /></RequireAdmin></S>,
                 loader: templatesLoader,
             },
             {
                 path: "admin/templates/:id",
-                element: (
-                    <RequireAdmin>
-                        <AdminTemplateDetails />
-                    </RequireAdmin>
-                ),
+                element: <S><RequireAdmin><AdminTemplateDetails /></RequireAdmin></S>,
                 loader: templateDetailsLoader,
             },
             {
                 path: "admin/users",
-                element: (
-                    <RequireAdmin>
-                        <AdminUsers />
-                    </RequireAdmin>
-                ),
+                element: <S><RequireAdmin><AdminUsers /></RequireAdmin></S>,
             },
             {
                 path: "admin/instances",
-                element: (
-                    <RequireAdmin>
-                        <AdminInstances />
-                    </RequireAdmin>
-                ),
+                element: <S><RequireAdmin><AdminInstances /></RequireAdmin></S>,
             },
             {
                 path: "admin/guacamole",
-                element: (
-                    <RequireAdmin>
-                        <AdminGuacamole />
-                    </RequireAdmin>
-                ),
+                element: <S><RequireAdmin><AdminGuacamole /></RequireAdmin></S>,
             },
             {
                 path: "admin/proxmox-dashboard",
-                element: (
-                    <RequireAdmin>
-                        <AdminProxmoxDashboard />
-                    </RequireAdmin>
-                ),
+                element: <S><RequireAdmin><AdminProxmoxDashboard /></RequireAdmin></S>,
             },
             {
                 path: "admin/settings",
-                element: (
-                    <RequireAdmin>
-                        <AdminSettings />
-                    </RequireAdmin>
-                ),
+                element: <S><RequireAdmin><AdminSettings /></RequireAdmin></S>,
             },
         ],
     },
