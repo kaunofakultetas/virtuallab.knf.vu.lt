@@ -40,6 +40,14 @@ const emptyFormValues: TemplateFormValues = {
     proxmox_id: "",
     description: "",
     visible_to_students: false,
+    connection_type: "guacamole",
+    ssh_port: "",
+    ssh_username_mode: "userId",
+    ssh_username_custom: "",
+    ssh_password_mode: "userId",
+    ssh_password_custom: "",
+    web_port: "",
+    web_protocol: "https",
 };
 
 export default function Templates() {
@@ -118,6 +126,22 @@ export default function Templates() {
         setEditingTemplate(null);
     };
 
+    const buildConnectionConfig = (values: TemplateFormValues) => {
+        const cfg: Record<string, unknown> = {};
+        if (values.connection_type === "ssh") {
+            const resolveCredential = (mode: string, custom: string) =>
+                mode === "custom" ? custom : mode;
+            cfg.username = resolveCredential(values.ssh_username_mode, values.ssh_username_custom);
+            cfg.password = resolveCredential(values.ssh_password_mode, values.ssh_password_custom);
+            if (values.ssh_port) cfg.port = parseInt(values.ssh_port);
+        }
+        if (values.connection_type === "web") {
+            cfg.port = values.web_port ? parseInt(values.web_port) : 443;
+            cfg.protocol = values.web_protocol || "https";
+        }
+        return cfg;
+    };
+
     const handleCreate = async () => {
         if (!isCreateValid) {
             return;
@@ -129,6 +153,8 @@ export default function Templates() {
                 type: createValues.type.trim(),
                 proxmox_id: createValues.proxmox_id.trim(),
                 description: createValues.description.trim(),
+                connection_type: createValues.connection_type,
+                connection_config: buildConnectionConfig(createValues),
             };
             const response = await axios.post("/api/templates", payload);
             const createdTemplate = extractTemplate(response.data);
@@ -161,6 +187,8 @@ export default function Templates() {
                 proxmox_id: editValues.proxmox_id.trim(),
                 description: editValues.description.trim(),
                 visible_to_students: editValues.visible_to_students,
+                connection_type: editValues.connection_type,
+                connection_config: buildConnectionConfig(editValues),
             };
             const response = await axios.patch(
                 `/api/templates/${editingTemplate.id}`,
@@ -237,12 +265,24 @@ export default function Templates() {
 
     const openEditDialog = (template: Template) => {
         setEditingTemplate(template);
+        const cfg = template.connection_config ?? {};
+        const connType = template.connection_type ?? "guacamole";
+        const detectMode = (v?: string): "creatorId" | "userId" | "custom" =>
+            v === "creatorId" || v === "userId" ? v : "custom";
         setEditValues({
             name: template.name ?? "",
             type: template.type ?? "",
             proxmox_id: template.proxmox_id ? String(template.proxmox_id) : "",
             description: template.description ?? "",
             visible_to_students: Boolean(template.visible_to_students),
+            connection_type: connType,
+            ssh_port: connType === "ssh" && cfg.port ? String(cfg.port) : "",
+            ssh_username_mode: connType === "ssh" ? detectMode(cfg.username) : "userId",
+            ssh_username_custom: connType === "ssh" && detectMode(cfg.username) === "custom" ? (cfg.username ?? "") : "",
+            ssh_password_mode: connType === "ssh" ? detectMode(cfg.password) : "userId",
+            ssh_password_custom: connType === "ssh" && detectMode(cfg.password) === "custom" ? (cfg.password ?? "") : "",
+            web_port: connType === "web" && cfg.port ? String(cfg.port) : "",
+            web_protocol: connType === "web" ? (cfg.protocol ?? "https") : "https",
         });
         setEditOpen(true);
     };
@@ -283,6 +323,7 @@ export default function Templates() {
                             <TableCell>Type</TableCell>
                             <TableCell>Proxmox ID</TableCell>
                             <TableCell>Visibility</TableCell>
+                            <TableCell>Connection</TableCell>
                             <TableCell>Description</TableCell>
                             <TableCell align="right">Actions</TableCell>
                         </TableRow>
@@ -290,7 +331,7 @@ export default function Templates() {
                     <TableBody>
                         {loading ? (
                             <TableRow>
-                                <TableCell colSpan={6}>
+                                <TableCell colSpan={7}>
                                     <Box
                                         sx={{
                                             display: "flex",
@@ -304,7 +345,7 @@ export default function Templates() {
                             </TableRow>
                         ) : templates.length === 0 ? (
                             <TableRow>
-                                <TableCell colSpan={6}>
+                                <TableCell colSpan={7}>
                                     <Typography
                                         variant="body2"
                                         color="text.secondary"
@@ -343,6 +384,13 @@ export default function Templates() {
                                                         : "default"
                                                 }
                                             />
+                                        </TableCell>
+                                        <TableCell>
+                                            {template.connection_type === "ssh"
+                                                ? "SSH"
+                                                : template.connection_type === "web"
+                                                  ? `Web (:${template.connection_config?.port ?? 443})`
+                                                  : "Guacamole"}
                                         </TableCell>
                                         <TableCell>
                                             <Typography

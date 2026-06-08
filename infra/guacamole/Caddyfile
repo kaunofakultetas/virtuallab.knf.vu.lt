@@ -1,0 +1,44 @@
+# Final-hop dynamic proxy for the web-UI feature. Runs on the Guacamole VM, the
+# only host with vmbr20 reach to student VMs. The upstream Caddy (virtuallab:8888)
+# has already authenticated the request and set X-Target-Host / X-Target-Proto from
+# the backend; we just proxy to whatever target those headers name.
+#
+# Cookie handling: virtuallab.knf.vu.lt:443 and :8888 share a cookie jar (cookies
+# ignore ports), so the student's session JWT (`token`) and `webTargetMachine` ride
+# along. We strip both here so they never reach the student-controlled VM; the VM's
+# own cookies (set on later requests) pass through untouched.
+
+{
+    auto_https off
+}
+
+:9443 {
+    @http header X-Target-Proto http
+
+    handle @http {
+        reverse_proxy {http.request.header.X-Target-Host} {
+            header_up Host {http.request.header.X-Target-Host}
+            # Strip our own cookies (anchored to a cookie boundary so names that
+            # merely contain these as a substring, e.g. csrf_token, are untouched),
+            # then trim any leading separator left behind.
+            header_up Cookie "(^|;\s*)(token|webTargetMachine)=[^;]*" ""
+            header_up Cookie "^;\s*" ""
+        }
+    }
+
+    # Default: HTTPS target (OpenVAS GSA and most appliance web UIs).
+    handle {
+        reverse_proxy {http.request.header.X-Target-Host} {
+            transport http {
+                tls
+                tls_insecure_skip_verify
+            }
+            header_up Host {http.request.header.X-Target-Host}
+            # Strip our own cookies (anchored to a cookie boundary so names that
+            # merely contain these as a substring, e.g. csrf_token, are untouched),
+            # then trim any leading separator left behind.
+            header_up Cookie "(^|;\s*)(token|webTargetMachine)=[^;]*" ""
+            header_up Cookie "^;\s*" ""
+        }
+    }
+}

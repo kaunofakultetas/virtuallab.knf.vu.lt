@@ -31,6 +31,14 @@ const emptyFormValues: TemplateFormValues = {
     proxmox_id: "",
     description: "",
     visible_to_students: false,
+    connection_type: "guacamole",
+    ssh_port: "",
+    ssh_username_mode: "userId",
+    ssh_username_custom: "",
+    ssh_password_mode: "userId",
+    ssh_password_custom: "",
+    web_port: "",
+    web_protocol: "https",
 };
 
 export default function TemplateDetails() {
@@ -62,14 +70,42 @@ export default function TemplateDetails() {
     const template = overrides[String(loaderTemplate.id)] ?? loaderTemplate;
 
     const openEditDialog = () => {
+        const cfg = template.connection_config ?? {};
+        const connType = template.connection_type ?? "guacamole";
+        const detectMode = (v?: string): "creatorId" | "userId" | "custom" =>
+            v === "creatorId" || v === "userId" ? v : "custom";
         setEditValues({
             name: template.name ?? "",
             type: template.type ?? "",
             proxmox_id: template.proxmox_id ? String(template.proxmox_id) : "",
             description: template.description ?? "",
             visible_to_students: Boolean(template.visible_to_students),
+            connection_type: connType,
+            ssh_port: connType === "ssh" && cfg.port ? String(cfg.port) : "",
+            ssh_username_mode: connType === "ssh" ? detectMode(cfg.username) : "userId",
+            ssh_username_custom: connType === "ssh" && detectMode(cfg.username) === "custom" ? (cfg.username ?? "") : "",
+            ssh_password_mode: connType === "ssh" ? detectMode(cfg.password) : "userId",
+            ssh_password_custom: connType === "ssh" && detectMode(cfg.password) === "custom" ? (cfg.password ?? "") : "",
+            web_port: connType === "web" && cfg.port ? String(cfg.port) : "",
+            web_protocol: connType === "web" ? (cfg.protocol ?? "https") : "https",
         });
         setEditOpen(true);
+    };
+
+    const buildConnectionConfig = (values: TemplateFormValues) => {
+        const cfg: Record<string, unknown> = {};
+        if (values.connection_type === "ssh") {
+            const resolveCredential = (mode: string, custom: string) =>
+                mode === "custom" ? custom : mode;
+            cfg.username = resolveCredential(values.ssh_username_mode, values.ssh_username_custom);
+            cfg.password = resolveCredential(values.ssh_password_mode, values.ssh_password_custom);
+            if (values.ssh_port) cfg.port = parseInt(values.ssh_port);
+        }
+        if (values.connection_type === "web") {
+            cfg.port = values.web_port ? parseInt(values.web_port) : 443;
+            cfg.protocol = values.web_protocol || "https";
+        }
+        return cfg;
     };
 
     const handleEdit = async () => {
@@ -84,6 +120,8 @@ export default function TemplateDetails() {
                 proxmox_id: editValues.proxmox_id.trim(),
                 description: editValues.description.trim(),
                 visible_to_students: editValues.visible_to_students,
+                connection_type: editValues.connection_type,
+                connection_config: buildConnectionConfig(editValues),
             };
             const response = await axios.patch(`/api/templates/${template.id}`, payload);
             const updatedTemplate = extractTemplate(response.data);

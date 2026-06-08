@@ -76,15 +76,7 @@ ssh ubuntu@10.10.10.50
 
 mkdir guacamole && cd guacamole
 cat > compose.yaml <<'EOF'
-services:
-  guacamole:
-    image: abesnier/guacamole:latest
-    container_name: guacamole
-    restart: unless-stopped
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./data:/config
+(paste contents of compose.yaml here)
 EOF
 
 docker compose up -d

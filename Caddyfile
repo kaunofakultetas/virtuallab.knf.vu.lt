@@ -77,3 +77,25 @@ virtuallab.knf.vu.lt {
         format json
     }
 }
+
+virtuallab.knf.vu.lt:8888 {
+    tls admin@knf.vu.lt
+
+    route {
+        import geo_block_non_vu
+
+        forward_auth backend:3000 {
+            uri /instances/proxy-auth
+            copy_headers X-Target-Host X-Target-Proto
+        }
+
+        reverse_proxy 10.10.10.50:9443 {
+            header_up X-Forwarded-For {remote_host}
+        }
+    }
+
+    log {
+        output file /var/log/caddy/access.log
+        format json
+    }
+}

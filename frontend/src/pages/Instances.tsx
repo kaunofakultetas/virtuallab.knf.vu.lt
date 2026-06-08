@@ -200,10 +200,19 @@ export default function Instances() {
             [`session-${instance.id}`]: true,
         }));
         try {
-            const response = await axios.get<{ url: string }>(
+            const response = await axios.get<{ type: string; url?: string }>(
                 `/api/instances/${instance.id}/session`,
             );
-            if (response.data.url) {
+            if (response.data.type === "web") {
+                // Cookies ignore ports, so this rides along to the :8888 proxy where
+                // the backend forward-auth reads it. SameSite=Lax lets it accompany
+                // the top-level navigation below.
+                document.cookie = `webTargetMachine=${instance.id}; path=/; SameSite=Lax; Secure`;
+                window.open(
+                    `https://${window.location.hostname}:8888/`,
+                    "_blank",
+                );
+            } else if (response.data.url) {
                 window.open(response.data.url, "_blank");
             }
         } catch (err) {

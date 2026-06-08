@@ -597,6 +597,118 @@ export class GuacamoleClient {
         this.connectionCacheOutdated = true;
     }
 
+    async createSshConnection(
+        machineIp: string,
+        machineId: string,
+        options: { port?: number; username?: string; password?: string } = {},
+    ): Promise<GuacamoleConnection> {
+        const { parentIdentifier } = await this.getSettings();
+        const payload: Record<string, unknown> = {
+            parentIdentifier: parentIdentifier,
+            name: machineId,
+            protocol: "ssh",
+            parameters: {
+                hostname: machineIp,
+                port: String(options.port ?? 22),
+                username: options.username ?? "user",
+                password: options.password ?? "",
+                "server-alive-interval": "",
+                "backspace-key": "",
+                "terminal-type": "",
+                "color-scheme": "",
+                "font-name": "",
+                "font-size": "",
+                scrollback: "",
+                "read-only": "",
+                "disable-copy": "",
+                "disable-paste": "",
+                "recording-path": "",
+                "recording-name": "",
+                "recording-exclude-output": "",
+                "recording-exclude-mouse": "",
+                "recording-include-keys": "",
+                "create-recording-path": "",
+                "private-key": "",
+                passphrase: "",
+                "sftp-root-directory": "",
+            },
+            attributes: {
+                "max-connections": "",
+                "max-connections-per-user": "1",
+                weight: "",
+                "failover-only": "",
+                "guacd-port": "",
+                "guacd-encryption": "",
+                "guacd-hostname": "",
+            },
+        };
+
+        this.connectionCacheOutdated = true;
+
+        return this.request<GuacamoleConnection>(
+            "POST",
+            `/api/session/data/${this.dataSource}/connections`,
+            { body: payload },
+        );
+    }
+
+    async updateSshConnection(
+        machineId: string,
+        newMachineIp: string,
+        guacIdentifier: string,
+        options: { port?: number; username?: string; password?: string } = {},
+    ): Promise<GuacamoleConnection> {
+        const { parentIdentifier } = await this.getSettings();
+        const payload: Record<string, unknown> = {
+            parentIdentifier: parentIdentifier,
+            identifier: guacIdentifier,
+            name: machineId,
+            protocol: "ssh",
+            parameters: {
+                hostname: newMachineIp,
+                port: String(options.port ?? 22),
+                username: options.username ?? "user",
+                password: options.password ?? "",
+                "server-alive-interval": "",
+                "backspace-key": "",
+                "terminal-type": "",
+                "color-scheme": "",
+                "font-name": "",
+                "font-size": "",
+                scrollback: "",
+                "read-only": "",
+                "disable-copy": "",
+                "disable-paste": "",
+                "recording-path": "",
+                "recording-name": "",
+                "recording-exclude-output": "",
+                "recording-exclude-mouse": "",
+                "recording-include-keys": "",
+                "create-recording-path": "",
+                "private-key": "",
+                passphrase: "",
+                "sftp-root-directory": "",
+            },
+            attributes: {
+                "max-connections": "",
+                "max-connections-per-user": "1",
+                weight: "",
+                "failover-only": "",
+                "guacd-port": "",
+                "guacd-encryption": "",
+                "guacd-hostname": "",
+            },
+        };
+
+        this.connectionCacheOutdated = true;
+
+        return this.request<GuacamoleConnection>(
+            "PUT",
+            `/api/session/data/${this.dataSource}/connections/${guacIdentifier}`,
+            { body: payload },
+        );
+    }
+
     async deleteUser(username: string): Promise<void> {
         try {
             await this.request<void>(

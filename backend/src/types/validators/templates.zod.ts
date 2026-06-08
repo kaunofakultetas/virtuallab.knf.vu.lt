@@ -1,6 +1,5 @@
 import z from "zod";
 
-// Schema for template_id - must be a non-empty string, digits only
 export const templateIdSchema = z
     .string()
     .min(1, "template_id is required")
@@ -8,20 +7,23 @@ export const templateIdSchema = z
 
 export const templateTypeSchema = z.enum(["student_vm", "lab_vm"]);
 
-// Schema for GET /templates/:id endpoint (route params)
+export const connectionTypeSchema = z.enum(["guacamole", "ssh", "web"]);
+
 export const templateParamsSchema = z.object({
     id: templateIdSchema,
 });
 
-// Schema for POST /templates/ endpoint (template creation)
+const connectionConfigSchema = z.record(z.string(), z.unknown()).optional();
+
 export const createTemplateSchema = z.object({
     type: templateTypeSchema,
     name: z.string().min(1, "name is required"),
     proxmox_id: z.string().min(1, "proxmox_id is required"),
     description: z.string().optional(),
+    connection_type: connectionTypeSchema.optional().default("guacamole"),
+    connection_config: connectionConfigSchema,
 });
 
-// Schema for PATCH /templates/:id endpoint (template update)
 export const updateTemplateSchema = z
     .object({
         type: templateTypeSchema.optional(),
@@ -29,12 +31,13 @@ export const updateTemplateSchema = z
         proxmox_id: z.string().min(1, "proxmox_id is required").optional(),
         description: z.string().optional(),
         visible_to_students: z.boolean().optional(),
+        connection_type: connectionTypeSchema.optional(),
+        connection_config: connectionConfigSchema,
     })
     .refine((data) => Object.keys(data).length > 0, {
         message: "At least one field must be provided for update",
     });
 
-// Schema for DELETE /templates/:id and GET /templates/:id/validate endpoint params
 export const templateDeleteParamsSchema = z.object({
     id: templateIdSchema,
 });

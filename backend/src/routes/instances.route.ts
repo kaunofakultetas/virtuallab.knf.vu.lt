@@ -5,6 +5,7 @@ import { isAdmin, isAuthenticated } from "@/middleware/auth.middleware";
 import { validateRequest } from "@/middleware/zod-validation.middleware";
 import { proxmox } from "@/proxmox";
 import { CreateInstanceDTO } from "@/types/instances";
+import { SshConnectionConfig } from "@/types/templates";
 import {
     createInstanceSchema,
     instanceIdParamSchema,
@@ -15,6 +16,11 @@ import { metadata } from "@/utils/metadata";
 import { Router } from "express";
 
 const router = Router();
+
+// Short-lived cache of resolved VM IPs, keyed by instance id. The web-UI proxy
+// forward-auth fires once per proxied asset, so we avoid hitting Proxmox each time.
+const webProxyIpCache = new Map<number, { ip: string; exp: number }>();
+const WEB_PROXY_IP_TTL_MS = 30_000;
 
 // Gets all instances for current user
 router.get("/", isAuthenticated, (req, res) => {
@@ -53,6 +59,53 @@ router.get("/all/running", isAuthenticated, isAdmin, async (_req, res) => {
         logger.error({ err }, "Error getting running Proxmox instances");
         return res.status(500).json({ message: "Internal server error" });
     }
+});
+
+// Forward-auth endpoint for the web-UI proxy (virtuallab.knf.vu.lt:8888).
+// Caddy calls this on every proxied request: we read the webTargetMachine cookie,
+// verify the caller owns that instance, resolve the VM's web-UI target, and return
+// it as headers. Any non-2xx response makes Caddy deny the request.
+// NOTE: must be registered before "/:instanceId" so it isn't swallowed by it.
+router.all("/proxy-auth", isAuthenticated, async (req, res) => {
+    if (!req.user?.vu_id) return res.status(401).end();
+
+    const machineId = parseInt(req.cookies?.webTargetMachine, 10);
+    if (!machineId || isNaN(machineId)) return res.status(400).end();
+
+    const hasAccess = await Instances.hasAccessTo(req.user.vu_id, machineId);
+    if (!hasAccess) return res.status(403).end();
+
+    const instance = await Instances.getById(machineId);
+    if (!instance) return res.status(404).end();
+    if (instance.status !== "running") return res.status(503).end();
+
+    const template = instance.template_id
+        ? await Templates.getById(instance.template_id)
+        : null;
+    if (template?.connection_type !== "web") return res.status(403).end();
+
+    const cfg = (template.connection_config ?? {}) as Record<string, unknown>;
+    const webPort = typeof cfg.port === "number" ? cfg.port : 443;
+    const webProto = cfg.protocol === "http" ? "http" : "https";
+
+    let ip: string | null = null;
+    const cached = webProxyIpCache.get(machineId);
+    if (cached && cached.exp > Date.now()) {
+        ip = cached.ip;
+    } else {
+        ip = await Instances.getInsideNetIPv4(instance.proxmox_id);
+        if (ip) {
+            webProxyIpCache.set(machineId, {
+                ip,
+                exp: Date.now() + WEB_PROXY_IP_TTL_MS,
+            });
+        }
+    }
+    if (!ip) return res.status(503).end();
+
+    res.setHeader("X-Target-Host", `${ip}:${webPort}`);
+    res.setHeader("X-Target-Proto", webProto);
+    return res.status(200).end();
 });
 
 // Gets instance by ID, only if it belongs to current user or user is admin
@@ -333,18 +386,26 @@ router.get(
             return res.status(400).json({ error: "Instance not found" });
         }
 
+        const template = instance.template_id
+            ? await Templates.getById(instance.template_id)
+            : null;
+
+        const connectionType = template?.connection_type ?? "guacamole";
+        const connectionConfig = template?.connection_config ?? {};
+
         const instanceOwnerId = instance.owner_id;
 
         // If instance is not running - start it and wait for ip.
         await proxmox.startVM(instance.proxmox_id);
 
-        // Does guacamole user exist?
-        let guacUser = await guacamole.getUser(userId);
-        if (!guacUser) {
-            guacUser = await guacamole.createUser(userId, userId);
+        // web: the :8888 proxy resolves the IP itself via forward-auth, so we can
+        // return immediately. The frontend sets the webTargetMachine cookie and
+        // opens the proxy.
+        if (connectionType === "web") {
+            return res.status(200).json({ type: "web" });
         }
 
-        // Get instance IP
+        // Get instance IP (needed for both ssh and guacamole)
         const instanceIp = await Instances.getInsideNetIPv4(
             instance.proxmox_id,
         );
@@ -355,11 +416,64 @@ router.get(
             });
         }
 
-        // Does guacamole connection to the machine exist?
+        if (connectionType === "ssh") {
+            const rawConfig = connectionConfig as SshConnectionConfig;
+            const resolveCredential = (value: string | undefined) => {
+                if (value === "creatorId") return instanceOwnerId ?? userId;
+                if (value === "userId") return userId;
+                return value ?? "user";
+            };
+            const username = resolveCredential(rawConfig.username);
+            const password = resolveCredential(rawConfig.password);
+            const port = rawConfig.port ?? 22;
+
+            // Ensure Guacamole user exists
+            let guacUser = await guacamole.getUser(userId);
+            if (!guacUser) {
+                guacUser = await guacamole.createUser(userId, userId);
+            }
+
+            const guacName = `${instance.id}-ssh`;
+            let guacConn = await guacamole.getConnectionSummary(guacName);
+            if (!guacConn) {
+                await guacamole.createSshConnection(instanceIp, guacName, {
+                    port,
+                    username,
+                    password,
+                });
+                guacConn = await guacamole.getConnectionSummary(guacName);
+            } else {
+                await guacamole.updateSshConnection(
+                    guacName,
+                    instanceIp,
+                    guacConn.identifier,
+                    { port, username, password },
+                );
+                guacConn = await guacamole.getConnectionSummary(guacName);
+            }
+
+            const guacId = guacConn?.identifier!;
+            const perms = await guacamole.getUserPerms(userId);
+            if (!(guacId in perms.connectionPermissions)) {
+                await guacamole.giveUserAccessToMachine(userId, guacId);
+            }
+
+            return res.status(200).json({
+                type: "guacamole",
+                url: await guacamole.getSessionUrl(userId, guacId),
+            });
+        }
+
+        // Default: guacamole (RDP) — create user only when needed
+        let guacUser = await guacamole.getUser(userId);
+        if (!guacUser) {
+            guacUser = await guacamole.createUser(userId, userId);
+        }
+
+        // Default: guacamole (RDP)
         const guacName = instance.id.toString();
         let guacConn = await guacamole.getConnectionSummary(guacName);
         if (!guacConn) {
-            // Create a new guac connection
             logger.info(
                 {
                     userId: userId,
@@ -377,7 +491,6 @@ router.get(
             );
             guacConn = await guacamole.getConnectionSummary(guacName);
         } else {
-            // Check if IP is up to date
             const summary = await guacamole.fetchConnectionParams(
                 guacConn.identifier,
             );
@@ -412,7 +525,6 @@ router.get(
             guacConn = await guacamole.getConnectionSummary(guacName);
         }
 
-        // Does guac user have perms?
         const guacId = guacConn?.identifier!;
         const perms = await guacamole.getUserPerms(userId);
 
@@ -420,10 +532,10 @@ router.get(
             await guacamole.giveUserAccessToMachine(userId, guacId);
         }
 
-        // Should be good to go - get and return session url
-        return res
-            .status(200)
-            .json({ url: await guacamole.getSessionUrl(userId, guacId) });
+        return res.status(200).json({
+            type: "guacamole",
+            url: await guacamole.getSessionUrl(userId, guacId),
+        });
     },
 );
 

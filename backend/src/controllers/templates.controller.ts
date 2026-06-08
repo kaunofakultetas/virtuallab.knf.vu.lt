@@ -61,14 +61,16 @@ export const Templates = {
 
     create: async (template: CreateTemplateDTO): Promise<Template> => {
         const res = await pool.query(
-            `INSERT INTO templates (type, name, proxmox_id, description)
-       VALUES ($1, $2, $3, $4)
+            `INSERT INTO templates (type, name, proxmox_id, description, connection_type, connection_config)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING *`,
             [
                 template.type,
                 template.name,
                 template.proxmox_id,
                 template.description || null,
+                template.connection_type ?? "guacamole",
+                JSON.stringify(template.connection_config ?? {}),
             ],
         );
 
@@ -88,8 +90,13 @@ export const Templates = {
         let idx = 1;
 
         for (const [key, value] of Object.entries(updates)) {
-            fields.push(`${key} = $${idx}`);
-            values.push(value);
+            if (key === "connection_config") {
+                fields.push(`${key} = $${idx}::jsonb`);
+                values.push(JSON.stringify(value));
+            } else {
+                fields.push(`${key} = $${idx}`);
+                values.push(value);
+            }
             idx++;
         }
 

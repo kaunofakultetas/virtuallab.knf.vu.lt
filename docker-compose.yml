@@ -28,8 +28,8 @@ services:
         networks:
             - isolated
         extra_hosts:
-            - "logs.knf.vu.lt:172.18.3.30"
-            - "sso.vu.lt:172.18.3.30"
+            - "logs.knf.vu.lt:10.10.11.30"
+            - "sso.vu.lt:10.10.11.30"
         restart: unless-stopped
 
     caddy:
@@ -40,6 +40,7 @@ services:
             - 80:80
             - 443:443
             - 443:443/udp
+            - 8888:8888
 
         volumes:
             - ./Caddyfile:/etc/caddy/Caddyfile:ro
@@ -84,7 +85,7 @@ services:
             - ./exit/Caddyfile:/etc/caddy/Caddyfile:ro
         networks:
             isolated:
-                ipv4_address: 172.18.3.30
+                ipv4_address: 10.10.11.30
             external: {}
         restart: unless-stopped
 
@@ -139,5 +140,5 @@ networks:
         internal: true
         ipam:
             config:
-                - subnet: 172.18.3.0/24
-                  gateway: 172.18.3.1
+                - subnet: 10.10.11.0/24
+                  gateway: 10.10.11.1

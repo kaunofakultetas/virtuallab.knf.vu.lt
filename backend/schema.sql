@@ -19,6 +19,16 @@ EXCEPTION
     WHEN duplicate_object THEN NULL;
 END $$;
 
+DO $$
+BEGIN
+    CREATE TYPE connection_type AS ENUM ('guacamole', 'ssh', 'web');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
+
+-- Add 'web' connection type for existing deployments (idempotent)
+ALTER TYPE connection_type ADD VALUE IF NOT EXISTS 'web';
+
 CREATE TABLE IF NOT EXISTS users (
     vu_id VARCHAR(255) PRIMARY KEY,
     password VARCHAR(255),
@@ -37,9 +47,15 @@ CREATE TABLE IF NOT EXISTS templates (
     description TEXT,
     proxmox_id VARCHAR(255) NOT NULL UNIQUE,
     visible_to_students BOOLEAN NOT NULL DEFAULT FALSE,
+    connection_type connection_type NOT NULL DEFAULT 'guacamole',
+    connection_config JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Idempotent migrations for existing deployments
+ALTER TABLE templates ADD COLUMN IF NOT EXISTS connection_type connection_type NOT NULL DEFAULT 'guacamole';
+ALTER TABLE templates ADD COLUMN IF NOT EXISTS connection_config JSONB NOT NULL DEFAULT '{}';
 
 CREATE TABLE IF NOT EXISTS instances (
     id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
