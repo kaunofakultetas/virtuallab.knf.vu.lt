@@ -16,6 +16,7 @@ const AdminProxmoxDashboard = lazy(() => import("@/pages/admin/ProxmoxDashboard"
 const AdminInstances = lazy(() => import("@/pages/admin/AdminInstances"));
 const AdminSettings = lazy(() => import("@/pages/admin/Settings"));
 const Instances = lazy(() => import("@/pages/Instances"));
+const Settings = lazy(() => import("@/pages/Settings"));
 import { AuthProvider, RequireAuth, RequireAdmin } from "@/utils/AuthGuard";
 import { extractTemplate, extractTemplates } from "@/utils/templates";
 
@@ -111,6 +112,7 @@ export const router = createBrowserRouter([
         children: [
             { index: true, element: <S><Index /></S> },
             { path: "instances", element: <S><Instances /></S> },
+            { path: "settings", element: <S><Settings /></S> },
             { path: "home", element: <S><About /></S> },
             {
                 path: "admin/templates",

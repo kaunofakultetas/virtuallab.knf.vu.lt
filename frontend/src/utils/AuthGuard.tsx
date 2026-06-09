@@ -12,6 +12,8 @@ const AuthContext = createContext<AuthDataPayload | null>(null);
 export interface AuthDataPayload {
     vu_id: string;
     role: string;
+    last_login?: string | null;
+    has_password?: boolean;
 }
 
 export function useAuth() {

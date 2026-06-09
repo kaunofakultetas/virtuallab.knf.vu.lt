@@ -16,6 +16,7 @@ import ViewModuleOutlinedIcon from "@mui/icons-material/ViewModuleOutlined";
 import DesktopWindowsOutlinedIcon from "@mui/icons-material/DesktopWindowsOutlined";
 import MonitorHeartOutlinedIcon from "@mui/icons-material/MonitorHeartOutlined";
 import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
+import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
 import { useAuth } from "@/utils/AuthGuard";
 
 const SIDEBAR_W = 220;
@@ -52,6 +53,16 @@ const NAV: NavSection[] = [
                 label: "My Instances",
                 icon: <ComputerOutlinedIcon fontSize="small" />,
                 path: "/instances",
+            },
+        ],
+    },
+    {
+        section: "Account",
+        items: [
+            {
+                label: "Settings",
+                icon: <SettingsOutlinedIcon fontSize="small" />,
+                path: "/settings",
             },
         ],
     },

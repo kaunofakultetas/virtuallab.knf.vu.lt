@@ -164,4 +164,25 @@ export const Users = {
 
         return res.rows[0] as ExtendedUser;
     },
+
+    // Profile for the current user's settings page. has_password is false for
+    // SSO-only accounts (password column NULL), which can't change a password.
+    async getProfile(vu_id: string): Promise<{
+        vu_id: string;
+        role: string;
+        last_login: string | null;
+        has_password: boolean;
+    } | null> {
+        const res = await pool.query(
+            `SELECT vu_id, role, last_login, (password IS NOT NULL) AS has_password
+             FROM users WHERE vu_id = $1`,
+            [vu_id],
+        );
+
+        if (res.rows.length === 0) {
+            return null;
+        }
+
+        return res.rows[0];
+    },
 };

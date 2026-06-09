@@ -19,14 +19,18 @@ import jwt from "jsonwebtoken";
 const router = Router();
 
 // Return info about current session
-router.get("/", isAuthenticated, (req, res) => {
+router.get("/", isAuthenticated, async (req, res) => {
     if (!req.user) {
         return res.status(401).json({ message: "Unauthorized" });
     }
 
+    const profile = await Users.getProfile(req.user.vu_id);
+
     res.json({
         vu_id: req.user.vu_id,
         role: req.user.role,
+        last_login: profile?.last_login ?? null,
+        has_password: profile?.has_password ?? false,
     });
 });
 

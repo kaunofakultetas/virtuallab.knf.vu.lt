@@ -218,19 +218,20 @@ export const Instances = {
             const deleteTask = await proxmox.deleteVM(instance.proxmox_id);
             await proxmox.waitForTaskCompletion(deleteTask);
 
-            // 2. Delete Guacamole connection (connection name == instance id string)
-            try {
-                const conn = await guacamole.getConnectionSummary(
-                    String(instanceId),
-                );
-                if (conn?.identifier) {
-                    await guacamole.deleteConnection(conn.identifier);
+            // 2. Delete Guacamole connections. RDP uses the bare instance id as the
+            // name, SSH uses "<id>-ssh" — remove both so neither is orphaned.
+            for (const guacName of [String(instanceId), `${instanceId}-ssh`]) {
+                try {
+                    const conn = await guacamole.getConnectionSummary(guacName);
+                    if (conn?.identifier) {
+                        await guacamole.deleteConnection(conn.identifier);
+                    }
+                } catch (err) {
+                    logger.warn(
+                        { err, instanceId, guacName },
+                        "Could not delete Guacamole connection (may not exist)",
+                    );
                 }
-            } catch (err) {
-                logger.warn(
-                    { err, instanceId },
-                    "Could not delete Guacamole connection (may not exist)",
-                );
             }
 
             // 3. Remove from DB
