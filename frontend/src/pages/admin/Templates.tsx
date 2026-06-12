@@ -41,6 +41,10 @@ const emptyFormValues: TemplateFormValues = {
     description: "",
     visible_to_students: false,
     connection_type: "guacamole",
+    guac_username_mode: "creatorId",
+    guac_username_custom: "",
+    guac_password_mode: "creatorId",
+    guac_password_custom: "",
     ssh_port: "",
     ssh_username_mode: "userId",
     ssh_username_custom: "",
@@ -128,9 +132,13 @@ export default function Templates() {
 
     const buildConnectionConfig = (values: TemplateFormValues) => {
         const cfg: Record<string, unknown> = {};
+        const resolveCredential = (mode: string, custom: string) =>
+            mode === "custom" ? custom : mode;
+        if (values.connection_type === "guacamole") {
+            cfg.username = resolveCredential(values.guac_username_mode, values.guac_username_custom);
+            cfg.password = resolveCredential(values.guac_password_mode, values.guac_password_custom);
+        }
         if (values.connection_type === "ssh") {
-            const resolveCredential = (mode: string, custom: string) =>
-                mode === "custom" ? custom : mode;
             cfg.username = resolveCredential(values.ssh_username_mode, values.ssh_username_custom);
             cfg.password = resolveCredential(values.ssh_password_mode, values.ssh_password_custom);
             if (values.ssh_port) cfg.port = parseInt(values.ssh_port);
@@ -276,6 +284,10 @@ export default function Templates() {
             description: template.description ?? "",
             visible_to_students: Boolean(template.visible_to_students),
             connection_type: connType,
+            guac_username_mode: connType === "guacamole" ? detectMode(cfg.username) : "creatorId",
+            guac_username_custom: connType === "guacamole" && detectMode(cfg.username) === "custom" ? (cfg.username ?? "") : "",
+            guac_password_mode: connType === "guacamole" ? detectMode(cfg.password) : "creatorId",
+            guac_password_custom: connType === "guacamole" && detectMode(cfg.password) === "custom" ? (cfg.password ?? "") : "",
             ssh_port: connType === "ssh" && cfg.port ? String(cfg.port) : "",
             ssh_username_mode: connType === "ssh" ? detectMode(cfg.username) : "userId",
             ssh_username_custom: connType === "ssh" && detectMode(cfg.username) === "custom" ? (cfg.username ?? "") : "",

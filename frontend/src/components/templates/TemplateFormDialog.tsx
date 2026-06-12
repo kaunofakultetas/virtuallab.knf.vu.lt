@@ -23,6 +23,11 @@ export interface TemplateFormValues {
     description: string;
     visible_to_students: boolean;
     connection_type: ConnectionType;
+    // Guacamole (RDP) config
+    guac_username_mode: SshCredentialMode;
+    guac_username_custom: string;
+    guac_password_mode: SshCredentialMode;
+    guac_password_custom: string;
     // SSH config
     ssh_port: string;
     ssh_username_mode: SshCredentialMode;
@@ -159,6 +164,58 @@ export function TemplateFormDialog({
                             </MenuItem>
                         ))}
                     </TextField>
+
+                    {values.connection_type === "guacamole" && (
+                        <>
+                            <TextField
+                                label="RDP username"
+                                value={values.guac_username_mode}
+                                onChange={(e) =>
+                                    onChange({ guac_username_mode: e.target.value as SshCredentialMode })
+                                }
+                                select
+                                fullWidth
+                                size="small"
+                            >
+                                <MenuItem value="creatorId">Machine creator ID</MenuItem>
+                                <MenuItem value="userId">Connecting user ID</MenuItem>
+                                <MenuItem value="custom">Custom</MenuItem>
+                            </TextField>
+                            {values.guac_username_mode === "custom" && (
+                                <TextField
+                                    label="Custom RDP username"
+                                    value={values.guac_username_custom}
+                                    onChange={(e) => onChange({ guac_username_custom: e.target.value })}
+                                    fullWidth
+                                    size="small"
+                                />
+                            )}
+                            <TextField
+                                label="RDP password"
+                                value={values.guac_password_mode}
+                                onChange={(e) =>
+                                    onChange({ guac_password_mode: e.target.value as SshCredentialMode })
+                                }
+                                select
+                                fullWidth
+                                size="small"
+                            >
+                                <MenuItem value="creatorId">Machine creator ID</MenuItem>
+                                <MenuItem value="userId">Connecting user ID</MenuItem>
+                                <MenuItem value="custom">Custom</MenuItem>
+                            </TextField>
+                            {values.guac_password_mode === "custom" && (
+                                <TextField
+                                    label="Custom RDP password"
+                                    value={values.guac_password_custom}
+                                    onChange={(e) => onChange({ guac_password_custom: e.target.value })}
+                                    fullWidth
+                                    size="small"
+                                    type="password"
+                                />
+                            )}
+                        </>
+                    )}
 
                     {values.connection_type === "ssh" && (
                         <>

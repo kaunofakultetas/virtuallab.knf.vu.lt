@@ -5,7 +5,7 @@ import { isAdmin, isAuthenticated } from "@/middleware/auth.middleware";
 import { validateRequest } from "@/middleware/zod-validation.middleware";
 import { proxmox } from "@/proxmox";
 import { CreateInstanceDTO } from "@/types/instances";
-import { SshConnectionConfig } from "@/types/templates";
+import { GuacamoleConnectionConfig, SshConnectionConfig } from "@/types/templates";
 import {
     createInstanceSchema,
     instanceIdParamSchema,
@@ -470,6 +470,17 @@ router.get(
             guacUser = await guacamole.createUser(userId, userId);
         }
 
+        const resolveGuacCredential = (value: string | undefined) => {
+            if (value === "creatorId") return instanceOwnerId ?? userId;
+            if (value === "userId") return userId;
+            return value;
+        };
+        const guacConfig = connectionConfig as GuacamoleConnectionConfig;
+        const guacCredentials = {
+            username: resolveGuacCredential(guacConfig.username),
+            password: resolveGuacCredential(guacConfig.password),
+        };
+
         // Default: guacamole (RDP)
         const guacName = instance.id.toString();
         let guacConn = await guacamole.getConnectionSummary(guacName);
@@ -488,6 +499,7 @@ router.get(
                 instanceIp,
                 instanceOwnerId,
                 guacName,
+                guacCredentials,
             );
             guacConn = await guacamole.getConnectionSummary(guacName);
         } else {
@@ -521,6 +533,7 @@ router.get(
                 instanceOwnerId,
                 instanceIp,
                 guacConn.identifier,
+                guacCredentials,
             );
             guacConn = await guacamole.getConnectionSummary(guacName);
         }

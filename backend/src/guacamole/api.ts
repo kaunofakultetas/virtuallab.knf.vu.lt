@@ -327,6 +327,7 @@ export class GuacamoleClient {
         machineIp: string,
         machineOwnerId: string,
         machineId: string,
+        options: { username?: string; password?: string } = {},
     ): Promise<GuacamoleConnection> {
         const { parentIdentifier } = await this.getSettings();
         const payload: Record<string, unknown> = {
@@ -379,8 +380,8 @@ export class GuacamoleClient {
                 "disable-glyph-caching": "",
                 "preconnection-id": "",
                 hostname: machineIp,
-                username: "user",
-                password: machineOwnerId,
+                username: options.username ?? "user",
+                password: options.password ?? machineOwnerId,
                 domain: "",
                 "gateway-hostname": "",
                 "gateway-username": "",
@@ -435,6 +436,7 @@ export class GuacamoleClient {
         machineOwnerId: string,
         newMachineIp: string,
         guacIdentifier: string,
+        options: { username?: string; password?: string } = {},
     ): Promise<GuacamoleConnection> {
         const { parentIdentifier } = await this.getSettings();
         const payload: Record<string, unknown> = {
@@ -488,8 +490,8 @@ export class GuacamoleClient {
                 "disable-glyph-caching": "",
                 "preconnection-id": "",
                 hostname: newMachineIp,
-                username: "user",
-                password: machineOwnerId,
+                username: options.username ?? "user",
+                password: options.password ?? machineOwnerId,
                 domain: "",
                 "gateway-hostname": "",
                 "gateway-username": "",

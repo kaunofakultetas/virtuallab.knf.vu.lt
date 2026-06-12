@@ -8,6 +8,11 @@ export type SshConnectionConfig = {
     password?: string;
 };
 
+export type GuacamoleConnectionConfig = {
+    username?: string;
+    password?: string;
+};
+
 export type WebConnectionConfig = {
     port?: number;
     protocol?: "http" | "https";
@@ -15,6 +20,7 @@ export type WebConnectionConfig = {
 
 export type ConnectionConfig =
     | SshConnectionConfig
+    | GuacamoleConnectionConfig
     | WebConnectionConfig
     | Record<string, never>;
 
