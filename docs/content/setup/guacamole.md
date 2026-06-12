@@ -1,16 +1,21 @@
-# Guacamole Setup on Proxmox
+---
+slug: /setup/guacamole
+title: Guacamole Setup
+description: A step-by-step guide to setting up Guacamole for remote desktop access.
+---
+# Guacamole Setup Guide
 
-## 1. Download Ubuntu cloud iso (if not downloaded)
+## Download Ubuntu cloud iso (if not downloaded)
 
 On Proxmox host:
-```sh
+```bash
 cd /var/lib/vz/template/iso
 wget https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img
 ```
 
-## 2. Create Guacamole VM
+## Create Guacamole VM
 
-```sh
+```bash
 qm create 200 --name guacamole \
   --memory 4096 --cores 2 \
   --net0 virtio,bridge=vmbr1,firewall=1 \
@@ -26,9 +31,9 @@ qm set 200 --ide2 local-lvm:cloudinit
 qm set 200 --boot order=scsi0
 ```
 
-## 3. Configure cloud-init
+## Configure cloud-init
 
-```sh
+```bash
 qm set 200 \
   --ciuser ubuntu \
   --cipassword 'TempPassword123!' \
@@ -51,17 +56,17 @@ runcmd:
   - usermod -aG docker ubuntu
 ```
 
-## 4. Start
+## Start
 
-```sh
+```bash
 qm start 200
 ```
 
-## 5. Set static IP on vmbr1
+## Set static IP on vmbr1
 
 Assign a fixed address on the management bridge so the VM is always reachable at a known IP:
 
-```sh
+```bash
 qm set 200 --ipconfig0 ip=10.10.10.50/24,gw=10.10.10.1
 qm cloudinit update 200
 qm reboot 200
@@ -69,9 +74,9 @@ qm reboot 200
 
 After the reboot the VM will be reachable at `10.10.10.50`.
 
-## 6. Setup the stack
+## Setup the stack
 
-```sh
+```bash
 ssh ubuntu@10.10.10.50
 
 mkdir guacamole && cd guacamole
@@ -83,17 +88,17 @@ docker compose up -d
 docker compose logs -f
 ```
 
-## 7. Attach vmbr20 to Guacamole VM
+## Attach vmbr20 to Guacamole VM
 
-```sh
+```bash
 qm set 200 --net1 virtio,bridge=vmbr20,firewall=1
 qm set 200 --ipconfig1 ip=10.10.20.10/24
 qm reboot 200
 ```
 
-## 8. Configure Guacamole
+## Configure Guacamole
 
-```sh
+```bash
 ssh -L 8080:10.10.10.50:8080 root@<proxmox-ip>
 ```
 

@@ -1,12 +1,24 @@
-# Environment Setup
+---
+slug: /setup
+title: Setup
+description: How to set up the project
+---
 
-Setup Proxmox.
+# Setup
 
-## 1. Networking Configuration
+This section will guide you through the process of setting up the project.
+
+## Prerequisites
+
+Before you begin, make sure you have a Proxmox VE environment set up and running. You will also need to have access to the Proxmox API.
+
+## Installation
+
+### Networking Configuration
 
 Navigate to: `Datacenter` -> `Node` -> `System` -> `Network`.
 
-### 1.1 Virtual Bridge for management (vmbr1)
+#### Virtual Bridge for management (vmbr1)
 
 Create a Linux Bridge with the following configuration:
 - Bridge name: `vmbr1`
@@ -17,7 +29,7 @@ Create a Linux Bridge with the following configuration:
 Click "Apply Configuration".
 
 Enable DHCP for vmbr1 by running the following commands on the proxmox host shell:
-```sh
+```bash
 sudo apt install -y dnsmasq
 sudo tee /etc/dnsmasq.d/vmbr1.conf <<'EOF'
 interface=vmbr1
@@ -28,7 +40,7 @@ dhcp-option=6,1.1.1.1,8.8.8.8
 EOF
 sudo systemctl restart dnsmasq
 ```
-### 1.2 Virtual Bridge for lab VMs (vmbr20)
+#### Virtual Bridge for lab VMs (vmbr20)
 
 Create a Linux Bridge with the following configuration:
 - Bridge name: `vmbr20`
@@ -39,7 +51,7 @@ Create a Linux Bridge with the following configuration:
 Click "Apply Configuration".
 
 Enable DHCP for vmbr20 by running the following commands on the proxmox host shell:
-```sh
+```bash
 apt install -y dnsmasq
 cat >/etc/dnsmasq.d/vmbr20.conf <<'EOF'
 interface=vmbr20
@@ -51,15 +63,15 @@ EOF
 systemctl restart dnsmasq
 ```
 
-## 2. Setup Guacamole VM
+### Setup Guacamole VM
 
-Refer [here](./guacamole/README.md) for the Guacamole VM setup instructions.
+Refer here for the Guacamole VM setup instructions.
 
-## 3. Create build and template images
+### Create build and template images
 
-Refer [here](./templates/README.md) for the build and template image creation instructions.
+Refer here for the build and template image creation instructions.
 
-## 4. Boot up the Backend
+### Boot up the Backend
 
 In Proxmox create a container with the ID 201. Install Ubuntu.
 Set static ip 10.10.10.100/24. Add NAT and forward 80, 443, 2222->22 ports to the VM.

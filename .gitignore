@@ -1,5 +1,6 @@
 # Build Cache
 dist/
+build/
 node_modules/
 .docker-cache/
 
@@ -14,3 +15,6 @@ certs/*
 
 # Logs
 CaddyAccess.log
+
+# Docs stuff
+.docusaurus

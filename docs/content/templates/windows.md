@@ -1,13 +1,19 @@
+---
+slug: /templates/windows
+title: Windows
+description: Windows template creation guide.
+---
+
 # Windows Template Guide
 
 Windows templates require two extras compared to Linux:
 - **VirtIO drivers** — for paravirtualised disk and network performance.
 - **cloudbase-init** — the Windows equivalent of cloud-init; lets Proxmox set the hostname, credentials, and IP on each clone.
 
-## 1. Download required ISOs
+## Download required ISOs
 
 On the Proxmox host:
-```sh
+```bash
 cd /var/lib/vz/template/iso
 
 # VirtIO drivers ISO (stable build)
@@ -16,9 +22,9 @@ wget https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-vir
 
 Upload your Windows ISO to Proxmox via the web UI (Datacenter → local storage → ISO Images → Upload).
 
-## 2. Create a build VM
+## Create a build VM
 
-```sh
+```bash
 qm create 101 --name windows-build \
   --memory 8192 --cores 4 \
   --net0 virtio,bridge=vmbr1,firewall=1 \
@@ -39,10 +45,10 @@ qm set 101 --ide0 local:iso/virtio-win.iso
 qm set 101 --boot order='cdrom;scsi0'
 ```
 
-## 3. Install Windows
+## Install Windows
 
 Start the VM and open the console:
-```sh
+```bash
 qm start 101
 ```
 
@@ -50,7 +56,7 @@ During installation, when asked where to install, click **Load driver** → brow
 
 Complete the Windows installation normally.
 
-## 4. Install VirtIO drivers and guest agent
+## Install VirtIO drivers and guest agent
 
 After Windows boots, open the VirtIO ISO in File Explorer and run:
 
@@ -61,7 +67,7 @@ Verify the guest agent is running:
 Get-Service QEMU-GA
 ```
 
-## 5. Install cloudbase-init
+## Install cloudbase-init
 
 cloudbase-init applies cloud-init data (credentials, IP config) on first boot of each clone.
 
@@ -88,7 +94,7 @@ plugins=cloudbaseinit.plugins.common.sethostname.SetHostNamePlugin,
         cloudbaseinit.plugins.windows.networkconfig.NetworkConfigPlugin
 ```
 
-## 6. Enable RDP & SSH
+## Enable RDP & SSH
 
 ```powershell
 # Enable RDP
@@ -114,34 +120,34 @@ if (!(Get-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -ErrorAction SilentlyCon
 }
 ```
 
-## 7. Set up the environment
+## Set up the environment
 
 Install any tools, configure the OS, run Windows Update, etc.
 The build image can be modified freely at any time before cloning to a template.
 
 Tag the build VM once it is ready:
-```sh
+```bash
 qm set 101 --tags build_image
 ```
 
-## 8. Create a template image
+## Create a template image
 
-### 8.1. Clone the build VM
+### Clone the build VM
 
 If an old template exists, destroy it first:
-```sh
+```bash
 qm destroy 9001
 ```
 
 Clone the build VM:
-```sh
+```bash
 qm clone 101 9001 --name windows-template --full=1
 qm set 9001 --tags template_image
 ```
 
-### 8.2. Run the cleanup script
+### Run the cleanup script
 
-Copy `windows_cleanup.ps1` to the clone and run it as Administrator:
+Copy [windows_cleanup.ps1](https://github.com/kaunofakultetas/virtuallab.knf.vu.lt/blob/main/infra/templates/windows_cleanup.ps1) to the clone and run it as Administrator:
 ```powershell
 # From the Proxmox host, copy via SMB or use the Proxmox file transfer
 # Then inside the VM, run:
@@ -151,10 +157,12 @@ Set-ExecutionPolicy Bypass -Scope Process -Force
 
 The script clears logs, temp files, and cloudbase-init state, then runs Sysprep to generalize the image and shuts the VM down. **Wait for it to power off completely before proceeding.**
 
-### 8.3. Configure and convert to template
+> See also: [Linux template guide](/templates/linux) for the matching cleanup flow on Linux images.
+
+### Configure and convert to template
 
 Run on the Proxmox host after the VM has shut down:
-```sh
+```bash
 # Remove the Windows and VirtIO ISOs (if not done already)
 qm set 9001 --delete cdrom,ide0
 
@@ -167,13 +175,13 @@ qm set 9001 --agent enabled=1
 qm template 9001
 ```
 
-### 8.4. Register in the web UI
+### Register in the web UI
 
 Go to the admin panel → Templates → Add template. Set the Proxmox VM ID to `9001`.
 
-## 9. Test the template
+## Test the template
 
-```sh
+```bash
 qm clone 9001 9102 --name test-win-clone --full=0
 qm set 9102 \
   --ciuser user --cipassword 'Password123!' \

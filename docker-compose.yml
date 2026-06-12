@@ -11,6 +11,14 @@ services:
             - isolated
         restart: unless-stopped
 
+    docs:
+        build:
+            context: ./docs
+        container_name: docs
+        networks:
+            - isolated
+        restart: unless-stopped
+
     backend:
         build:
             context: ./backend

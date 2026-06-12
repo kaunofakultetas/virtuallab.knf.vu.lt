@@ -65,6 +65,15 @@ virtuallab.knf.vu.lt {
             }
         }
 
+        # Docs (Docusaurus, baseUrl /docs/). No prefix strip — the docs container
+        # serves files under /docs so its directory redirects keep the prefix.
+        @docs path /docs /docs/*
+        handle @docs {
+            reverse_proxy docs:80 {
+                header_up X-Forwarded-For {remote_host}
+            }
+        }
+
         handle {
             reverse_proxy frontend:80 {
                 header_up X-Forwarded-For {remote_host}
