@@ -31,8 +31,10 @@ import OpenInNewOutlinedIcon from "@mui/icons-material/OpenInNewOutlined";
 import UpdateOutlinedIcon from "@mui/icons-material/UpdateOutlined";
 import AddOutlinedIcon from "@mui/icons-material/AddOutlined";
 import DeleteOutlinedIcon from "@mui/icons-material/DeleteOutlined";
+import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined";
 import type { Instance, Template } from "@/types/instances";
 import { getErrorMessage } from "@/utils/errors";
+import { copyInstanceIp } from "@/utils/instances";
 
 const statusColor: Record<string, "success" | "warning" | "error" | "default"> =
     {
@@ -66,6 +68,7 @@ export default function Instances() {
         {},
     );
     const [deletingId, setDeletingId] = useState<string | null>(null);
+    const [copyingIpId, setCopyingIpId] = useState<string | null>(null);
 
     const prevInstancesRef = useRef<Instance[]>([]);
     const fetchInstancesRef = useRef<
@@ -249,6 +252,17 @@ export default function Instances() {
         }
     };
 
+    const handleCopyIp = async (instance: Instance) => {
+        setCopyingIpId(String(instance.id));
+        const result = await copyInstanceIp(instance.id);
+        setSnackbar(
+            result.ok
+                ? { message: `Copied: ${result.ip}`, severity: "success" }
+                : { message: result.message, severity: "error" },
+        );
+        setCopyingIpId(null);
+    };
+
     const handleCreate = async () => {
         if (!selectedTemplateId) return;
         setCreateLoading(true);
@@ -367,6 +381,8 @@ export default function Instances() {
                                 const isLoading =
                                     actionLoading[String(instance.id)] ||
                                     actionLoading[`session-${instance.id}`];
+                                const isCopyingIp =
+                                    copyingIpId === String(instance.id);
                                 return (
                                     <TableRow key={instance.id}>
                                         <TableCell>
@@ -437,6 +453,31 @@ export default function Instances() {
                                                                     />
                                                                 ) : (
                                                                     <OpenInNewOutlinedIcon fontSize="small" />
+                                                                )}
+                                                            </IconButton>
+                                                        </span>
+                                                    </Tooltip>
+                                                    <Tooltip title="Copy internal IP (10.10.x.x)">
+                                                        <span>
+                                                            <IconButton
+                                                                size="small"
+                                                                onClick={() =>
+                                                                    handleCopyIp(
+                                                                        instance,
+                                                                    )
+                                                                }
+                                                                disabled={
+                                                                    isCopyingIp
+                                                                }
+                                                            >
+                                                                {isCopyingIp ? (
+                                                                    <CircularProgress
+                                                                        size={
+                                                                            18
+                                                                        }
+                                                                    />
+                                                                ) : (
+                                                                    <ContentCopyOutlinedIcon fontSize="small" />
                                                                 )}
                                                             </IconButton>
                                                         </span>

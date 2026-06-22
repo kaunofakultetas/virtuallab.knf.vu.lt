@@ -37,6 +37,7 @@ import DeleteOutlinedIcon from "@mui/icons-material/DeleteOutlined";
 import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined";
 import type { Instance, Template } from "@/types/instances";
 import Switch from "@mui/material/Switch";
+import { copyInstanceIp } from "@/utils/instances";
 
 type TypeFilter = "all" | "student_vm" | "lab_vm";
 
@@ -211,29 +212,13 @@ export default function AdminInstances() {
 
     const handleCopyIp = async (instance: Instance) => {
         setCopyingIpId(String(instance.id));
-        try {
-            const res = await axios.get<string[]>(
-                `/api/instances/${instance.id}/ip`,
-            );
-            const ip = res.data.find((a) => a.startsWith("10.10."));
-            if (!ip) {
-                setSnackbar({
-                    message:
-                        "No internal IP found (10.10.x.x). Is the VM running?",
-                    severity: "error",
-                });
-                return;
-            }
-            await navigator.clipboard.writeText(ip);
-            setSnackbar({ message: `Copied: ${ip}`, severity: "success" });
-        } catch (err) {
-            setSnackbar({
-                message: getErrorMessage(err, "Failed to get IP."),
-                severity: "error",
-            });
-        } finally {
-            setCopyingIpId(null);
-        }
+        const result = await copyInstanceIp(instance.id);
+        setSnackbar(
+            result.ok
+                ? { message: `Copied: ${result.ip}`, severity: "success" }
+                : { message: result.message, severity: "error" },
+        );
+        setCopyingIpId(null);
     };
 
     const handleToggleExpirable = (instance: Instance, expirable: boolean) =>
