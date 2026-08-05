@@ -62,6 +62,11 @@ compose() {
 
 install_docker() {
     export DEBIAN_FRONTEND=noninteractive
+    printf 'Acquire::ForceIPv4 "true";\n' >/etc/apt/apt.conf.d/99virtual-lab-ipv4
+    sed -i \
+        -e 's|http://archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
+        -e 's|http://security.ubuntu.com/ubuntu|https://security.ubuntu.com/ubuntu|g' \
+        /etc/apt/sources.list
     apt-get update
     apt-get install -y ca-certificates docker.io docker-compose-v2 git
     systemctl enable --now docker

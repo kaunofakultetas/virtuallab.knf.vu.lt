@@ -183,5 +183,5 @@ pct exec 201 -- \
 		--role api-docker
 ```
 
-See [OpenTofu lab infrastructure](../../../infra/opentofu/lab/README.md) for
+See [OpenTofu lab infrastructure](https://github.com/kaunofakultetas/virtuallab.knf.vu.lt/blob/main/infra/opentofu/lab/README.md) for
 variable definitions, resource ownership, and recovery details.

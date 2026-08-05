@@ -164,7 +164,9 @@ table ip virtual_lab_host_network {
         type nat hook prerouting priority dstnat; policy accept;"
 
 if [[ "$forward_app_ports" == true ]]; then
-    nft_content+=$'\n        tcp dport { 80, 443, 8888 } dnat to 10.10.10.100\n        udp dport 443 dnat to 10.10.10.100'
+    nft_content+="
+        iifname \"${uplink}\" tcp dport { 80, 443, 8888 } dnat to 10.10.10.100
+        iifname \"${uplink}\" udp dport 443 dnat to 10.10.10.100"
 fi
 
 nft_content+="
