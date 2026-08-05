@@ -48,6 +48,9 @@ services:
         image: caddy:2-alpine
         container_name: caddy
 
+        environment:
+            CADDY_IP_HTTP_HOST: ${CADDY_IP_HTTP_HOST:-disabled.invalid}
+
         ports:
             - 80:80
             - 443:443

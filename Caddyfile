@@ -41,15 +41,7 @@
 ########################################################
 ########################################################
 
-:80 {
-    reverse_proxy http://notfound404-endpoint:80 {
-        header_up X-Forwarded-For {remote_host}
-    }
-}
-
-virtuallab.knf.vu.lt {
-    tls admin@knf.vu.lt
-
+(virtual_lab_routes) {
     route {
         import geo_block_non_vu
 
@@ -80,6 +72,22 @@ virtuallab.knf.vu.lt {
             }
         }
     }
+}
+
+http://{$CADDY_IP_HTTP_HOST:disabled.invalid} {
+    import virtual_lab_routes
+}
+
+:80 {
+    reverse_proxy notfound404-vite:80 {
+        header_up X-Forwarded-For {remote_host}
+    }
+}
+
+virtuallab.knf.vu.lt {
+    tls admin@knf.vu.lt
+
+    import virtual_lab_routes
 
     log {
         output file /var/log/caddy/access.log

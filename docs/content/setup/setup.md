@@ -168,6 +168,12 @@ domain, SAML, Loki, and TLS values for the deployment. The backend intentionally
 uses `exit:8006` for Proxmox and `exit:8080` for Guacamole because it runs on an
 internal Docker network.
 
+For this test network, add `CADDY_IP_HTTP_HOST=172.16.0.34` to `.env` to serve
+the application over plain HTTP at `http://172.16.0.34`. Leave the variable
+unset in production; requests to the server IP then use the fallback site.
+Set `GUACAMOLE_PUBLIC_URL=http://172.16.0.34/guac` when testing Guacamole
+sessions through the IP endpoint.
+
 Start the stack and inspect its status:
 
 ```bash
