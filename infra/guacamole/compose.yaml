@@ -1,6 +1,6 @@
 services:
     guacamole:
-        image: abesnier/guacamole:latest
+        image: abesnier/guacamole:1.6.0@sha256:a9cab142626f512dabbdf0286bed8c11bda8ca86369c31624170ffdd1d60ba74
         container_name: guacamole
         restart: unless-stopped
         ports:

@@ -15,7 +15,7 @@
 		# Proxmox API — blind TCP forward, no SNI (raw IP backend)
 		:8006 {
 			route {
-				proxy 172.16.0.122:8006
+				proxy 172.16.0.34:8006
 			}
 		}
 

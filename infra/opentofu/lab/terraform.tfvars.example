@@ -1,0 +1,11 @@
+proxmox_endpoint = "https://172.16.0.34:8006/"
+proxmox_api_token = "root@pam!replace-with-token-id=replace-with-token-secret"
+proxmox_insecure  = true
+node_name        = "pve"
+
+# Use a dedicated deployment key, not a personal workstation key.
+guest_ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIReplaceWithDedicatedDeploymentKey virtual-proxmox-lab"
+
+# Override these only when the corresponding Proxmox storage IDs differ.
+template_datastore_id = "local"
+root_datastore_id     = "local-lvm"

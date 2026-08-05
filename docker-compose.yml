@@ -26,11 +26,15 @@ services:
 
         env_file: ./.env
         environment:
-            - DATABASE_URL=postgresql://postgres:password@postgres:5432/backend_db
+            - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-backend_db}
             - NODE_EXTRA_CA_CERTS=/certs/logs.knf.vu.lt.crt
 
         volumes:
             - ./certs/:/certs/:ro
+
+        depends_on:
+            postgres:
+                condition: service_healthy
 
         read_only: true
         networks:
@@ -64,6 +68,7 @@ services:
     caddy-fluentbit:
         container_name: caddy-fluentbit
         image: fluent/fluent-bit:5.0.6
+        profiles: ["logging"]
         user: 1000:1000
         read_only: true
         environment:
@@ -103,9 +108,9 @@ services:
 
         read_only: true
         environment:
-            POSTGRES_USER: postgres
-            POSTGRES_PASSWORD: password
-            POSTGRES_DB: backend_db
+            POSTGRES_USER: ${POSTGRES_USER:-postgres}
+            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+            POSTGRES_DB: ${POSTGRES_DB:-backend_db}
 
         volumes:
             - ./_DATA/postgres:/var/lib/postgresql/data

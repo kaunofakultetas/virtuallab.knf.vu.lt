@@ -6,9 +6,26 @@ node_modules/
 
 # Environment
 .env
+.DS_Store
+
+# OpenTofu
+**/.terraform/*
+**/.state/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+*.tfvars.json
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
 
 # App data
 _DATA/
+infra/guacamole/data/
 
 # Certs
 certs/*
