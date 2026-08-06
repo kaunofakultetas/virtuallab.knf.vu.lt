@@ -80,7 +80,7 @@ validate_checkout() {
 prepare_runtime() {
     case "${role}" in
         guacamole)
-            install -d -m 0750 "${install_root}/infra/guacamole/data"
+            install -d -m 0755 "${install_root}/infra/guacamole/data"
             ;;
         api-docker)
             [[ -f "${install_root}/.env" ]] || fail "create ${install_root}/.env from backend/.env.example before starting"

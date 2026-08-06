@@ -6,6 +6,7 @@ node_modules/
 
 # Environment
 .env
+.env.development
 .DS_Store
 
 # OpenTofu

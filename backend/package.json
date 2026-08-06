@@ -5,9 +5,10 @@
     "main": "dist/index.js",
     "scripts": {
         "build": "tsc && tsc-alias",
+        "create-admin": "ts-node -r tsconfig-paths/register scripts/createAdmin.ts",
         "hash-password": "ts-node -r tsconfig-paths/register scripts/hashPassword.ts",
         "start": "node dist/index.js",
-        "dev": "ts-node -r tsconfig-paths/register src/index.ts",
+        "dev": "node --watch ./node_modules/ts-node/dist/bin.js --files -r tsconfig-paths/register src/index.ts",
         "test": "echo \"Error: no test specified\" && exit 1"
     },
     "keywords": [],

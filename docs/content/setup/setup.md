@@ -162,7 +162,7 @@ vi /srv/virtual-proxmox-lab/.env
 exit
 ```
 
-At minimum, replace `POSTGRES_PASSWORD`, `JWT_SECRET`, `PROXMOX_AUTH_TOKEN`,
+At minimum, replace `POSTGRES_PASSWORD`, `BACKEND_JWT_SECRET`, `PROXMOX_AUTH_TOKEN`,
 `GUACAMOLE_USER`, `GUACAMOLE_PASS`, and `GUACAMOLE_PUBLIC_URL`. Review all
 domain, SAML, Loki, and TLS values for the deployment. The backend intentionally
 uses `exit:8006` for Proxmox and `exit:8080` for Guacamole because it runs on an

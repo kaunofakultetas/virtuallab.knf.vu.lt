@@ -57,19 +57,18 @@
             }
         }
 
-        # Docs (Docusaurus, baseUrl /docs/). No prefix strip — the docs container
-        # serves files under /docs so its directory redirects keep the prefix.
+        # Docusaurus builds with baseUrl /docs/ and is copied to /srv/docs.
         @docs path /docs /docs/*
         handle @docs {
-            reverse_proxy docs:80 {
-                header_up X-Forwarded-For {remote_host}
-            }
+            root * /srv
+            try_files {path} {path}/ /docs/404.html
+            file_server
         }
 
         handle {
-            reverse_proxy frontend:80 {
-                header_up X-Forwarded-For {remote_host}
-            }
+            root * /srv/frontend
+            try_files {path} /index.html
+            file_server
         }
     }
 }
