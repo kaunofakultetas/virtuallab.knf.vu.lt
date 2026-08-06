@@ -32,7 +32,8 @@ import UpdateOutlinedIcon from "@mui/icons-material/UpdateOutlined";
 import AddOutlinedIcon from "@mui/icons-material/AddOutlined";
 import DeleteOutlinedIcon from "@mui/icons-material/DeleteOutlined";
 import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined";
-import type { Instance, Template } from "@/types/instances";
+import type { Instance } from "@/types/instances";
+import type { LabProfile } from "@/types/labProfiles";
 import { getErrorMessage } from "@/utils/errors";
 import { copyInstanceIp } from "@/utils/instances";
 
@@ -46,7 +47,7 @@ const statusColor: Record<string, "success" | "warning" | "error" | "default"> =
 
 export default function Instances() {
     const [instances, setInstances] = useState<Instance[]>([]);
-    const [templates, setTemplates] = useState<Template[]>([]);
+    const [profiles, setProfiles] = useState<LabProfile[]>([]);
     const [fetching, setFetching] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [snackbar, setSnackbar] = useState<{
@@ -55,6 +56,7 @@ export default function Instances() {
     } | null>(null);
 
     const [createOpen, setCreateOpen] = useState(false);
+    const [selectedProfileId, setSelectedProfileId] = useState<number | "">("");
     const [selectedTemplateId, setSelectedTemplateId] = useState<number | "">(
         "",
     );
@@ -113,7 +115,7 @@ export default function Instances() {
 
     useEffect(() => {
         void fetchInstancesRef.current?.(true);
-        void fetchTemplates();
+        void fetchProfiles();
 
         const interval = setInterval(() => {
             void fetchInstancesRef.current?.(false);
@@ -122,28 +124,24 @@ export default function Instances() {
         return () => clearInterval(interval);
     }, []);
 
-    const fetchTemplates = async () => {
+    const fetchProfiles = async () => {
         try {
-            const response = await axios.get<any[]>("/api/templates");
-            const extracted: Template[] = Array.isArray(response.data)
-                ? response.data
-                      .filter(
-                          (t: any) =>
-                              t.visible_to_students !== false && t.proxmox_id,
-                      )
-                      .map((t: any) => ({
-                          id: t.id,
-                          name: t.name ?? `Template ${t.id}`,
-                          type: t.type ?? "",
-                          proxmox_id: t.proxmox_id,
-                          description: t.description ?? "",
-                      }))
-                : [];
-            setTemplates(extracted);
+            const response = await axios.get<LabProfile[]>("/api/lab-profiles");
+            const next = Array.isArray(response.data) ? response.data : [];
+            setProfiles(next);
+            if (next.length === 1) {
+                setSelectedProfileId(next[0].id);
+                if (next[0].templates.length === 1) {
+                    setSelectedTemplateId(Number(next[0].templates[0].id));
+                }
+            }
         } catch {
-            // Silently fail — templates are only needed for creation
+            // Silently fail — profiles are only needed for creation
         }
     };
+
+    const selectedProfile = profiles.find(({ id }) => id === selectedProfileId);
+    const availableTemplates = selectedProfile?.templates ?? [];
 
     const withAction = async (
         instanceId: string,
@@ -264,14 +262,16 @@ export default function Instances() {
     };
 
     const handleCreate = async () => {
-        if (!selectedTemplateId) return;
+        if (!selectedProfileId || !selectedTemplateId) return;
         setCreateLoading(true);
         setCreateDialogError(null);
         try {
             await axios.post("/api/instances", {
+                profile_id: selectedProfileId,
                 template_id: selectedTemplateId,
             });
             setCreateOpen(false);
+            setSelectedProfileId("");
             setSelectedTemplateId("");
             setCreateDialogError(null);
             setSnackbar({
@@ -330,7 +330,7 @@ export default function Instances() {
                     variant="contained"
                     startIcon={<AddOutlinedIcon fontSize="small" />}
                     onClick={() => setCreateOpen(true)}
-                    disabled={templates.length === 0}
+                    disabled={profiles.length === 0}
                 >
                     New instance
                 </Button>
@@ -591,6 +591,7 @@ export default function Instances() {
                 open={createOpen}
                 onClose={() => {
                     setCreateOpen(false);
+                    setSelectedProfileId("");
                     setSelectedTemplateId("");
                     setCreateDialogError(null);
                 }}
@@ -606,6 +607,29 @@ export default function Instances() {
                             </Alert>
                         )}
                         <FormControl fullWidth>
+                            <InputLabel>Lab profile</InputLabel>
+                            <Select
+                                value={selectedProfileId}
+                                label="Lab profile"
+                                onChange={(event) => {
+                                    const profileId = Number(event.target.value);
+                                    const profile = profiles.find(({ id }) => id === profileId);
+                                    setSelectedProfileId(profileId);
+                                    setSelectedTemplateId(
+                                        profile?.templates.length === 1
+                                            ? Number(profile.templates[0].id)
+                                            : "",
+                                    );
+                                }}
+                            >
+                                {profiles.map((profile) => (
+                                    <MenuItem key={profile.id} value={profile.id}>
+                                        {profile.name}
+                                    </MenuItem>
+                                ))}
+                            </Select>
+                        </FormControl>
+                        <FormControl fullWidth>
                             <InputLabel>Template</InputLabel>
                             <Select
                                 value={selectedTemplateId}
@@ -615,8 +639,9 @@ export default function Instances() {
                                         Number(e.target.value),
                                     )
                                 }
+                                disabled={!selectedProfileId}
                             >
-                                {templates.map((t) => (
+                                {availableTemplates.map((t) => (
                                     <MenuItem key={t.id} value={t.id}>
                                         {t.name}
                                     </MenuItem>
@@ -629,6 +654,7 @@ export default function Instances() {
                     <Button
                         onClick={() => {
                             setCreateOpen(false);
+                            setSelectedProfileId("");
                             setSelectedTemplateId("");
                             setCreateDialogError(null);
                         }}
@@ -639,7 +665,7 @@ export default function Instances() {
                     <Button
                         variant="contained"
                         onClick={handleCreate}
-                        disabled={!selectedTemplateId || createLoading}
+                        disabled={!selectedProfileId || !selectedTemplateId || createLoading}
                     >
                         {createLoading ? (
                             <CircularProgress size={20} />

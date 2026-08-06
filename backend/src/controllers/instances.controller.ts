@@ -5,6 +5,7 @@ import { Template } from "@/types/templates";
 import { pool } from "@/utils/db";
 import { logger } from "@/utils/logger";
 import { metadata } from "@/utils/metadata";
+import { deleteUnusedPlannedGroup } from "@/network/groups";
 import {
     vlabInstanceCreateDurationSeconds,
     vlabInstanceLifecycleTotal,
@@ -14,7 +15,14 @@ import {
 export const Instances = {
     getAllForUser: async (userId: string): Promise<Instance[]> => {
         const res = await pool.query(
-            `SELECT * FROM instances WHERE owner_id = $1`,
+            `SELECT instance.*,
+                    network_group.state AS network_group_state,
+                    profile.id AS profile_id,
+                    profile.name AS profile_name
+             FROM instances instance
+             LEFT JOIN network_groups network_group ON network_group.id = instance.network_group_id
+             LEFT JOIN lab_profiles profile ON profile.id = network_group.profile_id
+             WHERE instance.owner_id = $1`,
             [userId],
         );
 
@@ -22,14 +30,30 @@ export const Instances = {
     },
 
     getAll: async (): Promise<Instance[]> => {
-        const res = await pool.query(`SELECT * FROM instances`);
+        const res = await pool.query(
+            `SELECT instance.*,
+                    network_group.state AS network_group_state,
+                    profile.id AS profile_id,
+                    profile.name AS profile_name
+             FROM instances instance
+             LEFT JOIN network_groups network_group ON network_group.id = instance.network_group_id
+             LEFT JOIN lab_profiles profile ON profile.id = network_group.profile_id`,
+        );
         return res.rows as Instance[];
     },
 
     getById: async (instanceId: number): Promise<Instance | null> => {
-        const res = await pool.query(`SELECT * FROM instances WHERE id = $1`, [
-            instanceId,
-        ]);
+        const res = await pool.query(
+            `SELECT instance.*,
+                    network_group.state AS network_group_state,
+                    profile.id AS profile_id,
+                    profile.name AS profile_name
+             FROM instances instance
+             LEFT JOIN network_groups network_group ON network_group.id = instance.network_group_id
+             LEFT JOIN lab_profiles profile ON profile.id = network_group.profile_id
+             WHERE instance.id = $1`,
+            [instanceId],
+        );
         return res.rows[0] as Instance | null;
     },
 
@@ -142,6 +166,7 @@ export const Instances = {
     createInstance: async (
         userId: string,
         template: Template,
+        networkGroupId: number,
     ): Promise<number> => {
         const stopTimer = vlabInstanceCreateDurationSeconds.startTimer();
         try {
@@ -173,14 +198,18 @@ export const Instances = {
             });
 
             const sqlResp = await pool.query(
-                `INSERT INTO instances (owner_id, template_id, proxmox_id, name, run_until)
-      VALUES ($1, $2, $3, $4, NOW() + make_interval(hours => $5)) RETURNING id`,
+                `INSERT INTO instances (
+                    owner_id, template_id, proxmox_id, name, run_until, network_group_id
+                 )
+                 VALUES ($1, $2, $3, $4, NOW() + make_interval(hours => $5), $6)
+                 RETURNING id`,
                 [
                     userId,
                     template.id,
                     newId,
                     template.name,
                     defaultRuntimeHours ?? 3,
+                    networkGroupId,
                 ],
             );
 
@@ -238,6 +267,9 @@ export const Instances = {
             await pool.query(`DELETE FROM instances WHERE id = $1`, [
                 instanceId,
             ]);
+            if (instance.network_group_id !== null) {
+                await deleteUnusedPlannedGroup(instance.network_group_id);
+            }
 
             vlabInstanceLifecycleTotal.inc({
                 op: "delete",

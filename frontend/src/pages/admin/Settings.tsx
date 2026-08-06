@@ -23,6 +23,7 @@ import TextField from "@mui/material/TextField";
 import Chip from "@mui/material/Chip";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import RestoreOutlinedIcon from "@mui/icons-material/RestoreOutlined";
+import RefreshOutlinedIcon from "@mui/icons-material/RefreshOutlined";
 import { getErrorMessage } from "@/utils/errors";
 
 interface MetadataEntry {
@@ -38,7 +39,28 @@ interface SettingMeta {
     type: "number" | "string";
 }
 
+interface NetworkReadiness {
+    mode: "legacy" | "dry-run" | "active";
+    ready_for_active: boolean;
+    checks: Array<{
+        key: string;
+        ready: boolean;
+        detail: string;
+    }>;
+    desired_state: {
+        profiles: number;
+        templates: number;
+        groups: Record<"planned" | "creating" | "active" | "deleting" | "error", number>;
+        linked_instances: number;
+    };
+}
+
 const SETTINGS_META: Record<string, SettingMeta> = {
+    "settings.network.mode": {
+        label: "Network mode",
+        description: "Legacy provisioning, non-mutating dry-run, or readiness-gated active networking",
+        type: "string",
+    },
     "settings.limits.vmPerStudent": {
         label: "VMs per student",
         description: "Maximum number of VMs a student can have at once",
@@ -96,10 +118,9 @@ export default function Settings() {
     const [editLoading, setEditLoading] = useState(false);
 
     const [resettingKey, setResettingKey] = useState<string | null>(null);
-
-    useEffect(() => {
-        void fetchSettings();
-    }, []);
+    const [readiness, setReadiness] = useState<NetworkReadiness | null>(null);
+    const [readinessLoading, setReadinessLoading] = useState(false);
+    const [readinessError, setReadinessError] = useState<string | null>(null);
 
     const fetchSettings = async () => {
         setFetching(true);
@@ -113,6 +134,25 @@ export default function Settings() {
             setFetching(false);
         }
     };
+
+    const fetchNetworkReadiness = async () => {
+        setReadinessLoading(true);
+        setReadinessError(null);
+        try {
+            const response = await axios.get<NetworkReadiness>("/api/network/readiness");
+            setReadiness(response.data);
+        } catch (err) {
+            setReadinessError(getErrorMessage(err, "Failed to evaluate network readiness."));
+        } finally {
+            setReadinessLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        void Promise.resolve().then(() =>
+            Promise.all([fetchSettings(), fetchNetworkReadiness()]),
+        );
+    }, []);
 
     const openEditDialog = (entry: MetadataEntry) => {
         setEditEntry(entry);
@@ -198,6 +238,64 @@ export default function Settings() {
             </Box>
 
             {error && <Alert severity="error">{error}</Alert>}
+
+            <Paper sx={{ p: 2 }}>
+                <Stack spacing={2}>
+                    <Stack
+                        direction="row"
+                        spacing={1}
+                        sx={{ alignItems: "center", justifyContent: "space-between" }}
+                    >
+                        <Box>
+                            <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+                                Network readiness
+                            </Typography>
+                            <Typography variant="body2" color="text.secondary">
+                                Non-mutating checks required before active networking can be enabled.
+                            </Typography>
+                        </Box>
+                        <Tooltip title="Refresh readiness">
+                            <span>
+                                <IconButton
+                                    onClick={() => void fetchNetworkReadiness()}
+                                    disabled={readinessLoading}
+                                >
+                                    {readinessLoading ? (
+                                        <CircularProgress size={20} />
+                                    ) : (
+                                        <RefreshOutlinedIcon />
+                                    )}
+                                </IconButton>
+                            </span>
+                        </Tooltip>
+                    </Stack>
+
+                    {readinessError && <Alert severity="error">{readinessError}</Alert>}
+
+                    {readiness && (
+                        <>
+                            <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap" }}>
+                                <Chip label={`Mode: ${readiness.mode}`} variant="outlined" />
+                                <Chip
+                                    label={readiness.ready_for_active ? "Ready for active" : "Active blocked"}
+                                    color={readiness.ready_for_active ? "success" : "warning"}
+                                />
+                                <Chip label={`${readiness.desired_state.profiles} profiles`} variant="outlined" />
+                                <Chip label={`${readiness.desired_state.templates} templates`} variant="outlined" />
+                                <Chip label={`${readiness.desired_state.groups.planned} planned groups`} variant="outlined" />
+                                <Chip label={`${readiness.desired_state.linked_instances} linked instances`} variant="outlined" />
+                            </Stack>
+                            {readiness.checks
+                                .filter((check) => !check.ready)
+                                .map((check) => (
+                                    <Alert severity="warning" key={check.key}>
+                                        {check.detail}
+                                    </Alert>
+                                ))}
+                        </>
+                    )}
+                </Stack>
+            </Paper>
 
             <Paper sx={{ overflowX: "auto" }}>
                 <Table size="small">

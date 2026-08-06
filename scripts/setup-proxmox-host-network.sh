@@ -263,7 +263,9 @@ fi
 ifreload -a -n
 ifreload -a
 dnsmasq --test
-systemctl enable --now dnsmasq nftables
+systemctl enable dnsmasq nftables
+systemctl restart dnsmasq
+systemctl start nftables
 nft delete table ip virtual_lab_host_network 2>/dev/null || true
 nft -f "$NFT_FILE"
 sysctl --system >/dev/null

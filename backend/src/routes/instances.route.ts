@@ -1,4 +1,5 @@
 import { Instances } from "@/controllers/instances.controller";
+import { LabProfiles } from "@/controllers/lab-profiles.controller";
 import { Templates } from "@/controllers/templates.controller";
 import { guacamole } from "@/guacamole";
 import { isAdmin, isAuthenticated } from "@/middleware/auth.middleware";
@@ -13,6 +14,11 @@ import {
 } from "@/types/validators/instances.zod";
 import { logger } from "@/utils/logger";
 import { metadata } from "@/utils/metadata";
+import {
+    deleteUnusedPlannedGroup,
+    getOrCreatePlannedGroup,
+} from "@/network/groups";
+import { getNetworkMode } from "@/network/mode";
 import { Router } from "express";
 
 const router = Router();
@@ -171,25 +177,38 @@ router.post(
     isAuthenticated,
     validateRequest({ body: createInstanceSchema }),
     async (req, res) => {
-        const { template_id } = req.body as CreateInstanceDTO;
+        const { profile_id, template_id } = req.body as CreateInstanceDTO;
 
         try {
+            if (!req.user) {
+                return res.status(401).json({ error: "Unauthorized" });
+            }
+
             const template = await Templates.getById(template_id);
             if (template == null) {
-                return res.status(400).json({
-                    error: "Template with the provided template_id doesn't exist",
+                return res.status(404).json({
+                    error: "Template not found",
                 });
             }
 
-            // Perms check for template
-            if (!req.user?.role) throw Error("req.user is missing .role param");
+            const profiles = await LabProfiles.getAll(req.user.role !== "admin");
+            const profile = profiles.find(({ id }) => id === profile_id);
+            if (!profile) {
+                return res.status(404).json({ error: "Lab profile not found" });
+            }
+
             const hasAccess = await Templates.hasAccess(
-                req.user?.role,
+                req.user.role,
                 template_id,
             );
             if (!hasAccess) {
-                return res.status(400).json({
+                return res.status(403).json({
                     error: "User does not have access to this template",
+                });
+            }
+            if (!profile.templates.some(({ id }) => id === template_id)) {
+                return res.status(409).json({
+                    error: "Template is not assigned to the selected lab profile",
                 });
             }
 
@@ -207,12 +226,28 @@ router.post(
                 }
             }
 
-            // Create instance
-            const resp = await Instances.createInstance(
-                req.user?.vu_id,
-                template,
+            const mode = await getNetworkMode();
+            if (mode !== "legacy") {
+                return res.status(503).json({
+                    error: `${mode} network provisioning is not available yet`,
+                });
+            }
+
+            const group = await getOrCreatePlannedGroup(
+                req.user.vu_id,
+                profile.id,
             );
-            return res.json({ id: resp });
+            try {
+                const instanceId = await Instances.createInstance(
+                    req.user.vu_id,
+                    template,
+                    group.id,
+                );
+                return res.json({ id: instanceId });
+            } catch (error) {
+                await deleteUnusedPlannedGroup(group.id);
+                throw error;
+            }
         } catch (err) {
             logger.error(err, "Error creating instance:");
             return res.status(500).json({ error: "Failed to create instance" });

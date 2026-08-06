@@ -6,6 +6,7 @@ import {
 } from "@/types/validators/metadata.zod";
 import { logger } from "@/utils/logger";
 import { metadata } from "@/utils/metadata";
+import { getNetworkReadiness } from "@/network/readiness";
 import { Router } from "express";
 
 const router = Router();
@@ -38,8 +39,25 @@ router.patch(
         if (!(key in metadata.defaults)) {
             return res.status(404).json({ error: "Unknown setting key" });
         }
+        if (
+            key === "settings.network.mode" &&
+            req.body.value !== "legacy" &&
+            req.body.value !== "dry-run" &&
+            req.body.value !== "active"
+        ) {
+            return res.status(400).json({ error: "Invalid network mode" });
+        }
 
         try {
+            if (key === "settings.network.mode" && req.body.value === "active") {
+                const readiness = await getNetworkReadiness();
+                if (!readiness.ready_for_active) {
+                    return res.status(409).json({
+                        error: "Active networking readiness checks failed",
+                        checks: readiness.checks.filter((check) => !check.ready),
+                    });
+                }
+            }
             await metadata.set(key, req.body.value);
             res.json({ key, value: req.body.value });
         } catch (err) {

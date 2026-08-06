@@ -9,6 +9,8 @@ import { templatesRouter } from "@/routes/templates.route";
 import { guacamoleRouter } from "@/routes/guacamole.route";
 import { metadataRouter } from "@/routes/metadata.route";
 import { metricsRouter } from "@/routes/metrics.route";
+import { labProfilesRouter } from "@/routes/lab-profiles.route";
+import { networkRouter } from "@/routes/network.route";
 import { Instances } from "@/controllers/instances.controller";
 import { loggerMiddleware } from "@/middleware/logger.middleware";
 import { metricsMiddleware } from "@/middleware/metrics.middleware";
@@ -47,6 +49,8 @@ app.use("/templates", templatesRouter);
 app.use("/instances", instancesRouter);
 app.use("/guacamole", guacamoleRouter);
 app.use("/metadata", metadataRouter);
+app.use("/lab-profiles", labProfilesRouter);
+app.use("/network", networkRouter);
 
 app.use(errorHandlerMiddleware);
 
@@ -111,7 +115,11 @@ async function bootstrap() {
             new Task(
                 "instance status update",
                 async () => {
-                    await Instances.fetchAndUpdateStatuses();
+                    try {
+                        await Instances.fetchAndUpdateStatuses();
+                    } catch (error) {
+                        logger.error(error, "Failed to update instance statuses");
+                    }
                 },
                 (err) =>
                     logger.error(err, "Failed to update instance statuses"),

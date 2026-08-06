@@ -60,21 +60,37 @@ export const Templates = {
     },
 
     create: async (template: CreateTemplateDTO): Promise<Template> => {
-        const res = await pool.query(
-            `INSERT INTO templates (type, name, proxmox_id, description, connection_type, connection_config)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING *`,
-            [
-                template.type,
-                template.name,
-                template.proxmox_id,
-                template.description || null,
-                template.connection_type ?? "guacamole",
-                JSON.stringify(template.connection_config ?? {}),
-            ],
-        );
-
-        return res.rows[0] as Template;
+        const client = await pool.connect();
+        try {
+            await client.query("BEGIN");
+            const res = await client.query(
+                `INSERT INTO templates (type, name, proxmox_id, description, connection_type, connection_config)
+                 VALUES ($1, $2, $3, $4, $5, $6)
+                 RETURNING *`,
+                [
+                    template.type,
+                    template.name,
+                    template.proxmox_id,
+                    template.description || null,
+                    template.connection_type ?? "guacamole",
+                    JSON.stringify(template.connection_config ?? {}),
+                ],
+            );
+            const created = res.rows[0] as Template;
+            await client.query(
+                `INSERT INTO lab_profile_templates (profile_id, template_id)
+                 SELECT id, $1 FROM lab_profiles WHERE is_default = TRUE
+                 ON CONFLICT DO NOTHING`,
+                [created.id],
+            );
+            await client.query("COMMIT");
+            return created;
+        } catch (error) {
+            await client.query("ROLLBACK");
+            throw error;
+        } finally {
+            client.release();
+        }
     },
 
     delete: async (id: number): Promise<void> => {

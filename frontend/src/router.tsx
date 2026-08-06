@@ -15,6 +15,7 @@ const AdminGuacamole = lazy(() => import("@/pages/admin/Guacamole"));
 const AdminProxmoxDashboard = lazy(() => import("@/pages/admin/ProxmoxDashboard"));
 const AdminInstances = lazy(() => import("@/pages/admin/AdminInstances"));
 const AdminSettings = lazy(() => import("@/pages/admin/Settings"));
+const AdminLabProfiles = lazy(() => import("@/pages/admin/LabProfiles"));
 const Instances = lazy(() => import("@/pages/Instances"));
 const Settings = lazy(() => import("@/pages/Settings"));
 import { AuthProvider, RequireAuth, RequireAdmin } from "@/utils/AuthGuard";
@@ -139,6 +140,10 @@ export const router = createBrowserRouter([
             {
                 path: "admin/proxmox-dashboard",
                 element: <S><RequireAdmin><AdminProxmoxDashboard /></RequireAdmin></S>,
+            },
+            {
+                path: "admin/lab-profiles",
+                element: <S><RequireAdmin><AdminLabProfiles /></RequireAdmin></S>,
             },
             {
                 path: "admin/settings",

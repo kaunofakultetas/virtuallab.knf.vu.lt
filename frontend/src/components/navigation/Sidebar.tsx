@@ -17,6 +17,7 @@ import DesktopWindowsOutlinedIcon from "@mui/icons-material/DesktopWindowsOutlin
 import MonitorHeartOutlinedIcon from "@mui/icons-material/MonitorHeartOutlined";
 import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
 import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
+import AccountTreeOutlinedIcon from "@mui/icons-material/AccountTreeOutlined";
 import { useAuth } from "@/utils/AuthGuard";
 
 const SIDEBAR_W = 220;
@@ -84,6 +85,11 @@ const NAV: NavSection[] = [
                 label: "Templates",
                 icon: <ViewModuleOutlinedIcon fontSize="small" />,
                 path: "/admin/templates",
+            },
+            {
+                label: "Lab Profiles",
+                icon: <AccountTreeOutlinedIcon fontSize="small" />,
+                path: "/admin/lab-profiles",
             },
             {
                 label: "Guacamole",

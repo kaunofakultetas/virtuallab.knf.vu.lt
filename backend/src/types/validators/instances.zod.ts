@@ -1,8 +1,14 @@
 import z from "zod";
 
-export const createInstanceSchema = z.object({
-    template_id: z.number().min(0, "template_id is required"),
-});
+export const createInstanceSchema = z
+    .object({
+        profile_id: z.number().int().positive("profile_id must be a positive integer"),
+        template_id: z
+            .number()
+            .int()
+            .positive("template_id must be a positive integer"),
+    })
+    .strict();
 
 export const instanceIdParamSchema = z.object({
     instanceId: z

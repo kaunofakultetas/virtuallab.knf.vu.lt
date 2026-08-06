@@ -16,8 +16,13 @@ export interface Instance {
 
     created_at: Date;
     run_until: Date | null;
+    network_group_id: number | null;
+    network_group_state: string | null;
+    profile_id: number | null;
+    profile_name: string | null;
 }
 
 export type CreateInstanceDTO = {
+    profile_id: number;
     template_id: number;
 };

@@ -36,6 +36,7 @@ import AddOutlinedIcon from "@mui/icons-material/AddOutlined";
 import DeleteOutlinedIcon from "@mui/icons-material/DeleteOutlined";
 import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined";
 import type { Instance, Template } from "@/types/instances";
+import type { LabProfile } from "@/types/labProfiles";
 import Switch from "@mui/material/Switch";
 import { copyInstanceIp } from "@/utils/instances";
 
@@ -62,6 +63,7 @@ const typeColor: Record<string, "primary" | "secondary" | "default"> = {
 export default function AdminInstances() {
     const [instances, setInstances] = useState<Instance[]>([]);
     const [templates, setTemplates] = useState<Template[]>([]);
+    const [profiles, setProfiles] = useState<LabProfile[]>([]);
     const [fetching, setFetching] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
@@ -71,6 +73,7 @@ export default function AdminInstances() {
     } | null>(null);
 
     const [createOpen, setCreateOpen] = useState(false);
+    const [selectedProfileId, setSelectedProfileId] = useState<number | "">("");
     const [selectedTemplateId, setSelectedTemplateId] = useState<number | "">(
         "",
     );
@@ -127,6 +130,7 @@ export default function AdminInstances() {
     useEffect(() => {
         void fetchInstancesRef.current?.(true);
         void fetchTemplates();
+        void fetchProfiles();
 
         const interval = setInterval(() => {
             void fetchInstancesRef.current?.(false);
@@ -143,6 +147,25 @@ export default function AdminInstances() {
             // non-critical
         }
     };
+
+    const fetchProfiles = async () => {
+        try {
+            const response = await axios.get<LabProfile[]>("/api/lab-profiles");
+            const next = Array.isArray(response.data) ? response.data : [];
+            setProfiles(next);
+            if (next.length === 1) {
+                setSelectedProfileId(next[0].id);
+                if (next[0].templates.length === 1) {
+                    setSelectedTemplateId(Number(next[0].templates[0].id));
+                }
+            }
+        } catch {
+            // non-critical
+        }
+    };
+
+    const selectedProfile = profiles.find(({ id }) => id === selectedProfileId);
+    const availableTemplates = selectedProfile?.templates ?? [];
 
     const withAction = async (
         instanceId: string,
@@ -273,10 +296,11 @@ export default function AdminInstances() {
     };
 
     const handleCreate = async () => {
-        if (!selectedTemplateId) return;
+        if (!selectedProfileId || !selectedTemplateId) return;
         setCreateLoading(true);
         try {
             await axios.post("/api/instances", {
+                profile_id: selectedProfileId,
                 template_id: selectedTemplateId,
             });
             setSnackbar({
@@ -284,6 +308,7 @@ export default function AdminInstances() {
                 severity: "success",
             });
             setCreateOpen(false);
+            setSelectedProfileId("");
             setSelectedTemplateId("");
             await fetchInstancesRef.current?.(false);
         } catch (err) {
@@ -695,6 +720,7 @@ export default function AdminInstances() {
                 open={createOpen}
                 onClose={() => {
                     setCreateOpen(false);
+                    setSelectedProfileId("");
                     setSelectedTemplateId("");
                 }}
                 maxWidth="sm"
@@ -703,6 +729,29 @@ export default function AdminInstances() {
                 <DialogTitle>Create instance</DialogTitle>
                 <DialogContent>
                     <Stack spacing={2} sx={{ mt: 1 }}>
+                        <FormControl fullWidth>
+                            <InputLabel>Lab profile</InputLabel>
+                            <Select
+                                value={selectedProfileId}
+                                label="Lab profile"
+                                onChange={(event) => {
+                                    const profileId = Number(event.target.value);
+                                    const profile = profiles.find(({ id }) => id === profileId);
+                                    setSelectedProfileId(profileId);
+                                    setSelectedTemplateId(
+                                        profile?.templates.length === 1
+                                            ? Number(profile.templates[0].id)
+                                            : "",
+                                    );
+                                }}
+                            >
+                                {profiles.map((profile) => (
+                                    <MenuItem key={profile.id} value={profile.id}>
+                                        {profile.name}
+                                    </MenuItem>
+                                ))}
+                            </Select>
+                        </FormControl>
                         <FormControl fullWidth>
                             <InputLabel>Template</InputLabel>
                             <Select
@@ -713,8 +762,9 @@ export default function AdminInstances() {
                                         Number(e.target.value),
                                     )
                                 }
+                                disabled={!selectedProfileId}
                             >
-                                {templates.map((t) => (
+                                {availableTemplates.map((t) => (
                                     <MenuItem key={t.id} value={t.id}>
                                         <Stack
                                             direction="row"
@@ -724,11 +774,14 @@ export default function AdminInstances() {
                                             <Chip
                                                 size="small"
                                                 label={
-                                                    typeLabel[t.type] ?? t.type
+                                                    t.type
+                                                        ? typeLabel[t.type] ?? t.type
+                                                        : "Unknown"
                                                 }
                                                 color={
-                                                    typeColor[t.type] ??
-                                                    "default"
+                                                    t.type
+                                                        ? typeColor[t.type] ?? "default"
+                                                        : "default"
                                                 }
                                                 variant="outlined"
                                                 sx={{ fontSize: 10 }}
@@ -745,6 +798,7 @@ export default function AdminInstances() {
                     <Button
                         onClick={() => {
                             setCreateOpen(false);
+                            setSelectedProfileId("");
                             setSelectedTemplateId("");
                         }}
                         disabled={createLoading}
@@ -754,7 +808,7 @@ export default function AdminInstances() {
                     <Button
                         variant="contained"
                         onClick={handleCreate}
-                        disabled={!selectedTemplateId || createLoading}
+                        disabled={!selectedProfileId || !selectedTemplateId || createLoading}
                     >
                         {createLoading ? (
                             <CircularProgress size={20} />

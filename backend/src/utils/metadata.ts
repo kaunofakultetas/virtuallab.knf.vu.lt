@@ -10,6 +10,7 @@ export type MetaValue =
 
 const defaults: Record<string, MetaValue> = {
     "settings.limits.vmPerStudent": 1,
+    "settings.network.mode": "legacy",
     "settings.network.insideIpPrefix": "10.10.",
     "settings.instances.ipWaitTimeoutMs": 60_000,
     "settings.instances.ipPollIntervalMs": 2_000,

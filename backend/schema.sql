@@ -57,6 +57,98 @@ CREATE TABLE IF NOT EXISTS templates (
 ALTER TABLE templates ADD COLUMN IF NOT EXISTS connection_type connection_type NOT NULL DEFAULT 'guacamole';
 ALTER TABLE templates ADD COLUMN IF NOT EXISTS connection_config JSONB NOT NULL DEFAULT '{}';
 
+CREATE TABLE IF NOT EXISTS lab_profiles (
+    id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    name VARCHAR(255) NOT NULL UNIQUE,
+    description TEXT,
+    allow_same_group BOOLEAN NOT NULL DEFAULT TRUE,
+    is_default BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS lab_profiles_single_default_idx
+    ON lab_profiles (is_default)
+    WHERE is_default = TRUE;
+
+CREATE TABLE IF NOT EXISTS lab_profile_templates (
+    profile_id INT NOT NULL REFERENCES lab_profiles(id) ON DELETE CASCADE,
+    template_id INT NOT NULL REFERENCES templates(id) ON DELETE CASCADE,
+    PRIMARY KEY (profile_id, template_id)
+);
+
+CREATE TABLE IF NOT EXISTS allowed_web_domains (
+    profile_id INT NOT NULL REFERENCES lab_profiles(id) ON DELETE CASCADE,
+    domain TEXT NOT NULL,
+    include_subdomains BOOLEAN NOT NULL DEFAULT TRUE,
+    PRIMARY KEY (profile_id, domain),
+    CHECK (domain = lower(domain)),
+    CHECK (domain !~ '[/:]'),
+    CHECK (domain !~ '^\.' AND domain !~ '\.$')
+);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM lab_profiles WHERE is_default = TRUE) THEN
+        UPDATE lab_profiles
+        SET is_default = TRUE,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE name = 'Default';
+
+        IF NOT FOUND THEN
+            INSERT INTO lab_profiles (name, description, allow_same_group, is_default)
+            VALUES (
+                'Default',
+                'Default profile for templates created before lab profiles were introduced.',
+                TRUE,
+                TRUE
+            );
+        END IF;
+    END IF;
+END $$;
+
+INSERT INTO lab_profile_templates (profile_id, template_id)
+SELECT profile.id, template.id
+FROM lab_profiles profile
+CROSS JOIN templates template
+WHERE profile.is_default = TRUE
+ON CONFLICT DO NOTHING;
+
+DO $$
+BEGIN
+    CREATE TYPE network_group_state AS ENUM ('planned', 'creating', 'active', 'deleting', 'error');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
+
+ALTER TYPE network_group_state ADD VALUE IF NOT EXISTS 'planned' BEFORE 'creating';
+
+CREATE TABLE IF NOT EXISTS network_groups (
+    id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    owner_id VARCHAR(255) NOT NULL REFERENCES users(vu_id) ON DELETE RESTRICT,
+    profile_id INT NOT NULL REFERENCES lab_profiles(id) ON DELETE RESTRICT,
+    vlan_tag INT UNIQUE,
+    vnet_name TEXT UNIQUE,
+    subnet_cidr CIDR UNIQUE,
+    state network_group_state NOT NULL DEFAULT 'planned',
+    desired_revision TEXT,
+    applied_revision TEXT,
+    last_error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (owner_id, profile_id),
+    CHECK (vlan_tag IS NULL OR vlan_tag BETWEEN 1 AND 4094)
+);
+
+ALTER TABLE network_groups ALTER COLUMN state SET DEFAULT 'planned';
+
+CREATE TABLE IF NOT EXISTS group_peerings (
+    group_a_id INT NOT NULL REFERENCES network_groups(id) ON DELETE CASCADE,
+    group_b_id INT NOT NULL REFERENCES network_groups(id) ON DELETE CASCADE,
+    CHECK (group_a_id < group_b_id),
+    PRIMARY KEY (group_a_id, group_b_id)
+);
+
 CREATE TABLE IF NOT EXISTS instances (
     id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     owner_id VARCHAR(255),
@@ -74,6 +166,17 @@ CREATE TABLE IF NOT EXISTS instances (
     FOREIGN KEY (owner_id) REFERENCES users(vu_id) ON DELETE SET NULL,
     FOREIGN KEY (template_id) REFERENCES templates(id) ON DELETE SET NULL
 );
+
+ALTER TABLE instances ADD COLUMN IF NOT EXISTS network_group_id INT;
+
+DO $$
+BEGIN
+    ALTER TABLE instances
+        ADD CONSTRAINT instances_network_group_id_fkey
+        FOREIGN KEY (network_group_id) REFERENCES network_groups(id) ON DELETE SET NULL;
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE TABLE IF NOT EXISTS metadata (
   key        TEXT PRIMARY KEY,

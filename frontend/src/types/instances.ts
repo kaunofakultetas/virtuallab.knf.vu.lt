@@ -12,6 +12,10 @@ export interface Instance {
     };
     created_at: string;
     run_until: string | null;
+    network_group_id: number | null;
+    network_group_state: string | null;
+    profile_id: number | null;
+    profile_name: string | null;
 }
 
 export interface Template {
