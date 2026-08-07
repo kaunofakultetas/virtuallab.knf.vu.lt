@@ -44,7 +44,9 @@ interface NetworkReadiness {
     ready_for_active: boolean;
     checks: Array<{
         key: string;
-        ready: boolean;
+        category: "control-plane" | "proxmox" | "transport" | "sdn" | "gateway" | "access";
+        status: "pass" | "fail" | "not_applicable";
+        required: boolean;
         detail: string;
     }>;
     desired_state: {
@@ -52,6 +54,8 @@ interface NetworkReadiness {
         templates: number;
         groups: Record<"planned" | "creating" | "active" | "deleting" | "error", number>;
         linked_instances: number;
+        projected_groups: number;
+        plan_revision: string;
     };
 }
 
@@ -274,6 +278,12 @@ export default function Settings() {
 
                     {readiness && (
                         <>
+                            {readiness.mode !== "active" && (
+                                <Alert severity="warning">
+                                    Application-launched VMs currently use the flat legacy network and are not isolated.
+                                    Dry-run only projects future network resources.
+                                </Alert>
+                            )}
                             <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap" }}>
                                 <Chip label={`Mode: ${readiness.mode}`} variant="outlined" />
                                 <Chip
@@ -283,13 +293,23 @@ export default function Settings() {
                                 <Chip label={`${readiness.desired_state.profiles} profiles`} variant="outlined" />
                                 <Chip label={`${readiness.desired_state.templates} templates`} variant="outlined" />
                                 <Chip label={`${readiness.desired_state.groups.planned} planned groups`} variant="outlined" />
+                                <Chip label={`${readiness.desired_state.projected_groups} projected groups`} variant="outlined" />
                                 <Chip label={`${readiness.desired_state.linked_instances} linked instances`} variant="outlined" />
+                                <Tooltip title={readiness.desired_state.plan_revision}>
+                                    <Chip
+                                        label={`Plan ${readiness.desired_state.plan_revision.slice(0, 12)}`}
+                                        variant="outlined"
+                                    />
+                                </Tooltip>
                             </Stack>
                             {readiness.checks
-                                .filter((check) => !check.ready)
+                                .filter((check) => check.status !== "pass")
                                 .map((check) => (
-                                    <Alert severity="warning" key={check.key}>
-                                        {check.detail}
+                                    <Alert
+                                        severity={check.status === "fail" && check.required ? "warning" : "info"}
+                                        key={check.key}
+                                    >
+                                        <strong>{check.category}:</strong> {check.detail}
                                     </Alert>
                                 ))}
                         </>

@@ -103,7 +103,7 @@ plan() {
     printf 'PLAN: %s\n' "$*"
 }
 
-for command_name in pveversion ip flock grep awk diff; do
+for command_name in pveversion ip bridge flock grep awk diff; do
     command -v "$command_name" >/dev/null 2>&1 || fail "Required remote command not found: $command_name"
 done
 [[ "$(id -u)" == 0 ]] || fail "Remote user must be root"
@@ -144,7 +144,9 @@ iface vmbr20 inet static
     address 10.10.20.1/24
     bridge-ports none
     bridge-stp off
-    bridge-fd 0'
+    bridge-fd 0
+    bridge-vlan-aware yes
+    bridge-vids 2000-2255'
 
 dnsmasq_content='# Managed by setup-proxmox-host-network.sh
 interface=vmbr1
@@ -220,7 +222,7 @@ done
 
 plan "install missing dnsmasq, nftables, and ifupdown2 packages"
 plan "install or retain managed bridge, DHCP, nftables, and forwarding files"
-plan "validate candidates before activating vmbr1 and vmbr20"
+plan "validate candidates before activating vmbr1 and VLAN-aware vmbr20"
 printf 'Network contract: LXC 200 -> 10.10.10.50/24 and 10.10.20.10/24; LXC 201 -> 10.10.10.100/24\n'
 
 if [[ "$apply" != 1 ]]; then
@@ -271,8 +273,13 @@ nft -f "$NFT_FILE"
 sysctl --system >/dev/null
 
 [[ "$(sysctl -n net.ipv4.ip_forward)" == 1 ]] || fail "IPv4 forwarding is not enabled"
+[[ -e /sys/class/net/vmbr20/bridge/vlan_filtering ]] || fail "vmbr20 is not a Linux bridge"
+[[ "$(cat /sys/class/net/vmbr20/bridge/vlan_filtering)" == 1 ]] || fail "vmbr20 VLAN filtering is not enabled"
+ifquery vmbr20 | grep -Eq '^[[:space:]]*bridge-vids[[:space:]]+2000-2255([[:space:]]|$)' || \
+    fail "vmbr20 effective configuration does not allow VLANs 2000-2255"
 ip -br address show vmbr1
 ip -br address show vmbr20
+bridge vlan show dev vmbr20
 nft list table ip virtual_lab_host_network
 printf 'Host network reconciliation complete.\n'
 REMOTE_SCRIPT

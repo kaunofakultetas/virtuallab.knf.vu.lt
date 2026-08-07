@@ -19,6 +19,13 @@
 			}
 		}
 
+		# Restricted Access observer SSH; the server forces a read-only command.
+		:2222 {
+			route {
+				proxy 172.16.0.34:22
+			}
+		}
+
 		# Guacamole — plain HTTP, no SNI; set GUACAMOLE_URL=http://exit:8080 in .env
 		:8080 {
 			route {

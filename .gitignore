@@ -34,5 +34,9 @@ certs/*
 # Logs
 CaddyAccess.log
 
+# Runtime observations
+access-observation*.json
+__pycache__/
+
 # Docs stuff
 .docusaurus

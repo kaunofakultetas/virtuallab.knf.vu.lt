@@ -69,6 +69,28 @@ variable "ubuntu_template_sha512" {
   }
 }
 
+variable "gateway_image_url" {
+  description = "Immutable URL for the Ubuntu 24.04 amd64 cloud image used by Gateway VM 202."
+  type        = string
+  default     = "https://cloud-images.ubuntu.com/releases/noble/release-20260801/ubuntu-24.04-server-cloudimg-amd64.img"
+
+  validation {
+    condition     = can(regex("^https://.+\\.img$", var.gateway_image_url))
+    error_message = "gateway_image_url must be an HTTPS URL for an .img cloud image."
+  }
+}
+
+variable "gateway_image_sha256" {
+  description = "SHA-256 checksum published for gateway_image_url."
+  type        = string
+  default     = "0533b0655c32e68b31d792ecd6ccfca95abdbc536c4446874fe0513bd4140ffe"
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{64}$", var.gateway_image_sha256))
+    error_message = "gateway_image_sha256 must be a lowercase SHA-256 digest."
+  }
+}
+
 variable "guest_ssh_public_key" {
   description = "Dedicated SSH public key installed for root in both containers."
   type        = string

@@ -70,6 +70,8 @@ Apply it after reviewing the output:
 Add `--forward-app-ports` to both commands when the Proxmox host should forward
 TCP `80`, `443`, and `8888`, plus UDP `443`, to `10.10.10.100`. Omit
 `--interactive-auth` when root SSH key authentication is configured.
+When reconciling an existing host, repeat the same ingress mode used previously;
+omitting `--forward-app-ports` removes those managed forwarding rules.
 
 The script refuses to overwrite a managed file when its content has changed and
 prints a unified diff of the current and desired versions. Review that diff. If
@@ -167,6 +169,27 @@ At minimum, replace `POSTGRES_PASSWORD`, `BACKEND_JWT_SECRET`, `PROXMOX_AUTH_TOK
 domain, SAML, Loki, and TLS values for the deployment. The backend intentionally
 uses `exit:8006` for Proxmox and `exit:8080` for Guacamole because it runs on an
 internal Docker network.
+
+The reconciliation dry-run also requires a dedicated SSH identity for read-only
+Access observation. On the deployment host, create a directory containing the
+private key as `id_ed25519` and the pinned Proxmox host key as `known_hosts`.
+The directory and files must be readable by container UID `1001`; keep the
+private key inaccessible to other users. Add the following values to `.env`:
+
+```text
+ACCESS_OBSERVER_CREDENTIALS_DIR=/absolute/host/path/to/access-observer
+ACCESS_OBSERVER_HOST=pve1.example.internal
+ACCESS_OBSERVER_PORT=22
+# Set when connecting through a TCP proxy while known_hosts pins the real host.
+ACCESS_OBSERVER_HOST_KEY_ALIAS=pve1.example.internal
+ACCESS_OBSERVER_USER=access-observer
+ACCESS_OBSERVER_COMMAND=virtual-lab-access-observe
+```
+
+Install the forced observer and restricted `authorized_keys` entry on the
+Proxmox node as documented in `infra/access/README.md`. Compose mounts the
+credentials directory read-only. The reconciliation endpoint returns `503`
+instead of starting SSH when this configuration is incomplete.
 
 For this test network, add `CADDY_IP_HTTP_HOST=172.16.0.34` to `.env` to serve
 the application over plain HTTP at `http://172.16.0.34`. Leave the variable

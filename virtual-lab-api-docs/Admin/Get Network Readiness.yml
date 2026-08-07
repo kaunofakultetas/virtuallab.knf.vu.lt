@@ -13,3 +13,12 @@ settings:
   timeout: 0
   followRedirects: true
   maxRedirects: 5
+
+docs: |-
+  Returns non-mutating control-plane and Proxmox infrastructure checks.
+
+  Each check includes a `category`, `status` (`pass`, `fail`, or
+  `not_applicable`), `required`, and human-readable `detail` value. Active mode
+  remains blocked unless every required check passes. Infrastructure
+  observations read the node network inventory, SDN zones/VNets, Gateway VM
+  configuration, and Access LXC configuration without changing those resources.

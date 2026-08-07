@@ -4,7 +4,7 @@ services:
         container_name: guacamole
         restart: unless-stopped
         ports:
-            - "8080:8080"
+            - "10.10.10.50:8080:8080"
         volumes:
             - ./data:/config
 
@@ -14,6 +14,6 @@ services:
         container_name: vm-web-proxy
         restart: unless-stopped
         ports:
-            - "9443:9443"
+            - "10.10.10.50:9443:9443"
         volumes:
             - ./Caddyfile:/etc/caddy/Caddyfile:ro

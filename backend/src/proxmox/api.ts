@@ -5,9 +5,34 @@ import {
     ProxmoxClientConfig,
     ProxmoxHTTPMethod,
     ProxmoxNodeTaskStatus,
+    ProxmoxNodeNetwork,
     ProxmoxNodeVM,
     ProxmoxNodeVMNetIface,
     ProxmoxNodeVMStatus,
+    ProxmoxGuestConfig,
+    ProxmoxSdnVnet,
+    ProxmoxSdnZone,
+    ProxmoxNodeStorageStatus,
+    ProxmoxGuestConfigUpdate,
+    ProxmoxTaskError,
+    ProxmoxTaskTimeoutError,
+    ProxmoxTaskWaitOptions,
+    ProxmoxFirewallIpSet,
+    ProxmoxFirewallIpSetCreate,
+    ProxmoxFirewallIpSetEntry,
+    ProxmoxFirewallIpSetEntryInput,
+    ProxmoxFirewallOptions,
+    ProxmoxFirewallOptionsUpdate,
+    ProxmoxFirewallRule,
+    ProxmoxFirewallRuleInput,
+    ProxmoxFirewallSecurityGroup,
+    ProxmoxFirewallSecurityGroupCreate,
+    ProxmoxFirewallSecurityGroupUpdate,
+    ProxmoxSdnSubnet,
+    ProxmoxSdnSubnetCreate,
+    ProxmoxSdnSubnetUpdate,
+    ProxmoxSdnVnetCreate,
+    ProxmoxSdnVnetUpdate,
 } from "./types";
 import { logger } from "@/utils/logger";
 import { proxmoxApiErrorsTotal } from "@/utils/metrics";
@@ -34,6 +59,21 @@ export function normaliseVmName(input: string, fallback = "vm"): string {
     return labels.join(".");
 }
 
+function encodeForm(
+    values: object,
+): Record<string, string> {
+    return Object.fromEntries(
+        Object.entries(values)
+            .filter((entry): entry is [string, string | number | boolean] =>
+                entry[1] !== undefined,
+            )
+            .map(([key, value]) => [
+                key,
+                typeof value === "boolean" ? (value ? "1" : "0") : String(value),
+            ]),
+    );
+}
+
 export class ProxmoxClient {
     private readonly baseUrl: string;
     private readonly nodeName: string;
@@ -52,6 +92,10 @@ export class ProxmoxClient {
                 rejectUnauthorized: config.rejectUnauthorized ?? true,
             },
         });
+    }
+
+    async close(): Promise<void> {
+        await this.httpAgent.close();
     }
 
     private buildAuthHeaders(authToken: string): Record<string, string> {
@@ -191,6 +235,322 @@ export class ProxmoxClient {
         return transformed as unknown as ProxmoxNodeVMStatus;
     }
 
+    async getNodeNetworks(): Promise<ProxmoxNodeNetwork[]> {
+        return this.request<ProxmoxNodeNetwork[]>(
+            "GET",
+            `/nodes/${this.nodeName}/network`,
+        );
+    }
+
+    async getSdnZones(): Promise<ProxmoxSdnZone[]> {
+        return this.request<ProxmoxSdnZone[]>("GET", "/cluster/sdn/zones");
+    }
+
+    async getSdnVnets(): Promise<ProxmoxSdnVnet[]> {
+        return this.request<ProxmoxSdnVnet[]>("GET", "/cluster/sdn/vnets");
+    }
+
+    async getSdnVnet(vnet: string): Promise<ProxmoxSdnVnet> {
+        return this.request<ProxmoxSdnVnet>(
+            "GET",
+            `/cluster/sdn/vnets/${encodeURIComponent(vnet)}`,
+        );
+    }
+
+    async createSdnVnet(input: ProxmoxSdnVnetCreate): Promise<void> {
+        await this.request<null>("POST", "/cluster/sdn/vnets", {
+            form: encodeForm(input),
+        });
+    }
+
+    async updateSdnVnet(vnet: string, input: ProxmoxSdnVnetUpdate): Promise<void> {
+        await this.request<null>(
+            "PUT",
+            `/cluster/sdn/vnets/${encodeURIComponent(vnet)}`,
+            { form: encodeForm(input) },
+        );
+    }
+
+    async deleteSdnVnet(vnet: string): Promise<void> {
+        await this.request<null>(
+            "DELETE",
+            `/cluster/sdn/vnets/${encodeURIComponent(vnet)}`,
+        );
+    }
+
+    async getSdnSubnets(vnet: string): Promise<ProxmoxSdnSubnet[]> {
+        return this.request<ProxmoxSdnSubnet[]>(
+            "GET",
+            `/cluster/sdn/vnets/${encodeURIComponent(vnet)}/subnets`,
+        );
+    }
+
+    async getSdnSubnet(vnet: string, subnet: string): Promise<ProxmoxSdnSubnet> {
+        return this.request<ProxmoxSdnSubnet>(
+            "GET",
+            `/cluster/sdn/vnets/${encodeURIComponent(vnet)}/subnets/${encodeURIComponent(subnet)}`,
+        );
+    }
+
+    async createSdnSubnet(vnet: string, input: ProxmoxSdnSubnetCreate): Promise<void> {
+        await this.request<null>(
+            "POST",
+            `/cluster/sdn/vnets/${encodeURIComponent(vnet)}/subnets`,
+            { form: encodeForm(input) },
+        );
+    }
+
+    async updateSdnSubnet(
+        vnet: string,
+        subnet: string,
+        input: ProxmoxSdnSubnetUpdate,
+    ): Promise<void> {
+        await this.request<null>(
+            "PUT",
+            `/cluster/sdn/vnets/${encodeURIComponent(vnet)}/subnets/${encodeURIComponent(subnet)}`,
+            { form: encodeForm(input) },
+        );
+    }
+
+    async deleteSdnSubnet(vnet: string, subnet: string): Promise<void> {
+        await this.request<null>(
+            "DELETE",
+            `/cluster/sdn/vnets/${encodeURIComponent(vnet)}/subnets/${encodeURIComponent(subnet)}`,
+        );
+    }
+
+    async applySdnConfiguration(): Promise<string | null> {
+        return this.request<string | null>("PUT", "/cluster/sdn");
+    }
+
+    async getFirewallSecurityGroups(): Promise<ProxmoxFirewallSecurityGroup[]> {
+        return this.request<ProxmoxFirewallSecurityGroup[]>(
+            "GET",
+            "/cluster/firewall/groups",
+        );
+    }
+
+    async createFirewallSecurityGroup(
+        input: ProxmoxFirewallSecurityGroupCreate,
+    ): Promise<void> {
+        await this.request<null>("POST", "/cluster/firewall/groups", {
+            form: encodeForm(input),
+        });
+    }
+
+    async updateFirewallSecurityGroup(
+        group: string,
+        input: ProxmoxFirewallSecurityGroupUpdate,
+    ): Promise<void> {
+        await this.request<null>(
+            "PUT",
+            `/cluster/firewall/groups/${encodeURIComponent(group)}`,
+            { form: encodeForm(input) },
+        );
+    }
+
+    async deleteFirewallSecurityGroup(group: string, digest?: string): Promise<void> {
+        await this.request<null>(
+            "DELETE",
+            `/cluster/firewall/groups/${encodeURIComponent(group)}`,
+            { form: encodeForm({ digest }) },
+        );
+    }
+
+    async getFirewallSecurityGroupRules(group: string): Promise<ProxmoxFirewallRule[]> {
+        return this.request<ProxmoxFirewallRule[]>(
+            "GET",
+            `/cluster/firewall/groups/${encodeURIComponent(group)}`,
+        );
+    }
+
+    async createFirewallSecurityGroupRule(
+        group: string,
+        input: ProxmoxFirewallRuleInput,
+    ): Promise<void> {
+        await this.request<null>(
+            "POST",
+            `/cluster/firewall/groups/${encodeURIComponent(group)}`,
+            { form: encodeForm(input) },
+        );
+    }
+
+    async updateFirewallSecurityGroupRule(
+        group: string,
+        position: number,
+        input: ProxmoxFirewallRuleInput,
+    ): Promise<void> {
+        await this.request<null>(
+            "PUT",
+            `/cluster/firewall/groups/${encodeURIComponent(group)}/${position}`,
+            { form: encodeForm(input) },
+        );
+    }
+
+    async deleteFirewallSecurityGroupRule(
+        group: string,
+        position: number,
+        digest?: string,
+    ): Promise<void> {
+        await this.request<null>(
+            "DELETE",
+            `/cluster/firewall/groups/${encodeURIComponent(group)}/${position}`,
+            { form: encodeForm({ digest }) },
+        );
+    }
+
+    async getFirewallIpSets(): Promise<ProxmoxFirewallIpSet[]> {
+        return this.request<ProxmoxFirewallIpSet[]>("GET", "/cluster/firewall/ipset");
+    }
+
+    async createFirewallIpSet(input: ProxmoxFirewallIpSetCreate): Promise<void> {
+        await this.request<null>("POST", "/cluster/firewall/ipset", {
+            form: encodeForm(input),
+        });
+    }
+
+    async updateFirewallIpSet(
+        name: string,
+        input: Omit<ProxmoxFirewallIpSetCreate, "name">,
+    ): Promise<void> {
+        await this.request<null>(
+            "PUT",
+            `/cluster/firewall/ipset/${encodeURIComponent(name)}`,
+            { form: encodeForm(input) },
+        );
+    }
+
+    async deleteFirewallIpSet(name: string, digest?: string): Promise<void> {
+        await this.request<null>(
+            "DELETE",
+            `/cluster/firewall/ipset/${encodeURIComponent(name)}`,
+            { form: encodeForm({ digest }) },
+        );
+    }
+
+    async getFirewallIpSetEntries(name: string): Promise<ProxmoxFirewallIpSetEntry[]> {
+        return this.request<ProxmoxFirewallIpSetEntry[]>(
+            "GET",
+            `/cluster/firewall/ipset/${encodeURIComponent(name)}`,
+        );
+    }
+
+    async createFirewallIpSetEntry(
+        name: string,
+        input: ProxmoxFirewallIpSetEntryInput,
+    ): Promise<void> {
+        await this.request<null>(
+            "POST",
+            `/cluster/firewall/ipset/${encodeURIComponent(name)}`,
+            { form: encodeForm(input) },
+        );
+    }
+
+    async updateFirewallIpSetEntry(
+        name: string,
+        cidr: string,
+        input: ProxmoxFirewallIpSetEntryInput,
+    ): Promise<void> {
+        await this.request<null>(
+            "PUT",
+            `/cluster/firewall/ipset/${encodeURIComponent(name)}/${encodeURIComponent(cidr)}`,
+            { form: encodeForm(input) },
+        );
+    }
+
+    async deleteFirewallIpSetEntry(
+        name: string,
+        cidr: string,
+        digest?: string,
+    ): Promise<void> {
+        await this.request<null>(
+            "DELETE",
+            `/cluster/firewall/ipset/${encodeURIComponent(name)}/${encodeURIComponent(cidr)}`,
+            { form: encodeForm({ digest }) },
+        );
+    }
+
+    async getVmFirewallRules(vmid: string): Promise<ProxmoxFirewallRule[]> {
+        return this.request<ProxmoxFirewallRule[]>(
+            "GET",
+            `/nodes/${encodeURIComponent(this.nodeName)}/qemu/${encodeURIComponent(vmid)}/firewall/rules`,
+        );
+    }
+
+    async createVmFirewallRule(
+        vmid: string,
+        input: ProxmoxFirewallRuleInput,
+    ): Promise<void> {
+        await this.request<null>(
+            "POST",
+            `/nodes/${encodeURIComponent(this.nodeName)}/qemu/${encodeURIComponent(vmid)}/firewall/rules`,
+            { form: encodeForm(input) },
+        );
+    }
+
+    async updateVmFirewallRule(
+        vmid: string,
+        position: number,
+        input: ProxmoxFirewallRuleInput,
+    ): Promise<void> {
+        await this.request<null>(
+            "PUT",
+            `/nodes/${encodeURIComponent(this.nodeName)}/qemu/${encodeURIComponent(vmid)}/firewall/rules/${position}`,
+            { form: encodeForm(input) },
+        );
+    }
+
+    async deleteVmFirewallRule(
+        vmid: string,
+        position: number,
+        digest?: string,
+    ): Promise<void> {
+        await this.request<null>(
+            "DELETE",
+            `/nodes/${encodeURIComponent(this.nodeName)}/qemu/${encodeURIComponent(vmid)}/firewall/rules/${position}`,
+            { form: encodeForm({ digest }) },
+        );
+    }
+
+    async getVmFirewallOptions(vmid: string): Promise<ProxmoxFirewallOptions> {
+        return this.request<ProxmoxFirewallOptions>(
+            "GET",
+            `/nodes/${encodeURIComponent(this.nodeName)}/qemu/${encodeURIComponent(vmid)}/firewall/options`,
+        );
+    }
+
+    async updateVmFirewallOptions(
+        vmid: string,
+        input: ProxmoxFirewallOptionsUpdate,
+    ): Promise<void> {
+        await this.request<null>(
+            "PUT",
+            `/nodes/${encodeURIComponent(this.nodeName)}/qemu/${encodeURIComponent(vmid)}/firewall/options`,
+            { form: encodeForm(input) },
+        );
+    }
+
+    async getVmConfig(vmid: string): Promise<ProxmoxGuestConfig> {
+        return this.request<ProxmoxGuestConfig>(
+            "GET",
+            `/nodes/${this.nodeName}/qemu/${vmid}/config`,
+        );
+    }
+
+    async getContainerConfig(vmid: string): Promise<ProxmoxGuestConfig> {
+        return this.request<ProxmoxGuestConfig>(
+            "GET",
+            `/nodes/${this.nodeName}/lxc/${vmid}/config`,
+        );
+    }
+
+    async getNodeStorageStatus(storage: string): Promise<ProxmoxNodeStorageStatus> {
+        return this.request<ProxmoxNodeStorageStatus>(
+            "GET",
+            `/nodes/${this.nodeName}/storage/${encodeURIComponent(storage)}/status`,
+        );
+    }
+
     async getVmNetIfaces(
         vmid: string,
     ): Promise<Record<string, ProxmoxNodeVMNetIface>> {
@@ -211,46 +571,36 @@ export class ProxmoxClient {
     }
 
     async pollTask(upid: string): Promise<ProxmoxNodeTaskStatus> {
-        const resp = await this.request<any>(
+        return this.request<ProxmoxNodeTaskStatus>(
             "GET",
-            `/nodes/${this.nodeName}/tasks/${upid}/status`,
+            `/nodes/${encodeURIComponent(this.nodeName)}/tasks/${encodeURIComponent(upid)}/status`,
         );
+    }
 
-        return resp as ProxmoxNodeTaskStatus;
+    async waitForTask(
+        upid: string,
+        options: ProxmoxTaskWaitOptions = {},
+    ): Promise<ProxmoxNodeTaskStatus> {
+        const timeoutMs = options.timeoutMs ?? 120_000;
+        const pollIntervalMs = options.pollIntervalMs ?? 2_000;
+        const startedAt = Date.now();
+
+        while (Date.now() - startedAt < timeoutMs) {
+            const task = await this.pollTask(upid);
+            if (task.status === "stopped") {
+                if (task.exitstatus === "OK") return task;
+                throw new ProxmoxTaskError(task);
+            }
+            await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+        }
+
+        throw new ProxmoxTaskTimeoutError(upid, timeoutMs);
     }
 
     async waitForTaskCompletion(upid: string): Promise<boolean> {
-        const timeoutMs = 120_000;
-        const pollIntervalMs = 2_000;
-        const startedAt = Date.now();
-
         try {
-            while (Date.now() - startedAt < timeoutMs) {
-                const task = await this.pollTask(upid);
-
-                if (task.status === "stopped") {
-                    if (task.exitstatus === "OK") {
-                        return true;
-                    }
-
-                    logger.error(
-                        {
-                            upid,
-                            status: task.status,
-                            exitstatus: task.exitstatus,
-                        },
-                        "Proxmox task finished with non-OK exit status",
-                    );
-                    return false;
-                }
-
-                await new Promise((resolve) =>
-                    setTimeout(resolve, pollIntervalMs),
-                );
-            }
-
-            logger.error({ upid, timeoutMs }, "Proxmox task polling timed out");
-            return false;
+            await this.waitForTask(upid);
+            return true;
         } catch (err) {
             logger.error(
                 { err, upid },
@@ -281,14 +631,29 @@ export class ProxmoxClient {
         return resp as string;
     }
 
-    async configVM(vmid: string, data: Record<string, string>) {
+    async updateVmConfig(vmid: string, data: ProxmoxGuestConfigUpdate): Promise<void> {
         await this.request<null>(
             "PUT",
-            `/nodes/${this.nodeName}/qemu/${vmid}/config`,
+            `/nodes/${encodeURIComponent(this.nodeName)}/qemu/${encodeURIComponent(vmid)}/config`,
             {
-                form: data,
+                form: encodeForm(data),
             },
         );
+    }
+
+    async updateContainerConfig(
+        vmid: string,
+        data: ProxmoxGuestConfigUpdate,
+    ): Promise<void> {
+        await this.request<null>(
+            "PUT",
+            `/nodes/${encodeURIComponent(this.nodeName)}/lxc/${encodeURIComponent(vmid)}/config`,
+            { form: encodeForm(data) },
+        );
+    }
+
+    async configVM(vmid: string, data: Record<string, string>): Promise<void> {
+        await this.updateVmConfig(vmid, data);
     }
 
     async startVM(vmid: string): Promise<string> {

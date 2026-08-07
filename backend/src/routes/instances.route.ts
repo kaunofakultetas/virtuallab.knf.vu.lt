@@ -18,6 +18,7 @@ import {
     deleteUnusedPlannedGroup,
     getOrCreatePlannedGroup,
 } from "@/network/groups";
+import { getNetworkPlan } from "@/network/desired-state";
 import { getNetworkMode } from "@/network/mode";
 import { Router } from "express";
 
@@ -227,7 +228,7 @@ router.post(
             }
 
             const mode = await getNetworkMode();
-            if (mode !== "legacy") {
+            if (mode === "active") {
                 return res.status(503).json({
                     error: `${mode} network provisioning is not available yet`,
                 });
@@ -238,6 +239,23 @@ router.post(
                 profile.id,
             );
             try {
+                if (mode === "dry-run") {
+                    const plan = await getNetworkPlan();
+                    const projection = plan.desired_state.groups.find(
+                        ({ group_id }) => group_id === group.id,
+                    );
+                    if (!projection) {
+                        throw new Error(`Network group ${group.id} is missing from the desired-state plan`);
+                    }
+                    logger.info(
+                        {
+                            networkMode: mode,
+                            planRevision: plan.revision,
+                            projection,
+                        },
+                        "Provisioning non-isolated VM on legacy bridge with projected network plan",
+                    );
+                }
                 const instanceId = await Instances.createInstance(
                     req.user.vu_id,
                     template,

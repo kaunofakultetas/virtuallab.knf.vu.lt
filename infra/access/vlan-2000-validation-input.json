@@ -1,0 +1,14 @@
+{
+  "groups": [
+    {
+      "group_id": 1,
+      "state": "active",
+      "vlan_tag": 2000,
+      "subnet_cidr": "10.200.0.0/24"
+    }
+  ],
+  "docker_bridge_cidrs": [
+    "172.17.0.0/16",
+    "172.18.0.0/16"
+  ]
+}

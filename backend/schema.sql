@@ -142,6 +142,90 @@ CREATE TABLE IF NOT EXISTS network_groups (
 
 ALTER TABLE network_groups ALTER COLUMN state SET DEFAULT 'planned';
 
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM network_groups
+        WHERE (vlan_tag IS NULL)::int
+            + (vnet_name IS NULL)::int
+            + (subnet_cidr IS NULL)::int NOT IN (0, 3)
+           OR vlan_tag IS NOT NULL AND vlan_tag NOT BETWEEN 2000 AND 2255
+           OR state = 'planned' AND vlan_tag IS NOT NULL
+           OR state IN ('creating', 'active', 'deleting') AND vlan_tag IS NULL
+    ) THEN
+        RAISE EXCEPTION 'network_groups contains rows that violate allocation invariants';
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    ALTER TABLE network_groups
+        ADD CONSTRAINT network_groups_allocation_tuple_check
+        CHECK (
+            (vlan_tag IS NULL AND vnet_name IS NULL AND subnet_cidr IS NULL)
+            OR
+            (vlan_tag IS NOT NULL AND vnet_name IS NOT NULL AND subnet_cidr IS NOT NULL)
+        );
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+    ALTER TABLE network_groups
+        ADD CONSTRAINT network_groups_allocation_pool_check
+        CHECK (vlan_tag IS NULL OR vlan_tag BETWEEN 2000 AND 2255);
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+    ALTER TABLE network_groups
+        ADD CONSTRAINT network_groups_allocation_state_check
+        CHECK (
+            (state = 'planned' AND vlan_tag IS NULL)
+            OR (state IN ('creating', 'active', 'deleting') AND vlan_tag IS NOT NULL)
+            OR state = 'error'
+        );
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
+
+CREATE TABLE IF NOT EXISTS network_reconciliation_attempts (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    request_id UUID NOT NULL UNIQUE,
+    requested_by VARCHAR(255) NOT NULL REFERENCES users(vu_id) ON DELETE RESTRICT,
+    idempotency_key TEXT,
+    mode TEXT NOT NULL CHECK (mode IN ('dry-run', 'apply')),
+    status TEXT NOT NULL DEFAULT 'running'
+        CHECK (status IN ('running', 'succeeded', 'failed', 'abandoned')),
+    desired_revision TEXT NOT NULL CHECK (desired_revision ~ '^[0-9a-f]{64}$'),
+    applied_revision TEXT CHECK (applied_revision ~ '^[0-9a-f]{64}$'),
+    phase TEXT NOT NULL DEFAULT 'initializing',
+    checks JSONB NOT NULL DEFAULT '[]'::jsonb,
+    actions JSONB NOT NULL DEFAULT '[]'::jsonb,
+    error_code TEXT,
+    error_detail TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    finished_at TIMESTAMPTZ,
+    CHECK (
+        (status = 'running' AND finished_at IS NULL)
+        OR (status IN ('succeeded', 'failed', 'abandoned') AND finished_at IS NOT NULL)
+    ),
+    CHECK (
+        mode <> 'apply'
+        OR status <> 'succeeded'
+        OR applied_revision = desired_revision
+    )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS network_reconciliation_attempts_idempotency_idx
+    ON network_reconciliation_attempts (requested_by, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS group_peerings (
     group_a_id INT NOT NULL REFERENCES network_groups(id) ON DELETE CASCADE,
     group_b_id INT NOT NULL REFERENCES network_groups(id) ON DELETE CASCADE,

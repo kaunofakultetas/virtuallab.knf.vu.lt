@@ -54,7 +54,9 @@ router.patch(
                 if (!readiness.ready_for_active) {
                     return res.status(409).json({
                         error: "Active networking readiness checks failed",
-                        checks: readiness.checks.filter((check) => !check.ready),
+                        checks: readiness.checks.filter(
+                            (check) => check.required && check.status !== "pass",
+                        ),
                     });
                 }
             }

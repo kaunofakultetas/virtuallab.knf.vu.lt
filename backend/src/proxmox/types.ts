@@ -137,3 +137,193 @@ export interface ProxmoxNodeTaskStatus {
     user: string;
     exitstatus?: string;
 }
+
+export interface ProxmoxTaskWaitOptions {
+    timeoutMs?: number;
+    pollIntervalMs?: number;
+}
+
+export class ProxmoxTaskError extends Error {
+    constructor(public readonly task: ProxmoxNodeTaskStatus) {
+        super(`Proxmox task ${task.upid} failed with status ${task.exitstatus ?? "unknown"}`);
+        this.name = "ProxmoxTaskError";
+    }
+}
+
+export class ProxmoxTaskTimeoutError extends Error {
+    constructor(
+        public readonly upid: string,
+        public readonly timeoutMs: number,
+    ) {
+        super(`Proxmox task ${upid} did not finish within ${timeoutMs}ms`);
+        this.name = "ProxmoxTaskTimeoutError";
+    }
+}
+
+export interface ProxmoxNodeNetwork {
+    iface: string;
+    type: string;
+    active?: number;
+    autostart?: number;
+    address?: string;
+    cidr?: string;
+    bridge_ports?: string;
+    bridge_vlan_aware?: number;
+    comments?: string;
+}
+
+export interface ProxmoxSdnZone {
+    zone: string;
+    type: string;
+    bridge?: string;
+    ipam?: string;
+}
+
+export interface ProxmoxSdnVnet {
+    vnet: string;
+    zone: string;
+    tag?: number;
+    type?: string;
+    alias?: string;
+    vlanaware?: number;
+}
+
+export interface ProxmoxSdnVnetCreate {
+    vnet: string;
+    zone: string;
+    tag?: number;
+    alias?: string;
+    vlanaware?: boolean;
+}
+
+export type ProxmoxSdnVnetUpdate = Partial<Omit<ProxmoxSdnVnetCreate, "vnet">> & {
+    digest?: string;
+};
+
+export interface ProxmoxSdnSubnet {
+    subnet: string;
+    vnet: string;
+    type?: string;
+    gateway?: string;
+    snat?: number;
+    dhcp_range?: string;
+    dhcp_dns_server?: string;
+    dns?: string;
+}
+
+export interface ProxmoxSdnSubnetCreate {
+    subnet: string;
+    type?: string;
+    gateway?: string;
+    snat?: boolean;
+    dhcp_range?: string;
+    dhcp_dns_server?: string;
+    dns?: string;
+}
+
+export type ProxmoxSdnSubnetUpdate = Partial<Omit<ProxmoxSdnSubnetCreate, "subnet">> & {
+    digest?: string;
+};
+
+export type ProxmoxGuestConfigUpdate = {
+    digest?: string;
+    delete?: string;
+    [networkDevice: `net${number}`]: string | undefined;
+};
+
+export interface ProxmoxFirewallRule {
+    pos: number;
+    type: "in" | "out" | "group";
+    action: string;
+    source?: string;
+    dest?: string;
+    proto?: string;
+    sport?: string;
+    dport?: string;
+    iface?: string;
+    enable?: number;
+    log?: string;
+    comment?: string;
+    macro?: string;
+    "icmp-type"?: string;
+}
+
+export type ProxmoxFirewallRuleInput = Omit<ProxmoxFirewallRule, "pos" | "enable"> & {
+    pos?: number;
+    enable?: boolean;
+    digest?: string;
+};
+
+export interface ProxmoxFirewallSecurityGroup {
+    group: string;
+    comment?: string;
+    digest?: string;
+}
+
+export interface ProxmoxFirewallSecurityGroupCreate {
+    group: string;
+    comment?: string;
+    digest?: string;
+}
+
+export type ProxmoxFirewallSecurityGroupUpdate = Omit<
+    ProxmoxFirewallSecurityGroupCreate,
+    "group"
+>;
+
+export interface ProxmoxFirewallIpSet {
+    name: string;
+    comment?: string;
+    digest?: string;
+}
+
+export interface ProxmoxFirewallIpSetCreate {
+    name: string;
+    comment?: string;
+    digest?: string;
+}
+
+export interface ProxmoxFirewallIpSetEntry {
+    cidr: string;
+    comment?: string;
+    nomatch?: number;
+}
+
+export interface ProxmoxFirewallIpSetEntryInput {
+    cidr: string;
+    comment?: string;
+    nomatch?: boolean;
+    digest?: string;
+}
+
+export interface ProxmoxFirewallOptions {
+    enable?: number;
+    dhcp?: number;
+    ipfilter?: number;
+    log_level_in?: string;
+    log_level_out?: string;
+    policy_in?: string;
+    policy_out?: string;
+    digest?: string;
+}
+
+export interface ProxmoxFirewallOptionsUpdate {
+    enable?: boolean;
+    dhcp?: boolean;
+    ipfilter?: boolean;
+    log_level_in?: string;
+    log_level_out?: string;
+    policy_in?: string;
+    policy_out?: string;
+    digest?: string;
+}
+
+export interface ProxmoxNodeStorageStatus {
+    active: number;
+    avail: number;
+    enabled: number;
+    total: number;
+    used: number;
+}
+
+export type ProxmoxGuestConfig = Record<string, string | number | boolean | null>;

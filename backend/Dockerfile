@@ -10,6 +10,8 @@ RUN npm run build
 FROM node:25-alpine AS production
 WORKDIR /app
 
+RUN apk add --no-cache openssh-client
+
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S nodejs -u 1001
 

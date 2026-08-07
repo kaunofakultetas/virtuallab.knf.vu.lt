@@ -7,9 +7,10 @@
         "build": "tsc && tsc-alias",
         "create-admin": "ts-node -r tsconfig-paths/register scripts/createAdmin.ts",
         "hash-password": "ts-node -r tsconfig-paths/register scripts/hashPassword.ts",
+        "render-access": "ts-node -r tsconfig-paths/register scripts/renderAccessConfiguration.ts",
         "start": "node dist/index.js",
         "dev": "node --watch ./node_modules/ts-node/dist/bin.js --files -r tsconfig-paths/register src/index.ts",
-        "test": "echo \"Error: no test specified\" && exit 1"
+        "test": "node --test -r ts-node/register -r tsconfig-paths/register test/*.test.ts"
     },
     "keywords": [],
     "author": "",

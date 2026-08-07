@@ -10,9 +10,12 @@ services:
         environment:
             - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-backend_db}
             - NODE_EXTRA_CA_CERTS=/certs/logs.knf.vu.lt.crt
+            - ACCESS_OBSERVER_IDENTITY_FILE=/run/access-observer/id_ed25519
+            - ACCESS_OBSERVER_KNOWN_HOSTS_FILE=/run/access-observer/known_hosts
 
         volumes:
             - ./certs/:/certs/:ro
+            - ${ACCESS_OBSERVER_CREDENTIALS_DIR:?Set ACCESS_OBSERVER_CREDENTIALS_DIR in .env}:/run/access-observer:ro
 
         depends_on:
             postgres:

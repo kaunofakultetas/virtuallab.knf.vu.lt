@@ -15,6 +15,7 @@ const defaults: Record<string, MetaValue> = {
     "settings.instances.ipWaitTimeoutMs": 60_000,
     "settings.instances.ipPollIntervalMs": 2_000,
     "settings.proxmox.minVmId": 10_000,
+    "settings.proxmox.storageReserveBytes": 2_147_483_648,
     "settings.instances.defaultRuntimeHours": 3,
     "settings.guacamole.parentIdentifier": "1",
     "settings.guacamole.requestTimeoutMs": 10_000,

@@ -7,6 +7,10 @@ import { logger } from "@/utils/logger";
 import { metadata } from "@/utils/metadata";
 import { deleteUnusedPlannedGroup } from "@/network/groups";
 import {
+    assertStorageCapacity,
+    getBootDiskStorage,
+} from "@/proxmox/storage";
+import {
     vlabInstanceCreateDurationSeconds,
     vlabInstanceLifecycleTotal,
     vlabInstancesExpiredRemovedTotal,
@@ -170,10 +174,19 @@ export const Instances = {
     ): Promise<number> => {
         const stopTimer = vlabInstanceCreateDurationSeconds.startTimer();
         try {
-            const [minVmId, defaultRuntimeHours] = await Promise.all([
+            const [minVmId, defaultRuntimeHours, storageReserveBytes] = await Promise.all([
                 metadata.get<number>("settings.proxmox.minVmId"),
                 metadata.get<number>("settings.instances.defaultRuntimeHours"),
+                metadata.get<number>("settings.proxmox.storageReserveBytes"),
             ]);
+            const templateConfig = await proxmox.getVmConfig(template.proxmox_id);
+            const storage = getBootDiskStorage(templateConfig);
+            const storageStatus = await proxmox.getNodeStorageStatus(storage);
+            assertStorageCapacity(
+                storage,
+                storageStatus,
+                storageReserveBytes ?? 2_147_483_648,
+            );
             const newId = await proxmox.getNextAvailableId(minVmId ?? 10_000);
 
             // Clone template -> new id
@@ -197,6 +210,12 @@ export const Instances = {
                 tags: `vm;owner${userId}`,
             });
 
+            const startTask = await proxmox.startVM(newId);
+            const startSuccess = await proxmox.waitForTaskCompletion(startTask);
+            if (!startSuccess) {
+                throw Error("Failed to start VM");
+            }
+
             const sqlResp = await pool.query(
                 `INSERT INTO instances (
                     owner_id, template_id, proxmox_id, name, run_until, network_group_id
@@ -212,8 +231,6 @@ export const Instances = {
                     networkGroupId,
                 ],
             );
-
-            proxmox.startVM(newId).then(() => {});
 
             vlabInstanceLifecycleTotal.inc({
                 op: "create",

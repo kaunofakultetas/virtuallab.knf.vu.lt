@@ -1,17 +1,32 @@
 # OpenTofu lab infrastructure
 
-This root manages only the Ubuntu LXC template and two persistent unprivileged
-containers on Proxmox:
+This root manages the Ubuntu LXC template, two persistent unprivileged
+containers, the persistent `labzone` VLAN SDN zone, and the stopped Gateway VM
+base on Proxmox:
 
 | VMID | Name | CPU | RAM | Root disk | Networks |
 | --- | --- | --- | --- | --- | --- |
 | 200 | `guacamole` | 4 | 10 GB | 32 GB | `10.10.10.50/24`, `10.10.20.10/24` |
 | 201 | `api-docker` | 4 | 6 GB | 32 GB | `10.10.10.100/24` |
+| 202 | `lab-gateway` | 2 | 4 GB | 16 GB | `10.10.10.2/24`, VLAN trunk `2000-2255` |
+
+> **LXC 200 trunk exception:** provider `bpg/proxmox` `0.111.1` does not expose
+> the Proxmox LXC NIC `trunks` property. The rollback-controlled Access staging
+> action in `infra/access/stage-access.sh` temporarily owns only `net1.trunks`.
+> Do not apply this OpenTofu stack while that trunk is staged or committed; use
+> the staging dry-run to detect drift after any future LXC 200 change.
+
+VM `202` is deliberately stopped and excluded from automatic boot. Its
+management NIC is on `vmbr1` and its trunk NIC is on `vmbr20`; it has no default
+route and no uplink NIC. Do not start it until a dedicated uplink bridge exists
+separately from Proxmox management and the guest's fail-closed nftables, DHCP,
+DNS, and proxy configuration has been reconciled and validated.
 
 Host bridges, DHCP, NAT, and forwarding are owned by
-`scripts/setup-proxmox-host-network.sh`. Application installation and secrets
-are intentionally outside OpenTofu. This pilot defines no backup resources,
-extra LXC mount points, snapshots, or provisioners.
+`scripts/setup-proxmox-host-network.sh`. The backend will own dynamic VNets and
+group allocations; this root intentionally creates no VNet. Application
+installation and secrets are outside OpenTofu. This pilot defines no backup
+resources, extra LXC mount points, snapshots, or provisioners.
 
 ## Prerequisites
 
@@ -63,9 +78,24 @@ tofu validate
 tofu plan -out=.state/lab.tfplan
 ```
 
-Do not apply until the plan contains exactly one template download and the two
-expected LXC creations. Local state, plans, and `terraform.tfvars` are ignored;
-`.terraform.lock.hcl` is intentionally committed after `tofu init`.
+Do not apply until the plan contains only the expected persistent resources. It
+must not contain a VNet. The Gateway base milestone has provisioned the
+checksum-pinned Ubuntu cloud image and stopped VM `202`; subsequent plans must
+not recreate either resource or change the VM's power state, boot policy,
+storage, initialization, or two-NIC topology. Local state, plans, and
+`terraform.tfvars` are ignored; `.terraform.lock.hcl` is intentionally committed
+after `tofu init`.
+
+VM `202` sets `agent.wait_for_ip.disabled = true`, so refresh and apply do not
+wait for guest-reported addresses while the base remains stopped. With
+`bpg/proxmox` `0.111.1`, a subsequent plan can still report an in-place update
+whose only changes are `ipv4_addresses`, `ipv6_addresses`, and
+`network_interface_names` changing from empty lists to values known after
+apply. These are computed guest-agent outputs and this exact three-field diff is
+provider plan-time noise, not infrastructure drift. Audit the machine-readable
+plan to confirm that no other field or resource changes, then leave it unapplied;
+repeated apply does not converge it. Any additional change remains actionable
+and must be investigated.
 
 Set `proxmox_api_token` in the ignored `terraform.tfvars` file before planning.
 The token is marked sensitive to redact it from CLI output, but tfvars remains a
@@ -77,7 +107,32 @@ plain-text secret file and must not be committed.
 tofu apply .state/lab.tfplan
 ```
 
+For the network stage, apply the host bridge before creating `labzone`:
+
+```sh
+./scripts/setup-proxmox-host-network.sh \
+   --host 172.16.0.34 \
+   --interactive-auth \
+   --forward-app-ports \
+   --apply \
+   --replace-drifted-files \
+   --confirmation "APPLY NETWORK 172.16.0.34 vmbr1 vmbr20"
+
+cd infra/opentofu/lab
+tofu plan -out=.state/network-stage.tfplan
+tofu apply .state/network-stage.tfplan
+```
+
+The host script preserves untagged legacy `10.10.20.0/24` traffic while enabling
+VLAN filtering and VLAN IDs `2000-2255` on `vmbr20`. Review the OpenTofu plan
+before applying: existing LXCs must be no-op, and the only creates at this stage
+must be `proxmox_sdn_zone_vlan.lab` and `proxmox_sdn_applier.lab`.
+
 The default Ubuntu rootfs URL and SHA-512 checksum identify Proxmox's Ubuntu
 22.04 standard LXC appliance, version `22.04-1`. The public appliance endpoint
 uses HTTP, so checksum verification is required. Update both values together
 when deliberately rolling to another template release.
+
+The Gateway image URL uses Ubuntu's immutable Noble `release-20260801` path and
+its published SHA-256 digest. Update the URL, filename date, and checksum
+together when deliberately rolling the Gateway base image.
