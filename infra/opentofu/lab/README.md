@@ -8,7 +8,7 @@ base on Proxmox:
 | --- | --- | --- | --- | --- | --- |
 | 200 | `guacamole` | 4 | 10 GB | 32 GB | `10.10.10.50/24`, `10.10.20.10/24` |
 | 201 | `api-docker` | 4 | 6 GB | 32 GB | `10.10.10.100/24` |
-| 202 | `lab-gateway` | 2 | 4 GB | 16 GB | `10.10.10.2/24`, VLAN trunk `2000-2255` |
+| 202 | `lab-gateway` | 2 | 4 GB | 16 GB | `10.10.10.2/24`, VLAN trunk `2000-2255`, uplink `172.16.0.36/22` |
 
 > **LXC 200 trunk exception:** provider `bpg/proxmox` `0.111.1` does not expose
 > the Proxmox LXC NIC `trunks` property. The rollback-controlled Access staging
@@ -17,10 +17,24 @@ base on Proxmox:
 > the staging dry-run to detect drift after any future LXC 200 change.
 
 VM `202` is deliberately stopped and excluded from automatic boot. Its
-management NIC is on `vmbr1` and its trunk NIC is on `vmbr20`; it has no default
-route and no uplink NIC. Do not start it until a dedicated uplink bridge exists
-separately from Proxmox management and the guest's fail-closed nftables, DHCP,
-DNS, and proxy configuration has been reconciled and validated.
+management NIC is on `vmbr1`, its trunk NIC is on `vmbr20`, and its
+approved-egress uplink is `net2` on `vmbr0` at `172.16.0.36/22` with the default
+route via `172.16.0.1`.
+
+**The uplink shares an L2 broadcast domain with Proxmox management.** This is an
+explicitly accepted deviation from the architecture plan's "must not use the
+Proxmox management bridge" constraint, recorded in `NETWORK-ARCHITECTURE-PLAN.md`.
+The host has a single physical NIC, and a second Hyper-V adapter added on
+2026-08-11 was proven by packet capture to land on the same segment, so a
+separate bridge would have provided no isolation. The accepted risk is that a
+compromised Gateway can reach Proxmox management directly; the guest firewall
+therefore exposes no service on the uplink beyond DHCP client replies. Revisit by
+setting a VLAN ID on the Hyper-V adapter or moving it to an isolated vSwitch.
+
+Do not start the VM until the guest's fail-closed nftables, DHCP, DNS, and proxy
+configuration has been reconciled and validated. The backend renders that
+configuration (`npm run render-gateway`), but no applier installs it yet, and
+`squid -k parse` plus a confirmed Squid start remain outstanding gates.
 
 Host bridges, DHCP, NAT, and forwarding are owned by
 `scripts/setup-proxmox-host-network.sh`. The backend will own dynamic VNets and

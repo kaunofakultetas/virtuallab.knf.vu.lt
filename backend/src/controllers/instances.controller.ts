@@ -4,8 +4,13 @@ import { Instance } from "@/types/instances";
 import { Template } from "@/types/templates";
 import { pool } from "@/utils/db";
 import { logger } from "@/utils/logger";
+import { releaseNetworkGroupAfterInstance } from "@/network/provisioning-teardown";
 import { metadata } from "@/utils/metadata";
 import { deleteUnusedPlannedGroup } from "@/network/groups";
+import {
+    AddressSelectionError,
+    selectInstanceAddress,
+} from "@/network/address-selection";
 import {
     assertStorageCapacity,
     getBootDiskStorage,
@@ -75,20 +80,42 @@ export const Instances = {
     },
 
     getInsideNetIPv4: async (proxmoxId: string): Promise<string | null> => {
-        const [timeoutMs, intervalMs, ipPrefix] = await Promise.all([
+        const [timeoutMs, intervalMs, ipPrefix, allocation] = await Promise.all([
             metadata.get<number>("settings.instances.ipWaitTimeoutMs"),
             metadata.get<number>("settings.instances.ipPollIntervalMs"),
             metadata.get<string>("settings.network.insideIpPrefix"),
+            pool.query<{ subnet_cidr: string }>(
+                `SELECT DISTINCT network_group.subnet_cidr
+                 FROM instances instance
+                 JOIN network_groups network_group
+                   ON network_group.id = instance.network_group_id
+                 WHERE instance.proxmox_id = $1
+                   AND network_group.subnet_cidr IS NOT NULL`,
+                [proxmoxId],
+            ),
         ]);
         const timeout = timeoutMs ?? 60_000;
         const interval = intervalMs ?? 2_000;
         const prefix = ipPrefix ?? "10.10.";
+        // proxmox_id is not unique in the schema, so two subnets for one VMID
+        // would leave the owning network ambiguous. Refuse rather than pick one.
+        if (allocation.rows.length > 1) {
+            throw new AddressSelectionError(
+                `VM ${proxmoxId} maps to more than one allocated network group`,
+            );
+        }
+        // A group only carries a subnet once allocated; in legacy and dry-run
+        // mode it stays null and selection falls back to the configured prefix.
+        const subnetCidr = allocation.rows[0]?.subnet_cidr ?? null;
         const deadline = Date.now() + timeout;
 
         while (Date.now() < deadline) {
             try {
                 const ips = await Instances.getIPv4(proxmoxId);
-                const match = ips?.find((ip) => ip.startsWith(prefix));
+                const match = selectInstanceAddress(ips ?? [], {
+                    subnetCidr,
+                    legacyPrefix: prefix,
+                });
                 if (match) return match;
             } catch (err: any) {
                 const msg: string = err?.details?.message ?? err?.message ?? "";
@@ -171,6 +198,7 @@ export const Instances = {
         userId: string,
         template: Template,
         networkGroupId: number,
+        bridge: string,
     ): Promise<number> => {
         const stopTimer = vlabInstanceCreateDurationSeconds.startTimer();
         try {
@@ -206,7 +234,7 @@ export const Instances = {
                 ciuser: "user",
                 cipassword: userId,
                 ipconfig0: "ip=dhcp",
-                net0: "virtio,bridge=vmbr20,firewall=1",
+                net0: `virtio,bridge=${bridge},firewall=1`,
                 tags: `vm;owner${userId}`,
             });
 
@@ -336,8 +364,11 @@ export const Instances = {
     },
 
     removeExpiredInstances: async (): Promise<number> => {
-        const res = await pool.query<{ id: number }>(
-            `SELECT id
+        // `network_group_id` is selected here because the row carrying it is
+        // what deletion removes, and the sweeper must release a group whose last
+        // VM expired just as the user-facing route does.
+        const res = await pool.query<{ id: number; network_group_id: number | null }>(
+            `SELECT id, network_group_id
              FROM instances
              WHERE run_until IS NOT NULL
                AND run_until <= NOW()`,
@@ -351,6 +382,20 @@ export const Instances = {
             try {
                 await Instances.deleteInstance(row.id);
                 deletedCount += 1;
+                // Attributed to the expiry sweeper rather than a user: this
+                // deletion had no requester, and a reconciliation attempt needs
+                // a real `users.vu_id`, so the group's owner is the honest
+                // subject of the change made on their behalf.
+                const owner = await pool.query<{ owner_id: string }>(
+                    "SELECT owner_id FROM network_groups WHERE id = $1",
+                    [row.network_group_id],
+                );
+                if (owner.rows[0]) {
+                    await releaseNetworkGroupAfterInstance(
+                        row.network_group_id,
+                        owner.rows[0].owner_id,
+                    );
+                }
             } catch (err) {
                 logger.error(
                     { err, instanceId: row.id },

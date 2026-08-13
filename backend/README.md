@@ -51,6 +51,28 @@ The HTTP contracts are tested against a local fixture only. Before enabling
 reconciliation, verify the deployed API token has `SDN.Allocate`, VM
 configuration/firewall, task, and audit privileges. Also confirm the deployed
 Proxmox field set and whether `PUT /cluster/sdn` returns `null` or a task UPID.
+
+Network reconciliation uses separate privilege-separated observer and mutator
+tokens. After installing them, run `npm run preflight-network-tokens` from an
+environment that loads the backend variables. The preflight creates and removes
+a uniquely named disposable VNet, verifies observer writes and mutator VM/storage
+reads are denied, and prints status codes without printing either token.
+
+VNet apply is available only as an internal command; it is not exposed through
+HTTP. It requires the exact current desired revision and an explicit confirmation:
+
+```bash
+npm run apply-network-vnets -- \
+	--requested-by <existing-admin-vu-id> \
+	--expected-revision <64-character-sha256> \
+	--idempotency-key <unique-key> \
+	--confirm APPLY-PROXMOX-VNETS
+```
+
+The command acquires the reconciliation advisory lock, creates a fresh apply
+attempt and plan, rejects stale revisions or blocking SDN checks, and uses only
+`PROXMOX_NETWORK_MUTATOR_AUTH_TOKEN`. Run the token preflight successfully before
+the first live apply.
 Persistent LXC `trunks=` updates do not prove that a running host veth gained the
 VLAN; reconciliation must verify and repair live bridge membership separately.
 

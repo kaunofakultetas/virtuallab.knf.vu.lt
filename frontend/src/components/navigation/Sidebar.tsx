@@ -18,6 +18,7 @@ import MonitorHeartOutlinedIcon from "@mui/icons-material/MonitorHeartOutlined";
 import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
 import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
 import AccountTreeOutlinedIcon from "@mui/icons-material/AccountTreeOutlined";
+import LanOutlinedIcon from "@mui/icons-material/LanOutlined";
 import { useAuth } from "@/utils/AuthGuard";
 
 const SIDEBAR_W = 220;
@@ -90,6 +91,11 @@ const NAV: NavSection[] = [
                 label: "Lab Profiles",
                 icon: <AccountTreeOutlinedIcon fontSize="small" />,
                 path: "/admin/lab-profiles",
+            },
+            {
+                label: "Network",
+                icon: <LanOutlinedIcon fontSize="small" />,
+                path: "/admin/network",
             },
             {
                 label: "Guacamole",

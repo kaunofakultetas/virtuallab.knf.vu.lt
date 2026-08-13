@@ -147,6 +147,7 @@ export function planAccess(
         actions.push({
             component: "access",
             operation: "update",
+            execution_state: "planned",
             resource: "lxc/200/net1",
             desired: {
                 name: "eth1",
@@ -159,6 +160,7 @@ export function planAccess(
         actions.push({
             component: "access",
             operation: "update",
+            execution_state: "planned",
             resource: `bridge/${observation.host_veth.name}/vlans`,
             desired: { vlan_ids: desiredTrunks },
         });
@@ -169,6 +171,7 @@ export function planAccess(
         actions.push({
             component: "access",
             operation: "update",
+            execution_state: "planned",
             resource: "lxc/200/guest-network-policy",
             desired: { revision: accessPlan.revision },
         });

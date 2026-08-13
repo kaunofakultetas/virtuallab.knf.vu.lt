@@ -71,6 +71,20 @@ function hasNetworkDevice(config: ProxmoxGuestConfig, expected: string): boolean
     );
 }
 
+/**
+ * Finds an address on a QEMU guest.
+ *
+ * An LXC carries its address on `netN`, but a QEMU `netN` only describes the
+ * virtual NIC; the address is supplied by cloud-init on `ipconfigN`. Searching
+ * `netN` for an address therefore never matches on a VM.
+ */
+function hasCloudInitAddress(config: ProxmoxGuestConfig, cidr: string): boolean {
+    return Object.entries(config).some(
+        ([key, value]) => /^ipconfig\d+$/.test(key)
+            && String(value).split(",").includes(`ip=${cidr}`),
+    );
+}
+
 function findNetworkDevice(
     config: ProxmoxGuestConfig,
     expected: string,
@@ -165,10 +179,9 @@ export async function getNetworkObservations(
     );
     if (gateway.status === "fulfilled") {
         const managementCidr = config.infrastructure.gatewayManagementCidr;
-        const hasManagementNic = hasNetworkDevice(
-            gateway.value,
-            `ip=${managementCidr}`,
-        );
+        // The Gateway is a QEMU VM, so its management address comes from
+        // cloud-init rather than the NIC definition.
+        const hasManagementNic = hasCloudInitAddress(gateway.value, managementCidr);
         const hasTransportNic = hasNetworkDevice(
             gateway.value,
             `bridge=${config.proxmox.bridge}`,

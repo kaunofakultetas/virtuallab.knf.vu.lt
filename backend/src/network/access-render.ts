@@ -22,11 +22,34 @@ function renderNetworkd(plan: AccessPlan): Record<string, string> {
         return {};
     }
 
+    // A whole `.network` unit for the trunk parent, not a `.network.d` drop-in.
+    //
+    // The drop-in this replaces worked only because Proxmox happens to generate
+    // `/etc/systemd/network/eth1.network` for a container NIC, and
+    // systemd-networkd reads `<name>.network.d/` only beside a `<name>.network`
+    // that exists. That made a PVE implementation detail -- the filename it
+    // chooses -- load-bearing for every lab VLAN interface, with no signal if it
+    // ever changed. The identical arrangement on the Gateway was silently inert
+    // for exactly this reason, because nothing there generated the base file at
+    // all.
+    //
+    // `50-` sorts ahead of PVE's `eth1.network`, so this unit wins while leaving
+    // PVE's own file untouched.
+    const parent = plan.desired_state.transport.parent_interface;
     const files: Record<string, string> = {
-        "/etc/systemd/network/eth1.network.d/50-virtual-lab-vlans.conf": [
+        [`/etc/systemd/network/50-virtual-lab-${parent}.network`]: [
             `# Access desired-state revision ${plan.revision}.`,
+            "[Match]",
+            `Name=${parent}`,
+            "",
             "[Network]",
             ...interfaces.map(({ interface_name }) => `VLAN=${interface_name}`),
+            // The trunk parent carries tagged frames only. An address here would
+            // put Access on the untagged segment every group's trunk shares,
+            // which is the transport the migration deliberately retired.
+            "DHCP=no",
+            "IPv6AcceptRA=false",
+            "LinkLocalAddressing=no",
             "",
         ].join("\n"),
     };
@@ -92,7 +115,25 @@ function renderNftables(plan: AccessPlan): string {
         `        ip saddr ${managementSources} ct original ip daddr ${managementAddress} meta l4proto tcp ct original proto-dst ${servicePorts} accept`,
     ];
 
-    if (desired.transport.interfaces.length > 0) {
+    if (desired.transport.interfaces.length === 0) {
+        // Zero allocated groups is a legitimate steady state, so the empty
+        // forward chain is stated rather than left to fall out of a skipped
+        // branch. The Docker accept cannot simply always be emitted: nftables
+        // has no empty inline set, so the rule would have to shed its ip daddr
+        // and oifname restrictions, widening "Docker to lab subnets" into
+        // "Docker to anywhere routable". Named sets could carry the emptiness
+        // instead, but an accept over empty sets matches exactly the packets
+        // that no accept at all matches, and it would rewrite the rule shape
+        // for the allocated case already loaded on the host. Either way the
+        // security property is the policy drop, which is what denies
+        // lab-to-lab, lab-to-management and use of Access as a router.
+        rules.push(
+            "        # No lab VLANs are allocated in this revision, so no interface",
+            "        # exists to accept Docker-sourced traffic towards. Return traffic",
+            "        # and the published service path above are the only forwarded",
+            "        # flows; policy drop denies the rest.",
+        );
+    } else {
         const dockerCidrs = nftSet(desired.docker.bridge_cidrs);
         const labCidrs = nftSet(
             desired.transport.interfaces.map(({ subnet_cidr }) => subnet_cidr),

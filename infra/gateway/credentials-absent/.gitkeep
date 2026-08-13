@@ -1,0 +1,3 @@
+Placeholder so Compose can mount a Gateway observer credentials directory even
+when none is configured. Set GATEWAY_OBSERVER_CREDENTIALS_DIR to a directory
+holding id_ed25519 and known_hosts to enable Gateway observation.

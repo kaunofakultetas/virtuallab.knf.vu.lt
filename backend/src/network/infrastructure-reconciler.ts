@@ -12,6 +12,9 @@ import {
     ProxmoxVnetObservationClient,
 } from "./adapters/proxmox-vnet";
 import { AccessObservationClient, planAccess } from "./adapters/access";
+import { GatewayObservationClient, planGateway } from "./adapters/gateway";
+import { GatewayPlan } from "./gateway-desired-state";
+import { getGatewayPlan } from "./gateway-plan";
 import { ReconciliationDryRun } from "./reconciliation-types";
 
 export type ReconciliationDryRunInput = {
@@ -38,6 +41,10 @@ export interface ReconciliationAttemptStore {
         desiredRevision: string;
         idempotencyKey?: string;
     }): Promise<ReconciliationAttempt>;
+    checkpoint(
+        id: string,
+        input: Parameters<ReconciliationAttemptRepository["checkpoint"]>[1],
+    ): Promise<ReconciliationAttempt>;
     finish(
         id: string,
         input: Parameters<ReconciliationAttemptRepository["finish"]>[1],
@@ -48,7 +55,16 @@ export type InfrastructureReconcilerDependencies = {
     database: Pick<ReconciliationPool, "connect">;
     proxmox: ProxmoxVnetObservationClient;
     access: AccessObservationClient;
+    /**
+     * Optional, because Gateway observation needs a configured restricted SSH
+     * principal that a development stack may not have. When it is absent the
+     * dry-run simply reports no Gateway checks; when it is present but fails,
+     * the failure is reported as a check rather than discarding the healthy
+     * evidence gathered from the other components.
+     */
+    gateway?: GatewayObservationClient;
     getPlan?: (client: ReconciliationLockClient) => Promise<InfrastructurePlan>;
+    getGatewayPlan?: () => Promise<GatewayPlan>;
     createAttempts?: (client: ReconciliationLockClient) => ReconciliationAttemptStore;
 };
 
@@ -65,7 +81,7 @@ function sanitizedError(error: unknown): { code: string; detail: string } {
 }
 
 function failedObservation(
-    component: "proxmox-vnet" | "access",
+    component: "proxmox-vnet" | "access" | "gateway",
     error: unknown,
 ): ReconciliationDryRun {
     const failure = sanitizedError(error);
@@ -82,7 +98,7 @@ function failedObservation(
 }
 
 function planComponent<T>(
-    component: "proxmox-vnet" | "access",
+    component: "proxmox-vnet" | "access" | "gateway",
     result: PromiseSettledResult<T>,
     planner: (observation: T) => ReconciliationDryRun,
 ): ReconciliationDryRun {
@@ -96,6 +112,23 @@ function planComponent<T>(
 
 export class InfrastructureReconciler {
     constructor(private readonly dependencies: InfrastructureReconcilerDependencies) {}
+
+    /**
+     * Gateway desired state is a different document from the infrastructure
+     * plan, hashed separately, so it is read here rather than derived from
+     * `plan`. Returns null when no observer is configured.
+     */
+    private async observeGateway(): Promise<
+        { plan: GatewayPlan; observation: unknown } | null
+    > {
+        const client = this.dependencies.gateway;
+        if (!client) return null;
+        const [gatewayPlan, observation] = await Promise.all([
+            (this.dependencies.getGatewayPlan ?? getGatewayPlan)(),
+            client.observe(),
+        ]);
+        return { plan: gatewayPlan, observation };
+    }
 
     async dryRun(input: ReconciliationDryRunInput): Promise<ReconciliationAttempt> {
         return withReconciliationLock(async (client) => {
@@ -114,9 +147,11 @@ export class InfrastructureReconciler {
             });
 
             try {
-                const [proxmoxResult, accessResult] = await Promise.allSettled([
+                await attempts.checkpoint(attempt.id, { phase: "planning" });
+                const [proxmoxResult, accessResult, gatewayResult] = await Promise.allSettled([
                     observeProxmoxVnets(this.dependencies.proxmox),
                     this.dependencies.access.observe(),
+                    this.observeGateway(),
                 ]);
                 const components = [
                     planComponent("proxmox-vnet", proxmoxResult, (observation) => (
@@ -125,6 +160,13 @@ export class InfrastructureReconciler {
                     planComponent("access", accessResult, (observation) => (
                         planAccess(plan, observation)
                     )),
+                    ...(this.dependencies.gateway
+                        ? [planComponent("gateway", gatewayResult, (observed) => (
+                            observed
+                                ? planGateway(observed.plan, observed.observation)
+                                : { checks: [], actions: [] }
+                        ))]
+                        : []),
                 ];
                 const checks = components
                     .flatMap(({ checks: componentChecks }) => componentChecks)

@@ -1,6 +1,16 @@
 import { NetworkGroupState } from "@/types/network-groups";
 import { pool } from "@/utils/db";
+import {
+    createAccessApplier,
+    createAccessObserver,
+    createAccessTrunkApplier,
+} from "./access-clients";
 import { getNetworkPlan } from "./desired-state";
+import { createGatewayApplier, createGatewayObserver } from "./gateway-clients";
+import { createNetworkProxmoxMutator } from "./proxmox-clients";
+import { proxmox } from "@/proxmox";
+import { checkVmFirewallEnforcement } from "./vm-firewall-enforcement";
+import { GatewayConfigurationError, getGatewayRuntimeSettings } from "./gateway-plan";
 import { getNetworkMode, NetworkMode } from "./mode";
 import {
     getNetworkObservations,
@@ -45,8 +55,82 @@ type ReadinessRow = {
     error_group_count: string;
 };
 
+/**
+ * Reports whether the Gateway's guest-specific facts have been recorded.
+ *
+ * These cannot be derived from the database, and rendering policy against
+ * guessed interface names would produce plausible but wrong configuration, so
+ * an unconfigured Gateway is a required readiness failure rather than a default.
+ */
+async function checkGatewayRuntimeSettings(): Promise<{
+    status: ObservationStatus;
+    detail: string;
+}> {
+    try {
+        const settings = await getGatewayRuntimeSettings();
+        return {
+            status: "pass",
+            detail: `Gateway interfaces ${settings.management_interface}/`
+                + `${settings.trunk_interface}/${settings.uplink_interface} with `
+                + `${settings.upstream_resolvers.length} upstream resolver(s)`,
+        };
+    } catch (error) {
+        return {
+            status: "fail",
+            detail: error instanceof GatewayConfigurationError
+                ? error.message
+                : "Gateway runtime settings could not be read",
+        };
+    }
+}
+
+/**
+ * Reports whether the four executors provisioning drives can actually be built.
+ *
+ * Constructing a client opens no connection; it only proves the principal,
+ * identity file and forced command are configured. That is the property worth
+ * grading here, because a missing channel does not surface until a student
+ * presses the button: the VNet would be created, and then the request would fail
+ * with the group already allocated and half its infrastructure in place.
+ *
+ * The Gateway observer is required despite being optional for a dry-run. It is
+ * the independent channel an apply proves itself through, and committing without
+ * that proof is the one thing the two-phase design exists to prevent.
+ */
+function checkProvisioningExecutors(): { status: ObservationStatus; detail: string } {
+    const channels: [string, () => unknown][] = [
+        ["proxmox-vnet-mutator", createNetworkProxmoxMutator],
+        ["access-observer", createAccessObserver],
+        ["access-trunk-applier", createAccessTrunkApplier],
+        ["access-applier", createAccessApplier],
+        ["gateway-observer", () => {
+            const observer = createGatewayObserver();
+            if (!observer) throw new Error("not configured");
+            return observer;
+        }],
+        ["gateway-applier", createGatewayApplier],
+    ];
+    const missing = channels
+        .filter(([, create]) => {
+            try {
+                create();
+                return false;
+            } catch {
+                return true;
+            }
+        })
+        .map(([name]) => name);
+    return {
+        status: missing.length === 0 ? "pass" : "fail",
+        detail: missing.length === 0
+            ? `All ${channels.length} provisioning executor channel(s) are configured`
+            : `Unconfigured provisioning executor(s): ${missing.join(", ")}`,
+    };
+}
+
 export async function getNetworkReadiness(): Promise<NetworkReadinessReport> {
-    const [mode, result, plan, observations] = await Promise.all([
+    const executors = checkProvisioningExecutors();
+    const [mode, result, plan, observations, gatewaySettings, firewall] = await Promise.all([
         getNetworkMode(),
         pool.query<ReadinessRow>(`
             SELECT
@@ -83,6 +167,8 @@ export async function getNetworkReadiness(): Promise<NetworkReadinessReport> {
         `),
         getNetworkPlan(),
         getNetworkObservations(),
+        checkGatewayRuntimeSettings(),
+        checkVmFirewallEnforcement(proxmox),
     ]);
     const row = result.rows[0];
 
@@ -124,11 +210,29 @@ export async function getNetworkReadiness(): Promise<NetworkReadinessReport> {
         },
         ...observations,
         {
-            key: "infrastructure-reconciler",
+            key: "gateway-runtime-settings",
             category: "control-plane",
-            status: "fail",
+            status: gatewaySettings.status,
             required: true,
-            detail: "VLAN/SDN, Gateway, and Access VM reconciliation is not implemented",
+            detail: gatewaySettings.detail,
+        },
+        {
+            key: "vm-firewall-enforcement",
+            category: "control-plane",
+            status: firewall.status,
+            required: true,
+            detail: firewall.detail,
+        },
+        {
+            key: "provisioning-executors",
+            category: "control-plane",
+            // Replaced the standing `infrastructure-reconciler` blocker once
+            // provisioning began driving all four executors per group. It is a
+            // real check rather than a constant: the wiring exists, but it is
+            // only reachable on a stack whose channels are configured.
+            status: executors.status,
+            required: true,
+            detail: executors.detail,
         },
     ];
 

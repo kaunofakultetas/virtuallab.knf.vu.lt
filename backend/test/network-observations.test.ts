@@ -22,9 +22,15 @@ function createClient(
             { zone: "labzone", type: "simple", bridge: "vmbr20" },
         ],
         getSdnVnets: async () => [],
+        // Shaped like a real QEMU guest: netN describes only the virtual NIC and
+        // the address arrives from cloud-init on ipconfigN. The previous fixture
+        // put ip= on net0, which is LXC shape and let a broken check pass.
         getVmConfig: async () => ({
-            net0: "bridge=vmbr1,ip=10.10.10.2/24",
-            net1: "bridge=vmbr20",
+            net0: "virtio=BC:24:11:CB:77:BF,bridge=vmbr1,firewall=1",
+            net1: "virtio=BC:24:11:B8:3A:45,bridge=vmbr20,firewall=1,trunks=2000",
+            net2: "virtio=BC:24:11:17:89:5C,bridge=vmbr0,firewall=1",
+            ipconfig0: "ip=10.10.10.2/24",
+            ipconfig2: "gw=172.16.0.1,ip=172.16.0.36/22",
         }),
         getContainerConfig: async () => ({
             net0: "bridge=vmbr1,ip=10.10.10.50/24",
@@ -102,6 +108,59 @@ test("distinguishes missing bridge, zone, and Gateway from readable inventory", 
     );
     assert.equal(
         observations.find(({ key }) => key === "gateway-config")?.status,
+        "fail",
+    );
+});
+
+test("reads the Gateway management address from cloud-init, not the NIC", async () => {
+    const observations = await getNetworkObservations(
+        createClient({
+            // A QEMU NIC never carries an address, so a check that searches netN
+            // for one can never pass on a VM.
+            getVmConfig: async () => ({
+                net0: "virtio=BC:24:11:CB:77:BF,bridge=vmbr1,firewall=1",
+                net1: "virtio=BC:24:11:B8:3A:45,bridge=vmbr20,firewall=1",
+                ipconfig0: "ip=10.10.10.2/24",
+            }),
+        }),
+    );
+
+    assert.equal(
+        observations.find(({ key }) => key === "gateway-networking")?.status,
+        "pass",
+    );
+});
+
+test("fails Gateway networking when cloud-init carries a different address", async () => {
+    const observations = await getNetworkObservations(
+        createClient({
+            getVmConfig: async () => ({
+                net0: "virtio=BC:24:11:CB:77:BF,bridge=vmbr1,firewall=1",
+                net1: "virtio=BC:24:11:B8:3A:45,bridge=vmbr20,firewall=1",
+                ipconfig0: "ip=10.10.10.9/24",
+            }),
+        }),
+    );
+
+    const check = observations.find(({ key }) => key === "gateway-networking");
+    assert.equal(check?.status, "fail");
+    assert.match(check?.detail ?? "", /does not match 10\.10\.10\.2\/24/);
+});
+
+test("does not accept a partial address match from another ipconfig entry", async () => {
+    const observations = await getNetworkObservations(
+        createClient({
+            getVmConfig: async () => ({
+                net0: "virtio=BC:24:11:CB:77:BF,bridge=vmbr1,firewall=1",
+                net1: "virtio=BC:24:11:B8:3A:45,bridge=vmbr20,firewall=1",
+                // A prefix of the expected CIDR must not satisfy the check.
+                ipconfig0: "ip=10.10.10.20/24",
+            }),
+        }),
+    );
+
+    assert.equal(
+        observations.find(({ key }) => key === "gateway-networking")?.status,
         "fail",
     );
 });

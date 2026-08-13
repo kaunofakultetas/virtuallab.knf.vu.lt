@@ -19,6 +19,14 @@ const defaults: Record<string, MetaValue> = {
     "settings.instances.defaultRuntimeHours": 3,
     "settings.guacamole.parentIdentifier": "1",
     "settings.guacamole.requestTimeoutMs": 10_000,
+    // Gateway guest facts that cannot be derived from the database. They stay
+    // empty until the VM exists and its real interface names are observed;
+    // reading them fails closed, so policy is never rendered against guessed
+    // names.
+    "settings.network.gateway.trunkInterface": "",
+    "settings.network.gateway.uplinkInterface": "",
+    "settings.network.gateway.managementInterface": "",
+    "settings.network.gateway.upstreamResolvers": [],
 };
 
 async function get<T extends MetaValue = MetaValue>(

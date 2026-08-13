@@ -323,6 +323,25 @@ export class ProxmoxClient {
         return this.request<string | null>("PUT", "/cluster/sdn");
     }
 
+    /**
+     * Cluster and node firewall state, read-only.
+     *
+     * Worth reading even though nothing here writes it: the cluster `enable`
+     * flag is the master switch for every per-VM rule, so with it off the
+     * rendered guest policy is inert and student-to-student isolation silently
+     * does not exist.
+     */
+    async getClusterFirewallOptions(): Promise<ProxmoxFirewallOptions> {
+        return this.request<ProxmoxFirewallOptions>("GET", "/cluster/firewall/options");
+    }
+
+    async getNodeFirewallRules(): Promise<ProxmoxFirewallRule[]> {
+        return this.request<ProxmoxFirewallRule[]>(
+            "GET",
+            `/nodes/${encodeURIComponent(this.nodeName)}/firewall/rules`,
+        );
+    }
+
     async getFirewallSecurityGroups(): Promise<ProxmoxFirewallSecurityGroup[]> {
         return this.request<ProxmoxFirewallSecurityGroup[]>(
             "GET",
@@ -527,6 +546,77 @@ export class ProxmoxClient {
             "PUT",
             `/nodes/${encodeURIComponent(this.nodeName)}/qemu/${encodeURIComponent(vmid)}/firewall/options`,
             { form: encodeForm(input) },
+        );
+    }
+
+    /**
+     * Guest-scoped IPSets, which are a different namespace from the cluster ones
+     * above. `ipfilter-net<n>` is the one that matters here: Proxmox reads it as
+     * the set of source addresses the guest may send from, so it is the only
+     * control that stops a lab VM spoofing its neighbour's address on a segment
+     * the Gateway never sees.
+     */
+    private vmFirewallPath(vmid: string, suffix = ""): string {
+        return `/nodes/${encodeURIComponent(this.nodeName)}`
+            + `/qemu/${encodeURIComponent(vmid)}/firewall${suffix}`;
+    }
+
+    async getVmFirewallIpSets(vmid: string): Promise<ProxmoxFirewallIpSet[]> {
+        return this.request<ProxmoxFirewallIpSet[]>("GET", this.vmFirewallPath(vmid, "/ipset"));
+    }
+
+    async createVmFirewallIpSet(
+        vmid: string,
+        input: ProxmoxFirewallIpSetCreate,
+    ): Promise<void> {
+        await this.request<null>("POST", this.vmFirewallPath(vmid, "/ipset"), {
+            form: encodeForm(input),
+        });
+    }
+
+    async deleteVmFirewallIpSet(vmid: string, name: string, digest?: string): Promise<void> {
+        await this.request<null>(
+            "DELETE",
+            this.vmFirewallPath(vmid, `/ipset/${encodeURIComponent(name)}`),
+            { form: encodeForm({ digest }) },
+        );
+    }
+
+    async getVmFirewallIpSetEntries(
+        vmid: string,
+        name: string,
+    ): Promise<ProxmoxFirewallIpSetEntry[]> {
+        return this.request<ProxmoxFirewallIpSetEntry[]>(
+            "GET",
+            this.vmFirewallPath(vmid, `/ipset/${encodeURIComponent(name)}`),
+        );
+    }
+
+    async createVmFirewallIpSetEntry(
+        vmid: string,
+        name: string,
+        input: ProxmoxFirewallIpSetEntryInput,
+    ): Promise<void> {
+        await this.request<null>(
+            "POST",
+            this.vmFirewallPath(vmid, `/ipset/${encodeURIComponent(name)}`),
+            { form: encodeForm(input) },
+        );
+    }
+
+    async deleteVmFirewallIpSetEntry(
+        vmid: string,
+        name: string,
+        cidr: string,
+        digest?: string,
+    ): Promise<void> {
+        await this.request<null>(
+            "DELETE",
+            this.vmFirewallPath(
+                vmid,
+                `/ipset/${encodeURIComponent(name)}/${encodeURIComponent(cidr)}`,
+            ),
+            { form: encodeForm({ digest }) },
         );
     }
 

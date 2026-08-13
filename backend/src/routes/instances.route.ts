@@ -14,11 +14,15 @@ import {
 } from "@/types/validators/instances.zod";
 import { logger } from "@/utils/logger";
 import { metadata } from "@/utils/metadata";
+import { getOrCreatePlannedGroup, markNetworkGroupActive } from "@/network/groups";
 import {
-    deleteUnusedPlannedGroup,
-    getOrCreatePlannedGroup,
-} from "@/network/groups";
+    compensateNetworkAttachment,
+    resolveNetworkAttachment,
+} from "@/network/attachment";
 import { getNetworkPlan } from "@/network/desired-state";
+import { ensureNetworkGroupInfrastructure } from "@/network/provisioning-network";
+import { ensureInstanceFirewall } from "@/network/provisioning-firewall";
+import { releaseNetworkGroupAfterInstance } from "@/network/provisioning-teardown";
 import { getNetworkMode } from "@/network/mode";
 import { Router } from "express";
 
@@ -228,17 +232,40 @@ router.post(
             }
 
             const mode = await getNetworkMode();
-            if (mode === "active") {
-                return res.status(503).json({
-                    error: `${mode} network provisioning is not available yet`,
-                });
-            }
-
             const group = await getOrCreatePlannedGroup(
                 req.user.vu_id,
                 profile.id,
             );
+            const attachment = await resolveNetworkAttachment(mode, group);
+            let provisionedRevision = "";
             try {
+                if (attachment.isolated) {
+                    // Every piece of shared infrastructure the VM depends on has
+                    // to exist before it is cloned onto the VNet: the VNet
+                    // itself, the Access trunk, and the two appliances' VLAN
+                    // interfaces. Running this first means a failure here never
+                    // leaves a stray VM behind, and never hands a student a VM
+                    // with no address and no path.
+                    const provisioned = await ensureNetworkGroupInfrastructure(
+                        attachment.group,
+                        req.user.vu_id,
+                    );
+                    // The infrastructure revision the VNet, trunk and Access
+                    // steps agreed on; recorded on the group so `active` names a
+                    // revision an operator can check rather than a bare state.
+                    provisionedRevision = provisioned.steps
+                        .find(({ name }) => name === "access-policy")?.applied_revision
+                        ?? provisioned.steps[0].applied_revision
+                        ?? "";
+                    logger.info(
+                        {
+                            networkGroupId: attachment.group.id,
+                            vlanTag: attachment.group.vlan_tag,
+                            steps: provisioned.steps,
+                        },
+                        "Reconciled network infrastructure for an isolated group",
+                    );
+                }
                 if (mode === "dry-run") {
                     const plan = await getNetworkPlan();
                     const projection = plan.desired_state.groups.find(
@@ -259,11 +286,66 @@ router.post(
                 const instanceId = await Instances.createInstance(
                     req.user.vu_id,
                     template,
-                    group.id,
+                    attachment.group.id,
+                    attachment.bridge,
                 );
+                if (attachment.isolated) {
+                    // Same-segment policy can only be applied once the VM
+                    // exists, so this is the one step that runs after creation.
+                    // A failure here destroys the VM rather than handing over an
+                    // unfiltered one: traffic between VMs on a VLAN is switched
+                    // at layer 2 and never reaches the Gateway, so without this
+                    // there is nothing between one student's VM and the next.
+                    const instance = await Instances.getById(instanceId);
+                    if (!instance) {
+                        throw new Error(`Instance ${instanceId} vanished before firewall policy`);
+                    }
+                    try {
+                        const firewall = await ensureInstanceFirewall({
+                            vmid: String(instance.proxmox_id),
+                            group: attachment.group,
+                            connectionType: template.connection_type,
+                            connectionConfig: template.connection_config,
+                        });
+                        logger.info(
+                            { instanceId, vmid: instance.proxmox_id, firewall },
+                            "Applied same-segment firewall policy to a student VM",
+                        );
+                        // Only now: every executor converged and the VM is
+                        // filtered. Promoting earlier would publish a group as
+                        // active while its VMs were still mutually reachable.
+                        const promoted = await markNetworkGroupActive(
+                            attachment.group.id,
+                            provisionedRevision,
+                        );
+                        if (!promoted) {
+                            // A concurrent teardown moved it out of `creating`.
+                            // Not an error for this request -- the VM exists and
+                            // is filtered -- but it must be visible.
+                            logger.warn(
+                                { networkGroupId: attachment.group.id },
+                                "Network group left `creating` before it could be promoted",
+                            );
+                        }
+                    } catch (error) {
+                        await Instances.deleteInstance(instanceId).catch((cleanupError) => {
+                            // Reported, never rethrown: the firewall failure is
+                            // the cause an operator needs, and losing it behind
+                            // a cleanup error would hide why the VM existed.
+                            logger.error(
+                                { err: cleanupError, instanceId },
+                                "Failed to remove a VM whose firewall could not be applied",
+                            );
+                        });
+                        throw error;
+                    }
+                }
                 return res.json({ id: instanceId });
             } catch (error) {
-                await deleteUnusedPlannedGroup(group.id);
+                await compensateNetworkAttachment(
+                    attachment,
+                    error instanceof Error ? error.message : "Provisioning failed",
+                );
                 throw error;
             }
         } catch (err) {
@@ -293,7 +375,18 @@ router.delete(
         if (!hasAccess) return res.status(403).json({ error: "Unauthorized" });
 
         try {
+            // Read before deleting: `network_group_id` lives on the row that is
+            // about to disappear.
+            const instance = await Instances.getById(instanceId);
             await Instances.deleteInstance(instanceId);
+            // Inline rather than backgrounded. It only does real work when this
+            // was the group's last VM, and a released VLAN that nobody observed
+            // being released is how allocations leak. The guard returns
+            // immediately when other VMs remain.
+            await releaseNetworkGroupAfterInstance(
+                instance?.network_group_id,
+                req.user.vu_id,
+            );
             return res.json({ message: "Instance deleted" });
         } catch (err) {
             logger.error({ err, instanceId }, "Error deleting instance");

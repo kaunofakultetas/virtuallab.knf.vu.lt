@@ -4,6 +4,7 @@ services:
     backend:
         build:
             context: ./backend
+        image: virtual-lab-backend:${VIRTUAL_LAB_IMAGE_TAG:-local}
         container_name: backend
 
         env_file: ./.env
@@ -12,10 +13,30 @@ services:
             - NODE_EXTRA_CA_CERTS=/certs/logs.knf.vu.lt.crt
             - ACCESS_OBSERVER_IDENTITY_FILE=/run/access-observer/id_ed25519
             - ACCESS_OBSERVER_KNOWN_HOSTS_FILE=/run/access-observer/known_hosts
+            - ACCESS_APPLIER_IDENTITY_FILE=/run/access-applier/id_ed25519
+            - ACCESS_APPLIER_KNOWN_HOSTS_FILE=/run/access-applier/known_hosts
+            - ACCESS_TRUNK_APPLIER_IDENTITY_FILE=/run/access-trunk-applier/id_ed25519
+            - ACCESS_TRUNK_APPLIER_KNOWN_HOSTS_FILE=/run/access-trunk-applier/known_hosts
+            - GATEWAY_OBSERVER_IDENTITY_FILE=/run/gateway-observer/id_ed25519
+            - GATEWAY_OBSERVER_KNOWN_HOSTS_FILE=/run/gateway-observer/known_hosts
+            - GATEWAY_APPLIER_IDENTITY_FILE=/run/gateway-applier/id_ed25519
+            - GATEWAY_APPLIER_KNOWN_HOSTS_FILE=/run/gateway-applier/known_hosts
 
         volumes:
             - ./certs/:/certs/:ro
             - ${ACCESS_OBSERVER_CREDENTIALS_DIR:?Set ACCESS_OBSERVER_CREDENTIALS_DIR in .env}:/run/access-observer:ro
+            # The two Access mutating principals. Optional in the same sense the
+            # Gateway applier is: without them provisioning in active mode
+            # refuses, which is the correct outcome for an unconfigured stack.
+            - ${ACCESS_APPLIER_CREDENTIALS_DIR:-./infra/gateway/credentials-absent}:/run/access-applier:ro
+            - ${ACCESS_TRUNK_APPLIER_CREDENTIALS_DIR:-./infra/gateway/credentials-absent}:/run/access-trunk-applier:ro
+            # Gateway observation is optional, so this defaults to a committed
+            # empty directory rather than failing Compose validation. Without the
+            # credentials the dry-run reports no Gateway checks; it does not fail.
+            - ${GATEWAY_OBSERVER_CREDENTIALS_DIR:-./infra/gateway/credentials-absent}:/run/gateway-observer:ro
+            # The mutating principal. Also optional: without it the apply CLI
+            # refuses, which is the correct outcome for an unconfigured stack.
+            - ${GATEWAY_APPLIER_CREDENTIALS_DIR:-./infra/gateway/credentials-absent}:/run/gateway-applier:ro
 
         depends_on:
             postgres:
@@ -33,7 +54,7 @@ services:
         build:
             context: .
             dockerfile: Caddy.Dockerfile
-        image: virtual-lab-caddy
+        image: virtual-lab-caddy:${VIRTUAL_LAB_IMAGE_TAG:-local}
         container_name: caddy
 
         environment:

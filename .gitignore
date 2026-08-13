@@ -1,5 +1,6 @@
 # Build Cache
 dist/
+dist-scripts/
 build/
 node_modules/
 .docker-cache/

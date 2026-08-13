@@ -16,11 +16,16 @@ output "api_docker" {
 }
 
 output "gateway" {
-  description = "Stopped Gateway VM shell; its dedicated uplink remains deferred."
+  description = <<-EOT
+    Stopped Gateway VM shell. Its uplink shares an L2 broadcast domain with
+    Proxmox management, which is an accepted deviation recorded in
+    NETWORK-ARCHITECTURE-PLAN.md; the guest firewall exposes no service there.
+  EOT
   value = {
     vm_id         = proxmox_virtual_environment_vm.gateway.vm_id
     management_ip = "10.10.10.2"
-    uplink_bridge = null
+    uplink_bridge = "vmbr0"
+    uplink_ip     = "172.16.0.36/22"
     trunk_bridge  = "vmbr20"
     started       = proxmox_virtual_environment_vm.gateway.started
   }

@@ -7,6 +7,19 @@ export const NETWORK_RECONCILIATION_ADVISORY_LOCK = 1447838019;
 
 export type ReconciliationMode = "dry-run" | "apply";
 export type ReconciliationAttemptStatus = "running" | "succeeded" | "failed" | "abandoned";
+export type ReconciliationPhase =
+    | "initializing"
+    | "planning"
+    | "planned"
+    | "applying"
+    | "verifying"
+    | "applied"
+    | "apply-failed"
+    | "compensating"
+    | "compensated"
+    | "compensation-failed"
+    | "observation-failed"
+    | "abandoned";
 
 export type ReconciliationAttempt = {
     id: string;
@@ -17,7 +30,7 @@ export type ReconciliationAttempt = {
     status: ReconciliationAttemptStatus;
     desired_revision: string;
     applied_revision: string | null;
-    phase: string;
+    phase: ReconciliationPhase;
     checks: ReconciliationCheck[];
     actions: ReconciliationAction[];
     error_code: string | null;
@@ -37,12 +50,18 @@ export type CreateReconciliationAttempt = {
 
 export type FinishReconciliationAttempt = {
     status: Exclude<ReconciliationAttemptStatus, "running">;
-    phase: string;
+    phase: ReconciliationPhase;
     checks: ReconciliationCheck[];
     actions: ReconciliationAction[];
     appliedRevision?: string;
     errorCode?: string;
     errorDetail?: string;
+};
+
+export type CheckpointReconciliationAttempt = {
+    phase: ReconciliationPhase;
+    checks?: ReconciliationCheck[];
+    actions?: ReconciliationAction[];
 };
 
 export type ReconciliationQueryClient = {
@@ -110,6 +129,30 @@ export class ReconciliationAttemptRepository {
              WHERE status = 'running'`,
         );
         return result.rowCount ?? 0;
+    }
+
+    async checkpoint(
+        id: string,
+        input: CheckpointReconciliationAttempt,
+    ): Promise<ReconciliationAttempt> {
+        const result = await this.database.query<ReconciliationAttempt>(
+            `UPDATE network_reconciliation_attempts
+             SET phase = $2,
+                 checks = COALESCE($3::jsonb, checks),
+                 actions = COALESCE($4::jsonb, actions)
+             WHERE id = $1 AND status = 'running'
+             RETURNING *`,
+            [
+                id,
+                input.phase,
+                input.checks === undefined ? null : JSON.stringify(input.checks),
+                input.actions === undefined ? null : JSON.stringify(input.actions),
+            ],
+        );
+        if (!result.rows[0]) {
+            throw new Error(`Running reconciliation attempt ${id} does not exist`);
+        }
+        return result.rows[0];
     }
 
     async finish(id: string, input: FinishReconciliationAttempt): Promise<ReconciliationAttempt> {

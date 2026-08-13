@@ -20,6 +20,7 @@ export type NetworkProjectionConfig = {
     };
     infrastructure: {
         gatewayManagementCidr: string;
+        gatewayManagementSourceCidrs: string[];
         accessManagementCidr: string;
         accessServiceSourceCidrs: string[];
     };
@@ -50,6 +51,12 @@ export const networkProjectionConfig: NetworkProjectionConfig = {
     },
     infrastructure: {
         gatewayManagementCidr: "10.10.10.2/24",
+        // The orchestrator LXC, plus the Proxmox host itself. The host is the
+        // out-of-band administration path for the Gateway guest and the only way
+        // in if a ruleset is wrong: VM 202 has no serial console, so losing SSH
+        // would mean offline disk surgery. The host already controls the VM
+        // through the hypervisor, so this grants no privilege it lacks.
+        gatewayManagementSourceCidrs: ["10.10.10.1/32", "10.10.10.100/32"],
         accessManagementCidr: "10.10.10.50/24",
         accessServiceSourceCidrs: ["10.10.10.100/32"],
     },

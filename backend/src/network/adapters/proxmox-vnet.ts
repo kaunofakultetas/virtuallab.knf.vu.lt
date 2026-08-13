@@ -1,5 +1,12 @@
-import { ProxmoxSdnVnet, ProxmoxSdnZone } from "@/proxmox/types";
-import { InfrastructurePlan } from "../infrastructure-desired-state";
+import {
+    ProxmoxNodeTaskStatus,
+    ProxmoxSdnVnet,
+    ProxmoxSdnVnetCreate,
+    ProxmoxSdnVnetUpdate,
+    ProxmoxSdnZone,
+    ProxmoxTaskWaitOptions,
+} from "@/proxmox/types";
+import { InfrastructurePlan, InfrastructureVnet } from "../infrastructure-desired-state";
 import { ReconciliationDryRun } from "../reconciliation-types";
 
 export interface ProxmoxVnetObservationClient {
@@ -11,6 +18,67 @@ export type ProxmoxVnetObservation = {
     zones: ProxmoxSdnZone[];
     vnets: ProxmoxSdnVnet[];
 };
+
+export interface ProxmoxVnetMutationClient {
+    createSdnVnet(input: ProxmoxSdnVnetCreate): Promise<void>;
+    updateSdnVnet(vnet: string, input: ProxmoxSdnVnetUpdate): Promise<void>;
+    applySdnConfiguration(): Promise<string | null>;
+    waitForTask(
+        upid: string,
+        options?: ProxmoxTaskWaitOptions,
+    ): Promise<ProxmoxNodeTaskStatus>;
+}
+
+export type ProxmoxVnetMutationAction = {
+    operation: "create" | "update";
+    resource: string;
+    desired: InfrastructureVnet;
+};
+
+export type ProxmoxVnetActionExecutionState = "applying" | "succeeded" | "failed";
+
+export type ProxmoxVnetActionTransition = (
+    action: ProxmoxVnetMutationAction,
+    executionState: ProxmoxVnetActionExecutionState,
+) => Promise<void>;
+
+export type ProxmoxVnetPostApplyVerification = () => Promise<void>;
+
+export async function executeProxmoxVnetActions(
+    client: ProxmoxVnetMutationClient,
+    actions: ProxmoxVnetMutationAction[],
+    transition?: ProxmoxVnetActionTransition,
+    verify?: ProxmoxVnetPostApplyVerification,
+): Promise<void> {
+    for (const action of actions) {
+        if (action.resource !== action.desired.vnet) {
+            throw new Error(`VNet action resource ${action.resource} does not match desired VNet`);
+        }
+    }
+    if (actions.length === 0) return;
+
+    const started: ProxmoxVnetMutationAction[] = [];
+    try {
+        for (const action of actions) {
+            await transition?.(action, "applying");
+            started.push(action);
+            if (action.operation === "create") {
+                await client.createSdnVnet(action.desired);
+            } else {
+                const { vnet, ...desired } = action.desired;
+                await client.updateSdnVnet(vnet, desired);
+            }
+        }
+
+        const upid = await client.applySdnConfiguration();
+        if (upid) await client.waitForTask(upid);
+        await verify?.();
+        for (const action of actions) await transition?.(action, "succeeded");
+    } catch (error) {
+        for (const action of started) await transition?.(action, "failed");
+        throw error;
+    }
+}
 
 export async function observeProxmoxVnets(
     client: ProxmoxVnetObservationClient,
@@ -55,6 +123,7 @@ export function planProxmoxVnets(
             actions.push({
                 component: "proxmox-vnet",
                 operation: "create",
+                execution_state: "planned",
                 resource: desired.vnet,
                 desired,
             });
@@ -76,6 +145,7 @@ export function planProxmoxVnets(
             actions.push({
                 component: "proxmox-vnet",
                 operation: "update",
+                execution_state: "planned",
                 resource: desired.vnet,
                 desired,
             });

@@ -3,6 +3,7 @@ import test from "node:test";
 import { QueryResult, QueryResultRow } from "pg";
 import {
     NETWORK_RECONCILIATION_ADVISORY_LOCK,
+    ReconciliationAttemptRepository,
     ReconciliationLockedError,
     withReconciliationLock,
 } from "../src/network/reconciliation-attempts";
@@ -84,4 +85,21 @@ test("unlocks when reconciliation work fails", async () => {
         /apply failed/,
     );
     assert.match(calls[1], /pg_advisory_unlock/);
+});
+
+test("rejects checkpoints for attempts that are no longer running", async () => {
+    const calls: Array<{ sql: string; values?: unknown[] }> = [];
+    const repository = new ReconciliationAttemptRepository({
+        async query<Row extends QueryResultRow>(sql: string, values?: unknown[]) {
+            calls.push({ sql, values });
+            return result([] as Row[]);
+        },
+    });
+
+    await assert.rejects(
+        repository.checkpoint("42", { phase: "planning" }),
+        /Running reconciliation attempt 42 does not exist/,
+    );
+    assert.match(calls[0].sql, /WHERE id = \$1 AND status = 'running'/);
+    assert.deepEqual(calls[0].values, ["42", "planning", null, null]);
 });

@@ -300,6 +300,12 @@ export interface ProxmoxFirewallOptions {
     enable?: number;
     dhcp?: number;
     ipfilter?: number;
+    /** Drops frames whose source MAC is not the one Proxmox assigned the NIC. */
+    macfilter?: number;
+    /** IPv6 neighbour discovery. Off means IPv6 cannot establish on the segment. */
+    ndp?: number;
+    /** IPv6 router advertisements, which a lab VM must never be able to send. */
+    radv?: number;
     log_level_in?: string;
     log_level_out?: string;
     policy_in?: string;
@@ -311,6 +317,9 @@ export interface ProxmoxFirewallOptionsUpdate {
     enable?: boolean;
     dhcp?: boolean;
     ipfilter?: boolean;
+    macfilter?: boolean;
+    ndp?: boolean;
+    radv?: boolean;
     log_level_in?: string;
     log_level_out?: string;
     policy_in?: string;

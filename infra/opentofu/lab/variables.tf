@@ -100,3 +100,54 @@ variable "guest_ssh_public_key" {
     error_message = "guest_ssh_public_key must be an OpenSSH public key."
   }
 }
+variable "gateway_bootstrap_mode" {
+  description = <<-EOT
+    Prepares VM 202 for its first boot, before any firewall exists on the guest.
+
+    When true the uplink NIC is left disconnected and the default route runs
+    through the management network, where the Proxmox host already NATs
+    10.10.10.0/24 out vmbr0. The Gateway can then install packages and receive
+    its rendered policy without ever sitting unprotected on the campus segment
+    that the uplink shares with Proxmox management.
+
+    Set back to false once the guest policy is applied and verified; that
+    connects the uplink and moves the default route onto it.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "gateway_started" {
+  description = <<-EOT
+    Power state for VM 202, declared here so a manually started guest does not
+    drift back to stopped on the next apply.
+
+    Keep false until the guest's fail-closed nftables, DHCP, DNS, and proxy
+    configuration has been applied and verified. Start it only together with
+    gateway_bootstrap_mode = true, so its first boot happens with the uplink
+    disconnected.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "additional_guest_ssh_public_keys" {
+  description = <<-EOT
+    Extra public keys authorised on the Gateway, alongside the deployment key.
+
+    The Proxmox host's key belongs here: 10.10.10.0/24 is reachable only from the
+    host and the LXCs, so the host is the control point for guest configuration.
+    This grants no privilege the host lacks, since host root already controls the
+    VM through qm and its disk.
+  EOT
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for key in var.additional_guest_ssh_public_keys :
+      can(regex("^(ssh-(ed25519|rsa)|ecdsa-sha2-nistp(256|384|521)) ", trimspace(key)))
+    ])
+    error_message = "Each entry must be an OpenSSH public key."
+  }
+}

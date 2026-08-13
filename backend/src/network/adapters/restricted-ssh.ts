@@ -105,6 +105,23 @@ export class RestrictedSshTransport {
                 reject(new RestrictedSshError("Restricted SSH execution timed out", "timeout"));
             }), this.config.executionTimeoutMs ?? 15_000);
             timer.unref();
+            // A stage request is far larger than the 64KB pipe buffer, so the
+            // write below is still in flight when the child can die: a rotated
+            // host key, a forced command rejecting an oversized request, or this
+            // transport's own SIGKILL on timeout. Without a listener the
+            // resulting EPIPE is an unhandled 'error' event on a Socket, which
+            // terminates the whole backend for every user rather than failing
+            // this one request.
+            //
+            // The write error itself is discarded: `close` always follows and
+            // carries the exit code and stderr, which is the diagnosis worth
+            // reporting. `finish()` makes whichever arrives first the winner.
+            child.stdin.on("error", (error) => finish(() => {
+                reject(new RestrictedSshError(
+                    `Restricted SSH could not send the request: ${error.message}`,
+                    "process-failed",
+                ));
+            }));
             child.stdin.end(`${JSON.stringify(request)}\n`);
         });
     }

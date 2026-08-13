@@ -10,8 +10,9 @@ export type ReconciliationCheck = {
 };
 
 export type ReconciliationAction = {
-    component: "proxmox-vnet" | "access" | "gateway";
+    component: "proxmox-vnet" | "access" | "gateway" | "firewall";
     operation: "create" | "update";
+    execution_state: "planned" | "applying" | "succeeded" | "failed" | "compensated";
     resource: string;
     desired: unknown;
 };

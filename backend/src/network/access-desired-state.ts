@@ -37,8 +37,24 @@ export type AccessVlanInterface = {
     address_cidr: string;
 };
 
+/**
+ * Bump whenever rendered Access policy changes meaning.
+ *
+ * The revision hashes this document, not the rendered text, so a renderer-only
+ * change would otherwise produce an identical revision -- and the sole
+ * convergence signal for Access is whether the live ruleset carries the revision
+ * comment. A host still running the old output would report a match and pass its
+ * drift check, exactly the failure GATEWAY_RENDER_VERSION was introduced for on
+ * the Gateway side. Access has no per-file digest check to catch it either.
+ *
+ * 1: zero-group forward chain stated explicitly instead of silently omitting the
+ *    lab accept rule.
+ */
+export const ACCESS_RENDER_VERSION = 2;
+
 export type AccessDesiredState = {
     version: 1;
+    render_version: number;
     ipv6_enabled: false;
     management: {
         address_cidr: string;
@@ -146,6 +162,7 @@ function buildPlan(
 
     const desiredState: AccessDesiredState = {
         version: 1,
+        render_version: ACCESS_RENDER_VERSION,
         ipv6_enabled: false,
         management: {
             address_cidr: config.infrastructure.accessManagementCidr,

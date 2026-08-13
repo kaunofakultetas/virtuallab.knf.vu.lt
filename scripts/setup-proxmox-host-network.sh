@@ -18,8 +18,14 @@ usage() {
     cat <<'EOF'
 Usage: ./scripts/setup-proxmox-host-network.sh --host 172.16.0.34 [options]
 
-Reconciles the host networking required by the OpenTofu-managed LXCs. The
-default is a non-mutating dry run.
+Reconciles the host DHCP, NAT, and forwarding required by the OpenTofu-managed
+LXCs. The default is a non-mutating dry run.
+
+Bridges are NOT created here. Proxmox owns vmbr1 and vmbr20 in
+/etc/network/interfaces, because PVE does not read its network configuration
+from sourced files and a bridge under interfaces.d is invisible to its API and
+to backend readiness. This script only verifies that they exist and is safe to
+run while guests are attached: it reloads no interface.
 
 Options:
   --host HOST          Proxmox SSH host (must be 172.16.0.34)
@@ -84,7 +90,12 @@ ssh "${ssh_options[@]}" "${ssh_user}@${host}" \
 set -euo pipefail
 
 readonly LOCK_FILE=/run/lock/virtual-proxmox-lab-host.lock
-readonly NETWORK_FILE=/etc/network/interfaces.d/virtual-proxmox-lab
+# Bridges are owned by Proxmox itself, in /etc/network/interfaces. PVE does not
+# read its network configuration from sourced files, so a bridge defined under
+# interfaces.d is invisible to the API and to readiness. This path is retained
+# only so a stale file from the previous ownership model is detected.
+readonly LEGACY_NETWORK_FILE=/etc/network/interfaces.d/virtual-proxmox-lab
+readonly PVE_NETWORK_FILE=/etc/network/interfaces
 readonly DNSMASQ_FILE=/etc/dnsmasq.d/virtual-proxmox-lab.conf
 readonly NFT_FILE=/etc/nftables.d/virtual-proxmox-lab-host-network.nft
 readonly SYSCTL_FILE=/etc/sysctl.d/99-virtual-proxmox-lab-host-network.conf
@@ -116,12 +127,19 @@ uplink="$(ip route show default | awk '/default/ { print $5; exit }')"
 [[ -n "$uplink" ]] || fail "Could not identify the default-route interface"
 [[ "$uplink" != vmbr1 && "$uplink" != vmbr20 ]] || fail "Default route unexpectedly uses a managed bridge"
 
+if [[ -e "$LEGACY_NETWORK_FILE" ]]; then
+    fail "$LEGACY_NETWORK_FILE still defines lab bridges. Proxmox now owns them in
+$PVE_NETWORK_FILE; a duplicate definition would be applied twice. Remove the
+legacy file, confirm the bridges exist in the Proxmox network configuration,
+then rerun."
+fi
+
+# Proxmox must own each lab bridge, otherwise its API cannot report it and the
+# backend's transport-bridge readiness check can never pass.
 for bridge in vmbr1 vmbr20; do
-    foreign_refs="$(grep -Rsl -E "^(auto[[:space:]]+.*[[:space:]])?${bridge}([[:space:]]|$)|^iface[[:space:]]+${bridge}[[:space:]]" \
-        /etc/network/interfaces /etc/network/interfaces.d 2>/dev/null || true)"
-    if [[ -n "$foreign_refs" && "$foreign_refs" != "$NETWORK_FILE" ]]; then
-        fail "$bridge is already defined outside $NETWORK_FILE: $foreign_refs"
-    fi
+    grep -qE "^iface[[:space:]]+${bridge}[[:space:]]" "$PVE_NETWORK_FILE" || \
+        fail "$bridge is not defined in $PVE_NETWORK_FILE; create it through the Proxmox API, for example: pvesh create /nodes/\$(hostname)/network --iface $bridge --type bridge --cidr <addr>/24 --autostart 1"
+    [[ -e "/sys/class/net/${bridge}" ]] || fail "$bridge is defined but not present"
 done
 
 if [[ -e "$NFT_FILE" ]] && ! grep -q '^# Managed by setup-proxmox-host-network.sh$' "$NFT_FILE"; then
@@ -130,23 +148,6 @@ fi
 if nft list table ip virtual_lab_host_network >/dev/null 2>&1 && [[ ! -e "$NFT_FILE" ]]; then
     fail "nftables table virtual_lab_host_network exists without its managed file"
 fi
-
-network_content='# Managed by setup-proxmox-host-network.sh
-auto vmbr1
-iface vmbr1 inet static
-    address 10.10.10.1/24
-    bridge-ports none
-    bridge-stp off
-    bridge-fd 0
-
-auto vmbr20
-iface vmbr20 inet static
-    address 10.10.20.1/24
-    bridge-ports none
-    bridge-stp off
-    bridge-fd 0
-    bridge-vlan-aware yes
-    bridge-vids 2000-2255'
 
 dnsmasq_content='# Managed by setup-proxmox-host-network.sh
 interface=vmbr1
@@ -205,7 +206,6 @@ classify_file() {
 }
 
 for entry in \
-    "$NETWORK_FILE|$network_content" \
     "$DNSMASQ_FILE|$dnsmasq_content" \
     "$NFT_FILE|$nft_content" \
     "$SYSCTL_FILE|$sysctl_content"; do
@@ -221,8 +221,9 @@ for entry in \
 done
 
 plan "install missing dnsmasq, nftables, and ifupdown2 packages"
-plan "install or retain managed bridge, DHCP, nftables, and forwarding files"
-plan "validate candidates before activating vmbr1 and VLAN-aware vmbr20"
+plan "install or retain managed DHCP, nftables, and forwarding files"
+plan "validate candidates before activating them"
+plan "verify Proxmox-owned vmbr1 and VLAN-aware vmbr20 without reconfiguring them"
 printf 'Network contract: LXC 200 -> 10.10.10.50/24 and 10.10.20.10/24; LXC 201 -> 10.10.10.100/24\n'
 
 if [[ "$apply" != 1 ]]; then
@@ -242,10 +243,9 @@ fi
 grep -qE '^[[:space:]]*(source|source-directory)[[:space:]]+/etc/network/interfaces\.d' /etc/network/interfaces || \
     fail "/etc/network/interfaces does not source /etc/network/interfaces.d"
 
-install -d -m 0755 /etc/network/interfaces.d /etc/dnsmasq.d /etc/nftables.d
+install -d -m 0755 /etc/dnsmasq.d /etc/nftables.d
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
-printf '%s\n' "$network_content" >"$tmp_dir/network"
 printf '%s\n' "$dnsmasq_content" >"$tmp_dir/dnsmasq"
 printf '%s\n' "$nft_content" >"$tmp_dir/nftables"
 printf '%s\n' "$sysctl_content" >"$tmp_dir/sysctl"
@@ -253,7 +253,6 @@ printf '%s\n' "$sysctl_content" >"$tmp_dir/sysctl"
 nft -c -f "$tmp_dir/nftables"
 dnsmasq --test --conf-file="$tmp_dir/dnsmasq"
 
-install -m 0644 "$tmp_dir/network" "$NETWORK_FILE"
 install -m 0644 "$tmp_dir/dnsmasq" "$DNSMASQ_FILE"
 install -m 0644 "$tmp_dir/nftables" "$NFT_FILE"
 install -m 0644 "$tmp_dir/sysctl" "$SYSCTL_FILE"
@@ -262,8 +261,8 @@ if ! grep -qF "$NFT_INCLUDE" /etc/nftables.conf; then
     printf '\n%s\n' "$NFT_INCLUDE" >>/etc/nftables.conf
 fi
 
-ifreload -a -n
-ifreload -a
+# No ifreload: this script no longer defines any interface, and reloading would
+# needlessly disturb bridges that Proxmox owns and that carry running guests.
 dnsmasq --test
 systemctl enable dnsmasq nftables
 systemctl restart dnsmasq

@@ -17,7 +17,14 @@ import { metricsMiddleware } from "@/middleware/metrics.middleware";
 import { requestIdMiddleware } from "@/middleware/request-id.middleware";
 import { errorHandlerMiddleware } from "@/middleware/error-handler.middleware";
 
-import { SimpleIntervalJob, Task, ToadScheduler } from "toad-scheduler";
+// AsyncTask, not Task. `Task` is the synchronous variant: it calls the handler
+// inside a try/catch and returns immediately, so an async handler's rejection
+// never reaches the error callback and escapes as an unhandled rejection --
+// fatal on Node 25 -- while `preventOverrun` is silently inert because the task
+// is considered finished the moment the promise is created.
+import { AsyncTask, SimpleIntervalJob, ToadScheduler } from "toad-scheduler";
+import { reconcileNetworkDrift } from "@/network/drift-reconciler";
+import { DRIFT_RECONCILER_PRINCIPAL } from "@/network/drift-principal";
 import express, { Application, Request, Response } from "express";
 import cookieParser from "cookie-parser";
 import { Server } from "http";
@@ -112,7 +119,7 @@ async function bootstrap() {
         // Task to update db entries of instance statuses
         const updInstanceStJob = new SimpleIntervalJob(
             { seconds: 15 },
-            new Task(
+            new AsyncTask(
                 "instance status update",
                 async () => {
                     try {
@@ -130,7 +137,7 @@ async function bootstrap() {
         // Refresh Prometheus gauges (Postgres counts + Proxmox + Guacamole)
         const metricsPollJob = new SimpleIntervalJob(
             { seconds: 15 },
-            new Task(
+            new AsyncTask(
                 "metrics poll",
                 async () => {
                     await pollMetrics();
@@ -144,7 +151,7 @@ async function bootstrap() {
         // Task to remove expired instances (instances with run_until = NULL are non-expirable)
         const removeExpiredInstancesJob = new SimpleIntervalJob(
             { minutes: 1 },
-            new Task(
+            new AsyncTask(
                 "remove expired instances",
                 async () => {
                     const removed = await Instances.removeExpiredInstances();
@@ -157,6 +164,33 @@ async function bootstrap() {
             ),
         );
         scheduler.addSimpleIntervalJob(removeExpiredInstancesJob);
+
+        // Re-converge network infrastructure that drifted outside a
+        // provisioning or teardown request: a hand edit, a guest reboot that
+        // lost a runtime-only setting, a reconciliation that failed after its
+        // trigger had gone. It observes first and only repairs what actually
+        // drifted, because an unconditional apply restarts Squid and dnsmasq and
+        // would interrupt every session on a schedule.
+        //
+        // Ten minutes is a compromise: long enough that a healthy stack is only
+        // being read from, short enough that drift is repaired before anybody
+        // files a ticket about it. `preventOverrun` matters because a repair
+        // holds the reconciliation lock for as long as the appliances take.
+        const networkDriftJob = new SimpleIntervalJob(
+            { minutes: 10 },
+            new AsyncTask(
+                "network drift reconciliation",
+                async () => {
+                    const report = await reconcileNetworkDrift(DRIFT_RECONCILER_PRINCIPAL);
+                    if (report.drifted.length > 0 || report.failed.length > 0) {
+                        logger.info(report, "Network drift reconciliation completed");
+                    }
+                },
+                (err) => logger.error(err, "Network drift reconciliation failed"),
+            ),
+            { preventOverrun: true },
+        );
+        scheduler.addSimpleIntervalJob(networkDriftJob);
 
         server = app.listen(port, "0.0.0.0", () => {
             logger.info(`Server is running on http://0.0.0.0:${port}`);

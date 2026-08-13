@@ -40,6 +40,16 @@ CREATE TABLE IF NOT EXISTS users (
 -- Allow NULL passwords for SSO-only users (idempotent)
 ALTER TABLE users ALTER COLUMN password DROP NOT NULL;
 
+-- The subject scheduled network reconciliation is recorded against.
+-- `network_reconciliation_attempts.requested_by` is a foreign key to `users`, so
+-- a background job needs a real row; attributing its changes to an arbitrary
+-- admin would put a change nobody made under somebody's name. NULL password and
+-- the `student` role mean it can never be used to log in or to authorise
+-- anything -- it exists only so the audit trail can name a machine honestly.
+INSERT INTO users (vu_id, password, role)
+VALUES ('system-drift-reconciler', NULL, 'student')
+ON CONFLICT (vu_id) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS templates (
     id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     type template_type NOT NULL,
