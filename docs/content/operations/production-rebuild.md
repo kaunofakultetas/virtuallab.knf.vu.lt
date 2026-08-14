@@ -21,7 +21,7 @@ production. Treat it as a plan, and expect to correct it as you go.
 | | |
 | --- | --- |
 | Host | `172.16.0.122` |
-| Node name | `virtuallab` |
+| Node name | `pve` |
 | Target | Proxmox VE 9.x |
 | Window | Summer, no active users |
 
@@ -150,12 +150,12 @@ document assumes:
 | Target disk | the original system disk | **Not** the backup drive |
 | Filesystem | `ext4` (LVM) | Gives `local` + `local-lvm`; ZFS gives `local-zfs` and breaks every storage reference |
 | `hdsize` | leave at maximum | |
-| Hostname (FQDN) | `virtuallab.<your domain>` | The short name is the node name |
+| Hostname (FQDN) | `pve.<your domain>` | The short name is the node name |
 | IP address | `172.16.0.122/22` | Netmask `255.255.252.0` |
 | Gateway | `172.16.0.1` | |
 | DNS | as before | |
 
-The node name `virtuallab` appears in every API path the orchestrator builds, so
+The node name `pve` appears in every API path the orchestrator builds, so
 a different name means editing `PROXMOX_NODE_NAME` and every forced command.
 
 Choose **ext4, not ZFS**. The storage IDs `local` and `local-lvm` are referenced
@@ -169,7 +169,7 @@ Under *Advanced options* on the disk screen you can set `maxroot`, `minfree` and
 more, so give the thin pool whatever the disk allows.
 
 **Verify:** the web UI answers on `https://172.16.0.122:8006`, `pveversion`
-reports 9.x, and `hostname` prints `virtuallab`.
+reports 9.x, and `hostname` prints `pve`.
 
 ### Reconnect the backup drive and mount it
 
@@ -229,7 +229,7 @@ iface vmbr20 inet static
     bridge-stp off
     bridge-fd 0
     bridge-vlan-aware yes
-    bridge-vids 2-4094
+    bridge-vids 2000-2255
 ```
 
 **Verify:**
@@ -282,7 +282,7 @@ under `interfaces.d` is invisible to both its API and backend readiness.
 ### Restore the templates and build VMs
 
 ```bash
-mkdir -p /mnt/backup && mount /dev/sdb1 /mnt/backup
+mountpoint -q /mnt/backup || mount /dev/disk/by-label/pve-backup /mnt/backup
 for id in 100 101 102 103 104 9000 9002 9004; do
     zstd -dc /mnt/backup/proxmox-virtuallab/guests/$id.vma.zst | qmrestore - $id
 done
@@ -356,9 +356,16 @@ minimum the endpoint, the token and the node name:
 proxmox_endpoint  = "https://172.16.0.122:8006/"
 proxmox_api_token = "root@pam!opentofu=<secret>"
 proxmox_insecure  = true
-node_name         = "virtuallab"
+node_name         = "pve"
 
 guest_ssh_public_key = "ssh-ed25519 AAAA... virtual-proxmox-lab-prod"
+
+# The Proxmox host's own key. Not optional: the Gateway forced commands run as
+# root on the host and reach the guest over SSH as gateway-admin, so without
+# this every gateway apply fails with permission denied.
+additional_guest_ssh_public_keys = [
+  "ssh-ed25519 AAAA... root@pve",   # cat /root/.ssh/id_ed25519.pub on the host
+]
 
 # Must differ from development. Both Gateways share one campus broadcast
 # domain, and the default is development's address.
@@ -412,16 +419,89 @@ Log into the Gateway and read them off the guest. They are inputs, not defaults
 — `ens19` and `eth2` on development, but predictable-names hardware can produce
 something else, and the renderer writes whatever you record.
 
+`10.10.10.0/24` lives on `vmbr1`, which has `bridge-ports none`. It is reachable
+from the Proxmox host and the two containers and from nowhere else, so run this
+on the host — from a workstation it returns nothing at all, which reads exactly
+like a Gateway that failed to boot.
+
 ```bash
-ssh gateway-admin@10.10.10.2 'ip -brief addr; ip route show default'
+ssh root@172.16.0.122 \
+  "ssh -o StrictHostKeyChecking=accept-new gateway-admin@10.10.10.2 \
+   'ip -brief addr; ip route show default'"
 ```
 
-Management address present, trunk parent up with no address of its own, and the
-default route still through `10.10.10.1` while bootstrap mode is on.
+Management address present and the default route still through `10.10.10.1`
+while bootstrap mode is on. The trunk (`ens19`) and uplink (`eth2`) are both
+`DOWN` at this point and that is correct: the uplink carries `link_down=1` from
+bootstrap mode, and the trunk parent is brought up by its own networkd unit
+during the first policy apply.
+
+If it does return nothing, VM `202` has no serial console and no guest agent, so
+`qm terminal` and `qm guest exec` are both unavailable. Diagnose with
+`qm status 202`, then `ip neigh show 10.10.10.2 dev vmbr1` — an entry there means
+the guest is on the bridge and the problem is the key, not the boot.
 
 The trunk NIC carries the whole approved pool `2000-2255` rather than only
 allocated tags, because Proxmox applies a trunk list to a NIC and a running
 guest does not pick up changes without a NIC reconfigure.
+
+### Install the Gateway's own packages
+
+Neither the OpenTofu module nor the cloud image provides these, and the policy
+apply needs all three: it validates staged configuration with `squid -k parse`
+and `dnsmasq --test`, then requires `nftables`, `dnsmasq` and `squid` to all
+report `is-active` before it will commit. This is what bootstrap mode's host NAT
+exists for — the guest reaches the internet through `10.10.10.1`.
+
+```bash
+ssh root@172.16.0.122 "ssh gateway-admin@10.10.10.2 \
+  'sudo apt-get update && sudo apt-get install -y dnsmasq squid && \
+   sudo systemctl enable --now nftables'"
+```
+
+Install `squid-openssl`, **not** `squid`. Ubuntu's stock package is built
+without OpenSSL, and the rendered configuration uses `ssl-bump`, so validation
+fails with `FATAL: Unknown https_port option 'ssl-bump'` — a message that names
+the config rather than the package, and sends you looking in the wrong place.
+
+The rendered configuration also references a certificate that nothing in this
+repository creates ([`gateway-render.ts`](https://github.com/kaunofakultetas/virtuallab.knf.vu.lt/blob/main/backend/src/network/gateway-render.ts) writes
+`cert=/etc/squid/ssl/gateway-bump.pem`). Generate it before the first apply:
+
+```bash
+sudo install -d -m 0755 /etc/squid/ssl
+sudo openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+  -keyout /tmp/bump.key -out /tmp/bump.crt \
+  -subj "/CN=virtual-lab-gateway-bump" \
+  -addext "basicConstraints=critical,CA:TRUE" \
+  -addext "keyUsage=critical,keyCertSign,cRLSign,digitalSignature"
+sudo sh -c 'cat /tmp/bump.crt /tmp/bump.key > /etc/squid/ssl/gateway-bump.pem'
+sudo rm -f /tmp/bump.key /tmp/bump.crt
+sudo chown proxy:proxy /etc/squid/ssl/gateway-bump.pem
+sudo chmod 0400 /etc/squid/ssl/gateway-bump.pem
+```
+
+The applier writes its ruleset to `/etc/nftables.d/virtual-lab-gateway.nft` and
+then runs `nft -f /etc/nftables.conf`. Ubuntu's stock file does not include that
+directory, so without this the managed table is written and never loaded:
+
+```bash
+sudo install -d -m 0755 /etc/nftables.d
+echo 'include "/etc/nftables.d/*.nft"' | sudo tee -a /etc/nftables.conf
+sudo nft -f /etc/nftables.conf
+```
+
+`nftables.service` must be enabled explicitly. The applier runs
+`nft -f /etc/nftables.conf` directly and never starts the unit, so without this
+its own `verify` step reports `services_inactive: ["nftables"]` and the apply
+never converges. Ubuntu's stock `/etc/nftables.conf` sets no `policy drop`, so
+enabling it now cannot lock you out.
+
+**Verify:** `nftables` and `squid` both `active`, `systemd-networkd` `active`.
+`dnsmasq` will be `failed` until the first policy apply — stock configuration
+binds `0.0.0.0:53` and collides with `systemd-resolved`; the rendered
+configuration uses `bind-dynamic` with the uplink and management interfaces
+excluded, and starts cleanly.
 
 ## Control plane
 
@@ -476,8 +556,16 @@ ssh-keygen -q -t ed25519 -N "" -C "virtual-lab-<name>" -f $d/id_ed25519
 Then in the host's `/root/.ssh/authorized_keys`:
 
 ```text
-restrict,command="/usr/local/libexec/virtual-lab/<cmd>.py" ssh-ed25519 AAAA... virtual-lab-<name>
+restrict,command="PROXMOX_NODE_NAME=pve /usr/local/libexec/virtual-lab/<cmd>.py" ssh-ed25519 AAAA... virtual-lab-<name>
 ```
+
+The `PROXMOX_NODE_NAME` prefix is not optional. Both observer forced commands
+read it from their own environment and have no default, so without it every
+observation fails with `PROXMOX_NODE_NAME is missing or malformed` — and because
+each applier proves convergence over the observer channel, every apply fails with
+it. `command=` is run through a shell, so the assignment works there and
+`PermitUserEnvironment` does not need to be enabled. Carrying it on all five
+entries is harmless; the three that ignore it are unaffected.
 
 **Verify** separation rather than assuming it. Each key must refuse the others'
 work:
@@ -501,15 +589,31 @@ dark.
 :::
 
 ```bash
-pvesh create /nodes/virtuallab/firewall/rules --type in --action ACCEPT \
+pvesh create /nodes/pve/firewall/rules --type in --action ACCEPT \
   --source 10.10.10.100 --proto tcp --dport 8006 --enable 1 \
   --comment "virtual-lab: orchestrator control plane (Proxmox API)"
-pvesh create /nodes/virtuallab/firewall/rules --type in --action ACCEPT \
+pvesh create /nodes/pve/firewall/rules --type in --action ACCEPT \
   --source 10.10.10.100 --proto tcp --dport 22 --enable 1 \
   --comment "virtual-lab: orchestrator control plane (restricted SSH)"
 ```
 
-**Verify:** `pvesh get /nodes/virtuallab/firewall/rules` lists both, before you
+Add your own administration source too, unless you reach the host from within
+`172.16.0.0/22`. Proxmox auto-admits only the node's own management network, so
+an administrator arriving from anywhere else — a campus NAT address, a VPN pool —
+is cut off the moment the datacenter firewall comes on, with no way back except
+the console or the rollback timer.
+
+```bash
+# the address the host actually sees you from: ssh root@172.16.0.122 'echo $SSH_CLIENT'
+pvesh create /nodes/pve/firewall/rules --type in --action ACCEPT \
+  --source <your address> --proto tcp --dport 22 --enable 1 \
+  --comment "virtual-lab: administrator SSH"
+pvesh create /nodes/pve/firewall/rules --type in --action ACCEPT \
+  --source <your address> --proto tcp --dport 8006 --enable 1 \
+  --comment "virtual-lab: administrator web UI"
+```
+
+**Verify:** `pvesh get /nodes/pve/firewall/rules` lists all four, before you
 touch the next step.
 
 ### Enable the datacenter firewall behind a dead-man's switch
@@ -594,12 +698,28 @@ pveum user token add root@pam virtual-lab --privsep 0
 
 # Network reconciliation, scoped to /sdn only
 pveum user add virtual-lab-network@pve
-pveum aclmod /sdn --user virtual-lab-network@pve --role PVESDNUser
+pveum acl modify /sdn --user virtual-lab-network@pve --role PVESDNAdmin
 pveum user token add virtual-lab-network@pve observer --privsep 1
 pveum user token add virtual-lab-network@pve mutator  --privsep 1
+
+# A token created with --privsep 1 carries NO permissions of its own, and its
+# effective rights are the intersection of the user's and the token's. Granting
+# the role to the user alone leaves both tokens unable to do anything.
+pveum role add VirtualLabSDNAudit --privs "SDN.Audit"
+pveum acl modify /sdn --tokens "virtual-lab-network@pve!observer" --role VirtualLabSDNAudit
+pveum acl modify /sdn --tokens "virtual-lab-network@pve!mutator"  --role PVESDNAdmin
 ```
 
+The roles are not interchangeable. `PVESDNUser` is only `SDN.Audit,SDN.Use` — it
+cannot create a VNet, so a mutator holding it fails the preflight with
+`mutator_create=403`. Allocation lives in `PVESDNAdmin`. The observer gets the
+custom audit-only role instead, which is what makes its writes return `403`
+while its reads succeed.
+
 Each secret prints once.
+
+**Verify:** `pveum acl list` shows three rows — the user with `PVESDNAdmin`, and
+one row per token, `type` `token`.
 
 ### Write `.env`
 
@@ -617,8 +737,9 @@ Values that must change from the example on this host:
 | --- | --- |
 | `POSTGRES_PASSWORD` | freshly generated |
 | `BACKEND_JWT_SECRET` | freshly generated; rotating it invalidates every session |
+| `PROXMOX_HOST_ADDRESS` | `172.16.0.122` |
 | `PROXMOX_BASE_URL` | `https://exit:8006` |
-| `PROXMOX_NODE_NAME` | `virtuallab` |
+| `PROXMOX_NODE_NAME` | `pve` |
 | `PROXMOX_AUTH_TOKEN` | the `root@pam!virtual-lab` secret |
 | `PROXMOX_NETWORK_OBSERVER_AUTH_TOKEN` | the `observer` secret |
 | `PROXMOX_NETWORK_MUTATOR_AUTH_TOKEN` | the `mutator` secret |
@@ -627,20 +748,75 @@ Values that must change from the example on this host:
 
 `PROXMOX_NODE_NAME` is the short node name, and it appears in every API path the
 orchestrator builds. If the installer was given a different hostname than
-`virtuallab`, this is where that decision surfaces.
+`pve`, this is where that decision surfaces.
 
 The backend uses `exit:8006` and `exit:8080` rather than addresses, because it
 runs on an internal Docker network and reaches both through the `exit` proxy.
+`PROXMOX_HOST_ADDRESS` is where that proxy is told to forward: it is the one
+Proxmox setting that must be a raw address, because the proxy forwards TCP
+before any name resolution happens. Set it wrong and every API call returns
+`401` rather than failing to connect — the symptom looks like a bad token, not a
+misrouted connection.
 
-The five SSH principals created earlier are also configured here — one
-`*_HOST`, `*_USER`, `*_IDENTITY_FILE`, `*_KNOWN_HOSTS_FILE` and `*_COMMAND`
-group per principal, for `ACCESS_OBSERVER`, `ACCESS_APPLIER`,
-`ACCESS_TRUNK_APPLIER`, `GATEWAY_OBSERVER` and `GATEWAY_APPLIER`. Compose mounts
-the credentials directory read-only, and the files must be readable by container
-UID `1001`. Reconciliation returns `503` rather than starting SSH when any of it
-is incomplete.
+The five SSH principals created earlier are also configured here — a
+`*_HOST`, `*_USER`, `*_PORT`, `*_COMMAND` and `*_CREDENTIALS_DIR` group per
+principal, for `ACCESS_OBSERVER`, `ACCESS_APPLIER`, `ACCESS_TRUNK_APPLIER`,
+`GATEWAY_OBSERVER` and `GATEWAY_APPLIER`:
+
+```ini
+ACCESS_OBSERVER_HOST=exit
+ACCESS_OBSERVER_PORT=2222
+ACCESS_OBSERVER_HOST_KEY_ALIAS=10.10.10.1
+ACCESS_OBSERVER_USER=root
+ACCESS_OBSERVER_COMMAND=virtual-lab-access-observe
+ACCESS_OBSERVER_CREDENTIALS_DIR=/srv/virtual-proxmox-lab-secrets/access-observer
+```
+
+The host is `exit`, **not** `10.10.10.1`, and the port is `2222`. The backend runs
+on a Compose network declared `internal: true`, so it has no route off the Docker
+bridge at all; every outbound connection goes through the `exit` proxy, which
+forwards `:2222` to the Proxmox host's `:22`. Configured with the address from
+`.env.example` the applies fail with
+`Restricted SSH exited with code 255: ssh: connect to host 10.10.10.1 port 22: Network unreachable`.
+
+`*_HOST_KEY_ALIAS` then keeps `StrictHostKeyChecking=yes` working: the key is
+verified under the alias rather than under `exit`, so the `known_hosts` files
+generated by `ssh-keyscan 10.10.10.1` still match.
+
+`*_CREDENTIALS_DIR` appears in no example file but Compose requires it, and
+`ACCESS_OBSERVER_CREDENTIALS_DIR` is marked mandatory — omit it and
+`docker compose` refuses to start at all. The other four fall back to a committed
+empty directory, so omitting *those* is silent: the stack comes up healthy and
+every apply refuses later.
+
+Do **not** set `*_IDENTITY_FILE` or `*_KNOWN_HOSTS_FILE` here. `docker-compose.yml`
+sets them explicitly to `/run/<principal>/id_ed25519` and `/run/<principal>/known_hosts`,
+and a service-level `environment:` entry overrides `env_file`, so a value here is
+ignored. The example file's `/run/secrets/...` paths are stale.
+
+The directories are on **container 201**, not the Proxmox host — 201 is the
+Docker host that Compose bind-mounts from. Each must contain `id_ed25519` and a
+`known_hosts` carrying the Proxmox host's key
+(`ssh-keyscan -t ed25519 10.10.10.1`), owned by UID `1001` and mounted read-only.
+Reconciliation returns `503` rather than starting SSH when any of it is
+incomplete.
 
 ### Deploy
+
+First create the Docker network the Compose file declares as external, because
+nothing on this path has created it yet. `manage-lxc-workload.sh` does it in
+`prepare_runtime`, but for the `api-docker` role `install` returns early when
+`.env` is absent — which is exactly the order this document uses — and
+`runUpdateThisStack.sh` never calls it. Without this the deploy fails at the
+first Compose command with `network external declared as external, but could not
+be found`, rolls the images back, and leaves the database untouched.
+
+```bash
+pct exec 201 -- sh -lc 'cd /srv/virtual-proxmox-lab && \
+  docker network inspect external >/dev/null 2>&1 || docker network create external'
+pct exec 201 -- sh -lc 'cd /srv/virtual-proxmox-lab && \
+  install -d -m 0750 _DATA/postgres _DATA/caddy_logs'
+```
 
 ```bash
 pct exec 201 -- sh -lc 'cd /srv/virtual-proxmox-lab && ./runUpdateThisStack.sh'
@@ -673,6 +849,10 @@ pct exec 201 -- sh -lc 'cd /srv/virtual-proxmox-lab && \
   docker compose exec -T backend npm run preflight-network-tokens'
 ```
 
+`preflight-network-tokens` exits `0`. Note that `final_read=500` in its output
+is expected — that is Proxmox's status for reading the disposable VNet after it
+has been deleted, and the script accepts it.
+
 Every service healthy. Observer reads succeed and observer writes return 403;
 the mutator can create, apply, read and delete a disposable VNet; both enumerate
 zero VMs and zero storages. That last part is the one that matters — it proves
@@ -684,13 +864,70 @@ Interface names cannot be derived from the database, and rendering policy agains
 guessed names produces plausible, wrong configuration. Use the names recorded
 when the Gateway was built.
 
+The script parses no flags at all — it reads four environment variables, so it
+must be invoked with `-e` and not with the arguments its name suggests.
+
 ```bash
-docker compose exec -T backend npm run set-gateway-settings -- \
-  --management eth0 --trunk ens19 --uplink eth2 --resolvers 1.1.1.1,8.8.8.8
+docker compose exec -T \
+  -e GATEWAY_MANAGEMENT_INTERFACE=eth0 \
+  -e GATEWAY_TRUNK_INTERFACE=ens19 \
+  -e GATEWAY_UPLINK_INTERFACE=eth2 \
+  -e GATEWAY_UPSTREAM_RESOLVERS=1.1.1.1,8.8.8.8 \
+  backend npm run set-gateway-settings
 ```
 
 **Verify:** `GET /network/readiness` shows `gateway-runtime-settings` passing
 with the interface names you expect.
+
+### Leave bootstrap mode — before the Gateway apply, not after
+
+:::danger The variable's own documentation has this backwards
+`variables.tf` says to clear `gateway_bootstrap_mode` "once the guest policy is
+applied and verified". It cannot be done in that order. `gateway-uplink-connected`
+and `gateway-default-route` are deliberately **not** in
+`GATEWAY_APPLY_FIXABLE_CHECKS` — they describe hypervisor state no amount of file
+writing corrects — so the apply refuses while the uplink is down.
+:::
+
+```bash
+# set gateway_bootstrap_mode = false in prod.tfvars, then
+cd infra/opentofu/lab
+tofu plan  -var-file=prod.tfvars -target=proxmox_virtual_environment_vm.gateway -out=.state/bootstrap-off.tfplan
+tofu apply .state/bootstrap-off.tfplan
+```
+
+**Verify:** `0 to add, 1 to change, 0 to destroy` in the plan, then on the guest
+`eth2` holds the uplink address and `ip route show default` shows exactly one
+route, through `eth2`.
+
+The provider reboots the VM to apply the change, and because the cloud-init
+configuration changed, the guest gets a **new instance id** — so cloud-init re-runs
+its per-instance modules and **regenerates the SSH host keys**. The host's
+`known_hosts` is then stale, and since the Gateway forced commands use
+`StrictHostKeyChecking=yes`, every gateway apply fails until you refresh it:
+
+```bash
+ssh-keygen -f /root/.ssh/known_hosts -R 10.10.10.2
+ssh-keyscan -t ed25519 10.10.10.2 >> /root/.ssh/known_hosts
+```
+
+Between this step and the apply below, the Gateway sits on the campus segment
+with only stock accept-policy nftables. Keep the window short.
+
+### Flip to active before the Access applies
+
+Both Access runners refuse unless `settings.network.mode` is exactly `active`,
+and the shipped default is `legacy`. The doc's "Go live" section flips it *after*
+these applies, which cannot work. The API route for the flip is itself gated on
+`ready_for_active`, so SQL is the only path at this point.
+
+```bash
+pct exec 201 -- sh -lc 'cd /srv/virtual-proxmox-lab && docker compose exec -T postgres \
+  psql -U postgres -d backend_db -c \
+  "UPDATE metadata SET value = to_jsonb('"'"'active'"'"'::text) WHERE key = '"'"'settings.network.mode'"'"';"'
+```
+
+`apply-gateway-policy` has no such gate and can run before this.
 
 ### Apply Gateway and Access policy
 

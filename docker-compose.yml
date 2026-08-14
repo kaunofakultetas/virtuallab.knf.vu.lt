@@ -106,6 +106,11 @@ services:
         container_name: exit
         user: 1000:1000
         read_only: true
+        environment:
+            # Caddy substitutes {$PROXMOX_HOST_ADDRESS} when it adapts the
+            # Caddyfile, so this must be present in the container, not just on
+            # the Compose host.
+            - PROXMOX_HOST_ADDRESS=${PROXMOX_HOST_ADDRESS:?Set PROXMOX_HOST_ADDRESS in .env}
         volumes:
             - ./exit/Caddyfile:/etc/caddy/Caddyfile:ro
         networks:

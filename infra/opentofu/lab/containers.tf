@@ -56,11 +56,11 @@ resource "proxmox_virtual_environment_container" "guacamole" {
       }
     }
 
-    ip_config {
-      ipv4 {
-        address = "10.10.20.10/24"
-      }
-    }
+    # Lab-side transport. Addresses live on in-guest eth1.<vlan> subinterfaces
+    # written by the Access applier, so the parent NIC deliberately carries
+    # none: an untagged address here fails the required `access-transport-mode`
+    # readiness check and blocks active mode.
+    ip_config {}
 
     user_account {
       keys = [trimspace(var.guest_ssh_public_key)]

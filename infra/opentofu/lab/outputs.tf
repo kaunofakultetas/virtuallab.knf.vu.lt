@@ -3,7 +3,7 @@ output "guacamole" {
   value = {
     vm_id          = proxmox_virtual_environment_container.guacamole.vm_id
     management_ip  = "10.10.10.50"
-    lab_network_ip = "10.10.20.10"
+    # No untagged lab address: transport is via eth1.<vlan> subinterfaces only.
   }
 }
 

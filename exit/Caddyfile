@@ -12,17 +12,21 @@
 			}
 		}
 
-		# Proxmox API — blind TCP forward, no SNI (raw IP backend)
+		# Proxmox API — blind TCP forward, no SNI (raw IP backend).
+		# PROXMOX_HOST_ADDRESS differs per host, so it is supplied from .env
+		# rather than baked in: a hardcoded address here silently points one
+		# deployment's control plane at the other's Proxmox, which presents as
+		# 401 on every API call rather than as a connection failure.
 		:8006 {
 			route {
-				proxy 172.16.0.34:8006
+				proxy {$PROXMOX_HOST_ADDRESS}:8006
 			}
 		}
 
 		# Restricted Access observer SSH; the server forces a read-only command.
 		:2222 {
 			route {
-				proxy 172.16.0.34:22
+				proxy {$PROXMOX_HOST_ADDRESS}:22
 			}
 		}
 
