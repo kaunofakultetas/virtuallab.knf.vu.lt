@@ -9,3 +9,17 @@ guest_ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIReplaceWithDedicate
 # Override these only when the corresponding Proxmox storage IDs differ.
 template_datastore_id = "local"
 root_datastore_id     = "local-lvm"
+
+# The Gateway's uplink sits on the campus segment shared with Proxmox
+# management, so every host running this module needs its own address. Two
+# hosts left on the default put duplicate addresses on one broadcast domain,
+# which presents as intermittent loss on both and is tedious to diagnose.
+gateway_uplink_address = "172.16.0.36/22"
+gateway_uplink_gateway = "172.16.0.1"
+
+# Keep both false until the Gateway's fail-closed policy has been applied and
+# verified, then set bootstrap_mode = true and started = true for its first
+# boot with the uplink disconnected. These are declared rather than left to
+# drift, so a guest started by hand is not silently stopped by the next apply.
+gateway_bootstrap_mode = false
+gateway_started        = false

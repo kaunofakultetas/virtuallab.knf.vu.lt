@@ -2,9 +2,12 @@
 
 set -euo pipefail
 
-readonly DEFAULT_HOST="172.16.0.34"
 readonly DEFAULT_SSH_USER="root"
-readonly CONFIRMATION="APPLY NETWORK 172.16.0.34 vmbr1 vmbr20"
+# The confirmation phrase carries the target host, so a phrase copied from a
+# previous run cannot apply to a different box. There is exactly one guard
+# against reconfiguring production while meaning to reconfigure development,
+# and this is it.
+confirmation_phrase() { printf 'APPLY NETWORK %s vmbr1 vmbr20' "$1"; }
 
 host=""
 ssh_user="$DEFAULT_SSH_USER"
@@ -16,7 +19,7 @@ replace_drifted_files=false
 
 usage() {
     cat <<'EOF'
-Usage: ./scripts/setup-proxmox-host-network.sh --host 172.16.0.34 [options]
+Usage: ./scripts/setup-proxmox-host-network.sh --host <address> [options]
 
 Reconciles the host DHCP, NAT, and forwarding required by the OpenTofu-managed
 LXCs. The default is a non-mutating dry run.
@@ -28,7 +31,8 @@ to backend readiness. This script only verifies that they exist and is safe to
 run while guests are attached: it reloads no interface.
 
 Options:
-  --host HOST          Proxmox SSH host (must be 172.16.0.34)
+  --host HOST          Proxmox SSH host, e.g. 172.16.0.34 (development)
+                       or 172.16.0.122 (production)
   --ssh-user USER      SSH user (default: root)
     --interactive-auth   Allow SSH password or keyboard-interactive prompts
   --forward-app-ports  Forward TCP 80/443/8888 and UDP 443 to 10.10.10.100
@@ -39,8 +43,9 @@ Options:
   --confirmation TEXT  Required with --apply
   --help               Show this help
 
-Apply confirmation:
-  APPLY NETWORK 172.16.0.34 vmbr1 vmbr20
+Apply confirmation, which names the host so a phrase cannot be reused against
+a different one:
+  APPLY NETWORK <host> vmbr1 vmbr20
 EOF
 }
 
@@ -65,8 +70,10 @@ while (($#)); do
 done
 
 [[ -n "$host" ]] || fail "--host is required"
-[[ "$host" == "$DEFAULT_HOST" ]] || fail "Refusing host '$host'; expected $DEFAULT_HOST"
+[[ "$host" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || fail "Refusing host '$host'; expected an address or hostname"
 command -v ssh >/dev/null 2>&1 || fail "Required command not found: ssh"
+
+readonly CONFIRMATION="$(confirmation_phrase "$host")"
 
 if [[ "$apply" == true ]]; then
     [[ "$confirmation" == "$CONFIRMATION" ]] || fail "--apply requires --confirmation '$CONFIRMATION'"

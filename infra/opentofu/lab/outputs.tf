@@ -25,7 +25,7 @@ output "gateway" {
     vm_id         = proxmox_virtual_environment_vm.gateway.vm_id
     management_ip = "10.10.10.2"
     uplink_bridge = "vmbr0"
-    uplink_ip     = "172.16.0.36/22"
+    uplink_ip     = var.gateway_uplink_address
     trunk_bridge  = "vmbr20"
     started       = proxmox_virtual_environment_vm.gateway.started
   }

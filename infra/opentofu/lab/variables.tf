@@ -100,6 +100,36 @@ variable "guest_ssh_public_key" {
     error_message = "guest_ssh_public_key must be an OpenSSH public key."
   }
 }
+variable "gateway_uplink_address" {
+  description = <<-EOT
+    Static address for the Gateway's approved-egress uplink on vmbr0, in CIDR
+    form.
+
+    This sits on the campus segment shared with Proxmox management, so every
+    host running this module needs its own value: development and production
+    Gateways are two guests on one broadcast domain, and a shared default would
+    put duplicate addresses on the wire.
+  EOT
+  type        = string
+  default     = "172.16.0.36/22"
+
+  validation {
+    condition     = can(cidrnetmask(var.gateway_uplink_address))
+    error_message = "gateway_uplink_address must be an IPv4 address in CIDR form, for example 172.16.0.36/22."
+  }
+}
+
+variable "gateway_uplink_gateway" {
+  description = "Default-route next hop reached over the Gateway's uplink."
+  type        = string
+  default     = "172.16.0.1"
+
+  validation {
+    condition     = can(regex("^([0-9]{1,3}\\.){3}[0-9]{1,3}$", var.gateway_uplink_gateway))
+    error_message = "gateway_uplink_gateway must be an IPv4 address."
+  }
+}
+
 variable "gateway_bootstrap_mode" {
   description = <<-EOT
     Prepares VM 202 for its first boot, before any firewall exists on the guest.

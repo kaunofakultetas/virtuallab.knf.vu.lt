@@ -81,8 +81,8 @@ resource "proxmox_virtual_environment_vm" "gateway" {
     # bootstrap is finished.
     ip_config {
       ipv4 {
-        address = "172.16.0.36/22"
-        gateway = var.gateway_bootstrap_mode ? null : "172.16.0.1"
+        address = var.gateway_uplink_address
+        gateway = var.gateway_bootstrap_mode ? null : var.gateway_uplink_gateway
       }
     }
 
