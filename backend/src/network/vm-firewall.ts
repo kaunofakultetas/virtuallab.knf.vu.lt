@@ -32,6 +32,24 @@ export type VmFirewallInput = {
     session_ports: number[];
     /** Subnets of explicitly peered groups. Empty unless a peering exists. */
     peer_subnet_cidrs: string[];
+    /**
+     * The owning profile's `lab_profiles.allow_same_group`. True admits the
+     * group's own subnet on every port and protocol. A group is one owner on one
+     * profile, so this is one student's VMs reaching each other, never two
+     * students'.
+     *
+     * Deliberately NOT expressed through `peer_subnet_cidrs`: that list is the
+     * `group_peerings` table, and pushing the group's own subnet into it would
+     * trip the self-peering guard below. Deliberately not a pre-resolved CIDR
+     * either — `subnet_cidr` above is already the group's own subnet, and a
+     * second field carrying it could disagree and open a foreign /24.
+     *
+     * Required, with no default: the two call sites that render this policy —
+     * provisioning and the drift reconciler — must agree, or the ten-minute
+     * sweep rewrites whatever provisioning just wrote, forever. A compile error
+     * is the only reliable guard against forgetting one.
+     */
+    allow_same_group: boolean;
 };
 
 export type VmFirewallIpSetEntry = {
@@ -116,9 +134,15 @@ export function sessionPortsForTemplate(
  * see it at all. Student-to-student isolation, rogue DHCP suppression, and
  * source-address spoofing are therefore enforced here or nowhere.
  *
- * Ingress is default-deny with three exceptions: the Access appliance on the
- * template's session ports, ICMP from the two infrastructure addresses for
- * diagnostics and path-MTU discovery, and any explicitly peered group.
+ * Ingress is default-deny. The exceptions, in the order Proxmox evaluates them
+ * because first match wins: the Access appliance on the template's session
+ * ports, ICMP from the two infrastructure addresses for diagnostics and
+ * path-MTU discovery, then — only when the group's profile sets
+ * `allow_same_group` — the Gateway's DHCP reply, a DROP for each of the two
+ * infrastructure addresses, and finally the group's own subnet on every port
+ * and protocol. Those two DROPs are load-bearing: `.1` and `.2` are inside the
+ * subnet, so without them the final ACCEPT would silently widen Access from its
+ * session ports to everything. Explicitly peered groups come last.
  *
  * Egress stays default-allow, because the Gateway's nftables is the single
  * source of truth for what a VM may reach off-segment; duplicating it here would
@@ -203,6 +227,52 @@ export function buildVmFirewallPolicy(input: VmFirewallInput): VmFirewallPolicy 
             enable: true,
             comment: "virtual-lab: diagnostics from the Access appliance",
         },
+        // Same-group reachability, when the group's profile allows it. ORDER IS
+        // THE SECURITY PROPERTY HERE. `.1` and `.2` live inside the subnet and
+        // Proxmox stops at the first match, so the broad ACCEPT at the bottom of
+        // this block would otherwise hand Access every port instead of the
+        // session ports, and the Gateway every protocol instead of ICMP. The two
+        // DROPs are what stops it, and they only work above it. Nothing else in
+        // this list is an ingress DROP, so there is no second line of defence.
+        ...(input.allow_same_group ? [
+            // Pinned above the DROPs because a DROP from `.1` would otherwise
+            // stop every VM renewing its lease. This grants nothing new: ipfilter
+            // already forbids a guest from claiming `.1`.
+            {
+                type: "in" as const,
+                action: "ACCEPT",
+                source: gatewayIp,
+                proto: "udp",
+                sport: "67",
+                dport: "68",
+                enable: true,
+                comment: "virtual-lab: the Gateway's DHCP reply, ahead of the drops below",
+            },
+            {
+                type: "in" as const,
+                action: "DROP",
+                source: gatewayIp,
+                enable: true,
+                comment: "virtual-lab: the Gateway reaches no further than ICMP",
+            },
+            {
+                type: "in" as const,
+                action: "DROP",
+                source: accessIp,
+                enable: true,
+                comment: "virtual-lab: Access reaches no further than the session ports",
+            },
+            // No proto, no dport, no sport: an omitted protocol is what makes this
+            // cover tcp, udp and icmp in one rule, and a port without a protocol
+            // makes pve-firewall refuse the ruleset outright.
+            {
+                type: "in" as const,
+                action: "ACCEPT",
+                source: subnet,
+                enable: true,
+                comment: "virtual-lab: same network group, every port and protocol",
+            },
+        ] : []),
         ...peers.map((cidr) => ({
             type: "in" as const,
             action: "ACCEPT",

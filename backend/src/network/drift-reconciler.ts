@@ -186,6 +186,7 @@ async function firewallClient(): Promise<VmFirewallApplyClient> {
 type FirewallTarget = {
     proxmox_id: string;
     group_id: number;
+    allow_same_group: boolean;
     connection_type: string | null;
     connection_config: unknown;
 };
@@ -201,10 +202,12 @@ type FirewallTarget = {
 const FIREWALL_TARGETS_SQL = `
     SELECT instance.proxmox_id,
            network_group.id AS group_id,
+           profile.allow_same_group,
            template.connection_type::text AS connection_type,
            template.connection_config
     FROM instances instance
     JOIN network_groups network_group ON network_group.id = instance.network_group_id
+    JOIN lab_profiles profile ON profile.id = network_group.profile_id
     LEFT JOIN templates template ON template.id = instance.template_id
     WHERE network_group.vlan_tag IS NOT NULL
       -- 'error' included deliberately: an errored group keeps its allocation
@@ -258,6 +261,7 @@ async function planInstanceFirewall(target: FirewallTarget) {
             target.connection_config as never,
         ),
         peer_subnet_cidrs: await getPeerSubnetCidrs(group.id),
+        allow_same_group: target.allow_same_group,
     });
     const client = await firewallClient();
     return { ...planVmFirewall(policy, await observeVmFirewall(client, target.proxmox_id)), policy };

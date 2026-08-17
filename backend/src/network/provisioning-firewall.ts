@@ -13,6 +13,12 @@ export type EnsureInstanceFirewallInput = {
     connectionType: ConnectionType | null | undefined;
     connectionConfig: ConnectionConfig | null | undefined;
     /**
+     * The group's profile `allow_same_group`. Required from the caller rather
+     * than looked up here: `input.group` carries only `profile_id`, and the one
+     * caller already holds the profile row it created the group under.
+     */
+    allowSameGroup: boolean;
+    /**
      * Subnets of explicitly peered groups. Read from `group_peerings` when the
      * caller does not supply them, because the Gateway routes peered traffic and
      * the VM would otherwise drop it at `policy_in DROP` -- an approved pair that
@@ -65,6 +71,7 @@ export async function ensureInstanceFirewall(
         access_ip: slot.accessIp,
         session_ports: sessionPortsForTemplate(input.connectionType, input.connectionConfig),
         peer_subnet_cidrs: input.peerSubnetCidrs ?? await getPeerSubnetCidrs(input.group.id),
+        allow_same_group: input.allowSameGroup,
     });
     return applyVmFirewall(policy, dependencies.client ?? (proxmox as VmFirewallApplyClient));
 }

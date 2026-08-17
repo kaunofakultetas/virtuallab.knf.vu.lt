@@ -977,18 +977,38 @@ lease within about fifteen seconds.
 
 ### Run the isolation matrix
 
-Provision a second VM under a **different owner**, then measure all of it. A
-network group is keyed on owner and profile, so one account cannot produce two
-groups on the same profile.
+Same-group reachability is a per-profile decision, not a global property. A
+profile with `allow_same_group` set admits the group's own subnet on every port
+and protocol; a profile without it leaves one VM unable to open a single port on
+another. It is set by default — in the schema, in the API validator, and on the
+seeded `Default` profile — so measure the matrix on a profile of each kind and
+record which one each row was measured against. Toggling the flag converges on
+the next drift pass rather than immediately, so allow up to ten minutes before
+re-measuring.
+
+Provision a second VM under a **different owner**, and a third under the **same**
+owner and profile, then measure all of it. A network group is keyed on owner and
+profile, so one account cannot produce two groups on the same profile — the
+second VM lands in a different group and the third lands in the same one, which
+is the pair the `allow_same_group` rows exercise.
 
 | Probe | Expected |
 | --- | --- |
-| VM A → VM B, unpeered, any port | blocked |
+| VM A → VM B, different groups, unpeered, any port | blocked |
+| VM A → VM B, same group, profile allows it, any TCP port | open |
+| VM A → VM B, same group, profile allows it, UDP and ICMP | open |
+| VM A → VM B, same group, profile forbids it, any port | blocked |
+| VM A → VM B, same profile but different owners, unpeered | blocked |
+| Access → VM on any other port, profile allows same-group | blocked |
+| Gateway → VM on any TCP port, profile allows same-group | blocked |
+| Gateway → VM, ICMP | works |
+| After turning the profile flag off, within one drift pass | blocked again |
 | VM → another group's gateway address | blocked |
 | VM → its own gateway, DNS | works |
 | VM → allowlisted domain, HTTP and HTTPS | 200 |
 | VM → non-allowlisted domain | 403 / terminated |
-| VM → spoofed source address | blocked |
+| VM sourcing from outside its own /24 | blocked |
+| VM sourcing from the Gateway or Access address | blocked |
 | Access → VM on the template's session port | open |
 | Access → VM on any other port | blocked |
 | After peering, both directions | open |

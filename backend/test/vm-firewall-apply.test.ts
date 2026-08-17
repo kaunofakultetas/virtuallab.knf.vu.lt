@@ -15,6 +15,18 @@ const policy = buildVmFirewallPolicy({
     access_ip: "10.200.0.2",
     session_ports: [3389],
     peer_subnet_cidrs: [],
+    allow_same_group: false,
+});
+
+/** The same VM on a profile that lets the owner's VMs reach each other. */
+const sameGroupPolicy = buildVmFirewallPolicy({
+    vmid: "10000",
+    subnet_cidr: "10.200.0.0/24",
+    gateway_ip: "10.200.0.1",
+    access_ip: "10.200.0.2",
+    session_ports: [3389],
+    peer_subnet_cidrs: [],
+    allow_same_group: true,
 });
 
 /**
@@ -174,6 +186,52 @@ test("entries that are no longer desired are removed", async () => {
     await applyVmFirewall(policy, proxmox as never);
 
     assert.ok(!proxmox.state().ipset?.some((entry) => entry.cidr === "10.200.9.0/24"));
+});
+
+test("a VM carrying the closed policy converges onto the same-group one in one pass", async () => {
+    // Exactly the transition the running VMs go through on the next drift tick.
+    // applyVmFirewall self-verifies, so a rule Proxmox normalises differently
+    // would surface here rather than as a ten-minute rewrite loop.
+    const proxmox = fakeProxmox();
+    await applyVmFirewall(policy, proxmox as never);
+
+    const before = planVmFirewall(sameGroupPolicy, await observeVmFirewall(proxmox as never, "10000"));
+    assert.equal(before.no_change_required, false);
+
+    const result = await applyVmFirewall(sameGroupPolicy, proxmox as never);
+    assert.equal(result.changed, true);
+
+    const after = planVmFirewall(sameGroupPolicy, await observeVmFirewall(proxmox as never, "10000"));
+    assert.ok(after.no_change_required, after.checks.map((c) => c.detail).join("; "));
+});
+
+test("the same-group rules land in the order they were rendered in", async () => {
+    // The applier POSTs the list in reverse because a positionless POST inserts
+    // at the top. If that ever changed, the two DROPs would end up below the
+    // subnet ACCEPT and Access would reach every port.
+    const proxmox = fakeProxmox();
+    await applyVmFirewall(sameGroupPolicy, proxmox as never);
+
+    assert.deepEqual(
+        proxmox.state().rules.map((rule) => `${rule.type}:${rule.action}:${rule.source ?? "any"}`),
+        sameGroupPolicy.rules.map((rule) => `${rule.type}:${rule.action}:${rule.source ?? "any"}`),
+    );
+    const written = proxmox.state().rules.map((rule) => `${rule.action}:${rule.source}`);
+    assert.ok(written.indexOf("DROP:10.200.0.2") < written.indexOf("ACCEPT:10.200.0.0/24"));
+});
+
+test("the same-group policy writes the same source filter", async () => {
+    const proxmox = fakeProxmox();
+    await applyVmFirewall(sameGroupPolicy, proxmox as never);
+
+    assert.deepEqual(
+        proxmox.state().ipset,
+        [
+            { cidr: "10.200.0.0/24", nomatch: 0 },
+            { cidr: "10.200.0.1", nomatch: 1 },
+            { cidr: "10.200.0.2", nomatch: 1 },
+        ],
+    );
 });
 
 test("an already-converged VM is not rewritten", async () => {

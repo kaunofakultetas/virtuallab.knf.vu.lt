@@ -306,6 +306,7 @@ router.post(
                             group: attachment.group,
                             connectionType: template.connection_type,
                             connectionConfig: template.connection_config,
+                            allowSameGroup: profile.allow_same_group,
                         });
                         logger.info(
                             { instanceId, vmid: instance.proxmox_id, firewall },

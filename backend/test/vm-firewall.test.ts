@@ -16,6 +16,7 @@ function input(overrides: Partial<VmFirewallInput> = {}): VmFirewallInput {
         access_ip: "10.200.0.2",
         session_ports: [3389],
         peer_subnet_cidrs: [],
+        allow_same_group: false,
         ...overrides,
     };
 }
@@ -37,7 +38,7 @@ test("ingress is default-deny and egress is not", () => {
 
 test("only the Access appliance may open a session, and only on the template's ports", () => {
     const policy = buildVmFirewallPolicy(input({ session_ports: [22] }));
-    const session = rulesOf("in", policy)[0];
+    const session = rulesOf("in", policy).find((rule) => rule.proto === "tcp")!;
 
     assert.equal(session.action, "ACCEPT");
     assert.equal(session.source, "10.200.0.2");
@@ -45,14 +46,106 @@ test("only the Access appliance may open a session, and only on the template's p
     assert.equal(session.dport, "22");
 });
 
-test("no rule admits another student VM", () => {
-    // Same-group VMs belong to one owner, but nothing in the rendered policy may
-    // assume that: a source that is neither infrastructure nor a peered subnet
-    // must fall through to the DROP policy.
-    const policy = buildVmFirewallPolicy(input());
+test("with allow_same_group off, no rule admits another student VM", () => {
+    // A source that is neither infrastructure nor a peered subnet must fall
+    // through to the DROP policy.
+    const policy = buildVmFirewallPolicy(input({ allow_same_group: false }));
     const sources = rulesOf("in", policy).map((rule) => rule.source);
 
     assert.deepEqual([...new Set(sources)].sort(), ["10.200.0.1", "10.200.0.2"]);
+});
+
+test("the allow_same_group-off render is exactly the pre-change policy", () => {
+    // Groups whose profile does not allow it must be left untouched by this
+    // feature, so the off render is pinned rule by rule rather than by a hash.
+    const off = rulesOf("in", buildVmFirewallPolicy(input({ allow_same_group: false })));
+
+    assert.deepEqual(
+        off.map((rule) => [
+            rule.action, rule.source, rule.proto ?? "any", rule.dport ?? "any",
+        ].join(" ")),
+        [
+            "ACCEPT 10.200.0.2 tcp 3389",
+            "ACCEPT 10.200.0.1 icmp any",
+            "ACCEPT 10.200.0.2 icmp any",
+        ],
+    );
+});
+
+test("allow_same_group admits the group's own subnet in the one order that is safe", () => {
+    // Proxmox stops at the first match, so this list IS the policy. The two
+    // DROPs above the subnet ACCEPT are the only thing holding Access to its
+    // session ports and the Gateway to ICMP.
+    const on = rulesOf("in", buildVmFirewallPolicy(input({ allow_same_group: true })));
+
+    assert.deepEqual(
+        on.map((rule) => [
+            rule.action,
+            rule.source,
+            rule.proto ?? "any",
+            rule.sport ?? "any",
+            rule.dport ?? "any",
+        ].join(" ")),
+        [
+            "ACCEPT 10.200.0.2 tcp any 3389",
+            "ACCEPT 10.200.0.1 icmp any any",
+            "ACCEPT 10.200.0.2 icmp any any",
+            "ACCEPT 10.200.0.1 udp 67 68",
+            "DROP 10.200.0.1 any any any",
+            "DROP 10.200.0.2 any any any",
+            "ACCEPT 10.200.0.0/24 any any any",
+        ],
+    );
+});
+
+test("the same-group accept sits below both infrastructure drops", () => {
+    const on = rulesOf("in", buildVmFirewallPolicy(input({ allow_same_group: true })));
+    const subnet = on.findIndex((rule) => rule.source === "10.200.0.0/24");
+    const dropGateway = on.findIndex((r) => r.action === "DROP" && r.source === "10.200.0.1");
+    const dropAccess = on.findIndex((r) => r.action === "DROP" && r.source === "10.200.0.2");
+
+    assert.ok(dropGateway >= 0 && dropAccess >= 0 && subnet >= 0);
+    assert.ok(dropGateway < subnet);
+    assert.ok(dropAccess < subnet);
+});
+
+test("the same-group accept narrows no protocol and no port", () => {
+    // "Every port and protocol" is only true if nothing narrows it, and a port
+    // without a protocol makes pve-firewall refuse the ruleset.
+    const on = rulesOf("in", buildVmFirewallPolicy(input({ allow_same_group: true })));
+    const subnet = on.find((rule) => rule.source === "10.200.0.0/24");
+
+    assert.ok(subnet);
+    assert.equal(subnet.action, "ACCEPT");
+    assert.equal(subnet.proto, undefined);
+    assert.equal(subnet.dport, undefined);
+    assert.equal(subnet.sport, undefined);
+});
+
+test("allow_same_group widens neither Access nor the Gateway", () => {
+    const on = rulesOf("in", buildVmFirewallPolicy(input({ allow_same_group: true })));
+
+    // Access: the session-port ACCEPT and ICMP, then a DROP.
+    assert.deepEqual(
+        on.filter((rule) => rule.source === "10.200.0.2")
+            .map((rule) => `${rule.action}:${rule.proto ?? "any"}:${rule.dport ?? "any"}`),
+        ["ACCEPT:tcp:3389", "ACCEPT:icmp:any", "DROP:any:any"],
+    );
+    // Gateway: ICMP and the DHCP reply only, then a DROP.
+    assert.deepEqual(
+        on.filter((rule) => rule.source === "10.200.0.1")
+            .map((rule) => `${rule.action}:${rule.proto ?? "any"}:${rule.dport ?? "any"}`),
+        ["ACCEPT:icmp:any", "ACCEPT:udp:68", "DROP:any:any"],
+    );
+});
+
+test("allow_same_group changes neither the source filter nor egress", () => {
+    const on = buildVmFirewallPolicy(input({ allow_same_group: true }));
+    const off = buildVmFirewallPolicy(input({ allow_same_group: false }));
+
+    assert.deepEqual(on.ipset, off.ipset);
+    assert.deepEqual(on.options, off.options);
+    assert.deepEqual(rulesOf("out", on), rulesOf("out", off));
 });
 
 test("ICMP is allowed from both infrastructure addresses for path-MTU discovery", () => {
@@ -71,10 +164,22 @@ test("a peered group is admitted in full, and a group cannot peer with itself", 
     // Peering permits all routed IP traffic in the first implementation, so no
     // protocol or port narrows it.
     assert.equal(peer.proto, undefined);
-    assert.throws(
-        () => buildVmFirewallPolicy(input({ peer_subnet_cidrs: ["10.200.0.0/24"] })),
-        VmFirewallError,
-    );
+    for (const allow of [true, false]) {
+        assert.throws(
+            () => buildVmFirewallPolicy(input({
+                allow_same_group: allow,
+                peer_subnet_cidrs: ["10.200.0.0/24"],
+            })),
+            VmFirewallError,
+        );
+    }
+    // Peering and same-group compose rather than replacing each other.
+    const both = rulesOf("in", buildVmFirewallPolicy(input({
+        allow_same_group: true,
+        peer_subnet_cidrs: ["10.200.5.0/24"],
+    })));
+    assert.ok(both.some((rule) => rule.source === "10.200.5.0/24"));
+    assert.ok(both.some((rule) => rule.source === "10.200.0.0/24"));
 });
 
 test("the VM can never answer or relay DHCP", () => {
@@ -142,6 +247,12 @@ test("the revision changes with policy and is stable otherwise", () => {
     assert.notEqual(
         buildVmFirewallPolicy(input()).revision,
         buildVmFirewallPolicy(input({ peer_subnet_cidrs: ["10.200.5.0/24"] })).revision,
+    );
+    // Without this the drift reconciler could not tell an opened group from a
+    // closed one, and flipping the profile flag would never be repaired.
+    assert.notEqual(
+        buildVmFirewallPolicy(input({ allow_same_group: false })).revision,
+        buildVmFirewallPolicy(input({ allow_same_group: true })).revision,
     );
 });
 
