@@ -13,8 +13,10 @@ Procedures for the people who run the lab rather than use it.
   disaster-recovery procedure.
 - [Architecture](/architecture) — what the stack is made of and how the network
   policy works, for when a runbook step needs context.
+- [Operator scripts](/operations/scripts) — what each script does, where it has
+  to run from, and which ones are safe to repeat.
 
-Supporting scripts live in `infra/prod-migration/`:
+The bare-metal migration helpers live in `infra/prod-migration/`:
 
 | Script | Does |
 | --- | --- |
