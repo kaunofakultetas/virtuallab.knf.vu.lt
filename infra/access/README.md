@@ -104,6 +104,30 @@ revision-marked networkd/sysctl files, and loads only
 `table inet virtual_lab_access`. It never reloads the monolithic
 `/etc/nftables.conf`.
 
+That last sentence is load-bearing, and was violated once. `/etc/nftables.conf`
+opens with `flush ruleset`, which destroys **every** table in the namespace —
+including the `ip nat` table holding Docker's MASQUERADE rules. Reload it and
+Guacamole's container starts reaching student VMs as `172.18.x.x` rather than
+the Access appliance's VLAN address, so every per-VM firewall drops the RDP
+connect. It presents as "machine unavailable" with a fully converged Access
+ruleset, a passing readiness report, and ICMP that still works from the LXC
+itself; only traffic originating inside a Docker container is affected, and only
+until `dockerd` is restarted. Because an Access apply runs on every network
+group creation, the first student to provision breaks sessions for everyone.
+
+The rendered `.nft` therefore carries a create-then-delete prelude:
+
+```
+table inet virtual_lab_access {}
+delete table inet virtual_lab_access
+
+table inet virtual_lab_access { ... }
+```
+
+which makes `nft -f` on that file alone idempotent, so the applier never needs
+the monolithic reload. The boot path still works, because `nftables.service`
+loads `/etc/nftables.conf` before `docker.service` starts.
+
 Run the read-only preflight first:
 
 ```bash

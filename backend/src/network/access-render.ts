@@ -101,6 +101,17 @@ function renderNftables(plan: AccessPlan): string {
     const servicePorts = nftSet(desired.management.service_ports);
     const rules = [
         `# Access desired-state revision ${plan.revision}.`,
+        // Self-contained load. The create-then-delete prelude makes `nft -f` on
+        // this file alone idempotent, which is what lets the applier load it
+        // directly instead of reloading /etc/nftables.conf. That distinction is
+        // not cosmetic: /etc/nftables.conf opens with `flush ruleset`, which
+        // destroys every table in the namespace — including the `ip nat` table
+        // holding Docker's MASQUERADE rules. Without those, Guacamole's
+        // container reaches student VMs as 172.18.x.x instead of the Access
+        // appliance's VLAN address, and every per-VM firewall drops it.
+        "table inet virtual_lab_access {}",
+        "delete table inet virtual_lab_access",
+        "",
         "table inet virtual_lab_access {",
         `    comment "Access desired-state revision ${plan.revision}"`,
         "    chain protect_published_services {",

@@ -38,6 +38,12 @@ MAX_REQUEST_BYTES = 512 * 1024
 MANAGED_TABLE = "virtual_lab_access"
 NFTABLES_CONF = Path("/etc/nftables.conf")
 NFTABLES_INCLUDE = 'include "/etc/nftables.d/*.nft"'
+# Loaded directly, never via NFTABLES_CONF. That file begins with
+# `flush ruleset`, which would take Docker's `ip nat` MASQUERADE rules with it
+# and silently cut Guacamole off from every student VM until dockerd restarts.
+# The rendered file carries its own create-then-delete prelude so loading it
+# alone is idempotent.
+MANAGED_NFT = Path("/etc/nftables.d/virtual-lab-access.nft")
 REVISION_PATTERN = re.compile(r"Access desired-state revision ([0-9a-f]{64})")
 
 ALLOWED_EXACT = {
@@ -202,7 +208,7 @@ def arm_rollback(seconds: int, paths: list[str], *, remove_include: bool) -> Non
         # Restoring means the previous ruleset, which may have been no table at
         # all. Flush ours first so a rollback to "absent" really is absent.
         f"nft delete table inet {MANAGED_TABLE} 2>/dev/null || true",
-        "nft -f /etc/nftables.conf || true",
+        f"[ -f {MANAGED_NFT} ] && nft -f {MANAGED_NFT} || true",
         f"rm -f {TRANSACTION_FILE}",
         "",
     ]
@@ -259,7 +265,11 @@ def reload_services(paths: list[str], pruned: list[str] | None = None) -> list[s
             reloaded.append(f"removed:{interface}")
     run(["sysctl", "--system"])
     reloaded.append("sysctl")
-    run(["nft", "-f", "/etc/nftables.conf"])
+    if MANAGED_NFT.exists():
+        run(["nft", "-f", str(MANAGED_NFT)])
+    else:
+        # Converging on "no managed table" is a legitimate outcome of a prune.
+        run(["nft", "delete", "table", "inet", MANAGED_TABLE], check=False)
     reloaded.append("nftables")
     return reloaded
 

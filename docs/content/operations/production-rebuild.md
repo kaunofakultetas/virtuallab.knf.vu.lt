@@ -526,13 +526,23 @@ tofu apply -var-file=prod.tfvars -target=proxmox_sdn_zone_vlan.lab
 
 ### Install the forced commands
 
+Run this from the repository on your workstation. It is a dry run by default,
+and it reports drift rather than assuming the host is empty:
+
 ```bash
-scp infra/gateway/*.py infra/access/*.py root@172.16.0.122:/usr/local/libexec/virtual-lab/
-ssh root@172.16.0.122 'chmod 755 /usr/local/libexec/virtual-lab/*.py'
+./scripts/install-forced-commands.sh --host 172.16.0.122 --dry-run
+./scripts/install-forced-commands.sh --host 172.16.0.122 --apply
 ```
 
-**Verify:** compare `sha256sum` against your working copy. These run as root
-behind SSH, so a stale copy is a contract boundary drifting silently.
+**Verify:** the script does it — it compares `sha256sum` for all nine files
+after installing and exits non-zero if any differs. These run as root behind
+SSH, so a stale copy is a contract boundary drifting silently.
+
+Run it again after **any** change to `infra/access/*.py` or `infra/gateway/*.py`.
+The host holds a copy, not a checkout, so a pushed change is inert until it is
+installed here — and because the renderer in the application container and the
+applier on the host are two halves of one contract, they must be updated
+together. Redeploy `201` first, then install, then force one apply.
 
 ### Generate five SSH principals
 
