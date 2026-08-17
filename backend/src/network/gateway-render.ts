@@ -205,6 +205,15 @@ function renderSquid(plan: GatewayPlan): string {
         "# Host value would reach an arbitrary server.",
         "host_verify_strict on",
         "",
+        // Squid's default is 30 seconds, spent waiting for in-flight requests to
+        // drain before the process exits. The applier restarts Squid on every
+        // gateway apply, and an apply runs on every network group creation, so
+        // that default was charging ~30s of the ~35s each VM provision spent on
+        // gateway policy — measured, not estimated. Draining buys nothing here:
+        // the sessions being drained belong to the same lab whose policy is
+        // being rewritten by the very apply doing the restart.
+        "shutdown_lifetime 1 second",
+        "",
         "acl lab_safe_ports port 80 443",
         "acl lab_connect method CONNECT",
         "acl lab_ssl_ports port 443",

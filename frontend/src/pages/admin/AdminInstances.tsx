@@ -612,7 +612,7 @@ export default function AdminInstances() {
                                                     </span>
                                                 </Tooltip>
                                             )}
-                                            <Tooltip title="Copy internal IP (10.10.x.x)">
+                                            <Tooltip title="Copy internal IP">
                                                 <span>
                                                     <IconButton
                                                         size="small"
