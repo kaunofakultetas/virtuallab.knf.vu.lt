@@ -27,13 +27,11 @@ override.tf.json
 
 # App data
 _DATA/
+_LOGS/
 infra/guacamole/data/
 
 # Certs
 certs/*
-
-# Logs
-CaddyAccess.log
 
 # Runtime observations
 access-observation*.json
@@ -41,3 +39,6 @@ __pycache__/
 
 # Docs stuff
 .docusaurus
+
+# Slop
+.claude

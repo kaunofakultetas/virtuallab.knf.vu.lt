@@ -46,7 +46,7 @@
         import geo_block_non_vu
 
         handle_path /api/* {
-            reverse_proxy backend:3000 {
+            reverse_proxy virtual-lab-backend:3000 {
                 header_up X-Forwarded-For {remote_host}
             }
         }
@@ -78,7 +78,7 @@ http://{$CADDY_IP_HTTP_HOST:disabled.invalid} {
 }
 
 :80 {
-    reverse_proxy notfound404-vite:80 {
+    reverse_proxy virtual-lab-notfound404:80 {
         header_up X-Forwarded-For {remote_host}
     }
 }
@@ -100,7 +100,7 @@ virtuallab.knf.vu.lt:8888 {
     route {
         import geo_block_non_vu
 
-        forward_auth backend:3000 {
+        forward_auth virtual-lab-backend:3000 {
             uri /instances/proxy-auth
             copy_headers X-Target-Host X-Target-Proto
         }

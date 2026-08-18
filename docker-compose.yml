@@ -1,15 +1,91 @@
 name: virtual-lab
 
 services:
-    backend:
+
+    # ------------------------------------------------------------
+    #                Incoming and outgoing endpoints
+    # ------------------------------------------------------------
+    virtual-lab-endpoint:
+        container_name: virtual-lab-endpoint
+        build:
+            context: .
+            dockerfile: endpoint/Dockerfile
+        image: virtual-lab-endpoint:${VIRTUAL_LAB_IMAGE_TAG:-local}
+
+        environment:
+            CADDY_IP_HTTP_HOST: ${CADDY_IP_HTTP_HOST:-disabled.invalid}
+
+        ports:
+            - 80:80
+            - 443:443
+            - 443:443/udp
+            - 8888:8888
+
+        volumes:
+            - ./endpoint/Caddyfile:/etc/caddy/Caddyfile:ro
+            - ./_LOGS:/var/log/caddy:rw
+            - caddy_data:/data
+            - caddy_config:/config
+
+        networks:
+            - external
+            - isolated
+        restart: unless-stopped
+
+
+    virtual-lab-exit:
+        container_name: virtual-lab-exit
+        image: vuknf/caddy-l4:2.11
+        user: 1000:1000
+        read_only: true
+        environment:
+            # Caddy substitutes {$PROXMOX_HOST_ADDRESS} when it adapts the
+            # Caddyfile, so this must be present in the container, not just on
+            # the Compose host.
+            - PROXMOX_HOST_ADDRESS=${PROXMOX_HOST_ADDRESS:?Set PROXMOX_HOST_ADDRESS in .env}
+        volumes:
+            - ./exit/Caddyfile:/etc/caddy/Caddyfile:ro
+        networks:
+            isolated:
+                ipv4_address: 10.10.11.30
+                # Deployed .env files address this container as `exit:8006`,
+                # `exit:8080` and `*_HOST=exit`. The alias keeps those resolving
+                # after the rename, so no deployment needs a lockstep .env edit.
+                aliases:
+                    - exit
+            external: {}
+        restart: unless-stopped
+
+
+    # Served by the endpoint for any hostname the stack does not answer for.
+    virtual-lab-notfound404:
+        container_name: virtual-lab-notfound404
+        image: vuknf/notfound404-vite:latest
+        user: 1000:1000
+        read_only: true
+
+        networks:
+            - isolated
+        restart: unless-stopped
+    # ------------------------------------------------------------
+    # ------------------------------------------------------------
+    # ------------------------------------------------------------
+
+
+
+
+    # ------------------------------------------------------------
+    #                       Application stack
+    # ------------------------------------------------------------
+    virtual-lab-backend:
+        container_name: virtual-lab-backend
         build:
             context: ./backend
         image: virtual-lab-backend:${VIRTUAL_LAB_IMAGE_TAG:-local}
-        container_name: backend
 
         env_file: ./.env
         environment:
-            - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-backend_db}
+            - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@virtual-lab-postgres:5432/${POSTGRES_DB:-backend_db}
             - NODE_EXTRA_CA_CERTS=/certs/logs.knf.vu.lt.crt
             - ACCESS_OBSERVER_IDENTITY_FILE=/run/access-observer/id_ed25519
             - ACCESS_OBSERVER_KNOWN_HOSTS_FILE=/run/access-observer/known_hosts
@@ -39,89 +115,21 @@ services:
             - ${GATEWAY_APPLIER_CREDENTIALS_DIR:-./infra/gateway/credentials-absent}:/run/gateway-applier:ro
 
         depends_on:
-            postgres:
+            virtual-lab-postgres:
                 condition: service_healthy
 
         read_only: true
         networks:
             - isolated
-        extra_hosts:
-            - "logs.knf.vu.lt:10.10.11.30"
-            - "sso.vu.lt:10.10.11.30"
+        extra_hosts:                            # every external host the backend
+            - "logs.knf.vu.lt:10.10.11.30"      # may reach — pinned to the exit
+            - "sso.vu.lt:10.10.11.30"           # container
         restart: unless-stopped
 
-    caddy:
-        build:
-            context: .
-            dockerfile: Caddy.Dockerfile
-        image: virtual-lab-caddy:${VIRTUAL_LAB_IMAGE_TAG:-local}
-        container_name: caddy
 
-        environment:
-            CADDY_IP_HTTP_HOST: ${CADDY_IP_HTTP_HOST:-disabled.invalid}
-
-        ports:
-            - 80:80
-            - 443:443
-            - 443:443/udp
-            - 8888:8888
-
-        volumes:
-            - ./Caddyfile:/etc/caddy/Caddyfile:ro
-            - ./_DATA/caddy_logs:/var/log/caddy:rw
-            - caddy_data:/data
-            - caddy_config:/config
-
-        networks:
-            - external
-            - isolated
-        restart: unless-stopped
-
-    caddy-fluentbit:
-        container_name: caddy-fluentbit
-        image: fluent/fluent-bit:5.0.6
-        profiles: ["logging"]
-        user: 1000:1000
-        read_only: true
-        environment:
-            - LOKI_HOST=logs.knf.vu.lt
-            - LOKI_USER=${CADDY_LOKI_USER}
-            - LOKI_PASSWORD=${CADDY_LOKI_PASS}
-            - LOKI_PORT=443
-            - LOG_LEVEL=info
-            - SERVICE_NAME=${CADDY_LOKI_USER}
-        tmpfs:
-            - /tmp:uid=1000,gid=1000
-        volumes:
-            # FluentBit configuration files
-            - ./fluentbit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
-            - ./fluentbit/parsers.conf:/fluent-bit/etc/parsers.conf:ro
-
-            # Caddy logs directory
-            - ./_DATA/caddy_logs:/var/log/caddy:ro
-        restart: unless-stopped
-
-    exit:
-        image: vuknf/caddy-l4:2.11
-        container_name: exit
-        user: 1000:1000
-        read_only: true
-        environment:
-            # Caddy substitutes {$PROXMOX_HOST_ADDRESS} when it adapts the
-            # Caddyfile, so this must be present in the container, not just on
-            # the Compose host.
-            - PROXMOX_HOST_ADDRESS=${PROXMOX_HOST_ADDRESS:?Set PROXMOX_HOST_ADDRESS in .env}
-        volumes:
-            - ./exit/Caddyfile:/etc/caddy/Caddyfile:ro
-        networks:
-            isolated:
-                ipv4_address: 10.10.11.30
-            external: {}
-        restart: unless-stopped
-
-    postgres:
+    virtual-lab-postgres:
+        container_name: virtual-lab-postgres
         image: postgres:17-alpine
-        container_name: postgres
 
         read_only: true
         environment:
@@ -145,16 +153,51 @@ services:
         networks:
             - isolated
         restart: unless-stopped
+    # ------------------------------------------------------------
+    # ------------------------------------------------------------
+    # ------------------------------------------------------------
 
-    notfound404-vite:
-        container_name: notfound404
-        image: vuknf/notfound404-vite:latest
+
+
+
+    # ------------------------------------------------------------
+    #               Additional administration tools
+    # ------------------------------------------------------------
+    # Ships the endpoint access log to Loki. Reaches logs.knf.vu.lt through the
+    # exit container like every other outbound dependency.
+    virtual-lab-fluentbit:
+        container_name: virtual-lab-fluentbit
+        image: fluent/fluent-bit:5.0.6
+        profiles: ["logging"]
         user: 1000:1000
         read_only: true
+        environment:
+            - LOKI_HOST=logs.knf.vu.lt
+            - LOKI_USER=${CADDY_LOKI_USER}
+            - LOKI_PASSWORD=${CADDY_LOKI_PASS}
+            - LOKI_PORT=443
+            - LOG_LEVEL=info
+            - SERVICE_NAME=${CADDY_LOKI_USER}
+        tmpfs:
+            - /tmp:uid=1000,gid=1000
+        volumes:
+            # FluentBit configuration files
+            - ./fluentbit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+            - ./fluentbit/parsers.conf:/fluent-bit/etc/parsers.conf:ro
 
+            # Endpoint logs directory
+            - ./_LOGS:/var/log/caddy:ro
+        extra_hosts:
+            - "logs.knf.vu.lt:10.10.11.30"
         networks:
             - isolated
         restart: unless-stopped
+    # ------------------------------------------------------------
+    # ------------------------------------------------------------
+    # ------------------------------------------------------------
+
+
+
 
 volumes:
     caddy_data:
@@ -162,12 +205,12 @@ volumes:
 
 networks:
     external:
-        external: true
+        external: true                          # created once by the operator
 
     isolated:
         name: vl-isolated
         driver: bridge
-        internal: true
+        internal: true                          # no internet from this network
         ipam:
             config:
                 - subnet: 10.10.11.0/24

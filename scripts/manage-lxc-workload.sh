@@ -84,7 +84,7 @@ prepare_runtime() {
             ;;
         api-docker)
             [[ -f "${install_root}/.env" ]] || fail "create ${install_root}/.env from backend/.env.example before starting"
-            install -d -m 0750 "${install_root}/_DATA/postgres" "${install_root}/_DATA/caddy_logs"
+            install -d -m 0750 "${install_root}/_DATA/postgres" "${install_root}/_LOGS"
             docker network inspect external >/dev/null 2>&1 || docker network create external >/dev/null
             ;;
     esac

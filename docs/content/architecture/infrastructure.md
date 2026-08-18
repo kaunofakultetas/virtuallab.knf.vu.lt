@@ -101,10 +101,10 @@ off it.
 ```mermaid
 flowchart LR
     inbound(["Inbound<br/>80, 443, 8888"])
-    caddy["caddy<br/>ingress, VU-only IP allowlist"]
-    backend["backend<br/>Node API and orchestrator"]
-    postgres[("postgres 17<br/>desired state")]
-    exitp["exit<br/>caddy-l4 — the only route out<br/>of the internal network"]
+    caddy["virtual-lab-endpoint<br/>ingress, VU-only IP allowlist"]
+    backend["virtual-lab-backend<br/>Node API and orchestrator"]
+    postgres[("virtual-lab-postgres 17<br/>desired state")]
+    exitp["virtual-lab-exit<br/>caddy-l4 — the only route out<br/>of the internal network"]
     guac(["Guacamole — 10.10.10.50<br/>8080 sessions, 9443 web proxy"])
     outbound(["Proxmox API 8006<br/>Proxmox host SSH 22<br/>sso.vu.lt, logs.knf.vu.lt"])
 
@@ -117,11 +117,16 @@ flowchart LR
     exitp --> guac
 ```
 
-`exit` is a layer-4 proxy with a fixed set of destinations — the Proxmox API, the
-Proxmox host's SSH port, Guacamole, and two named VU services matched by TLS SNI.
-Anything the backend wants to reach that is not on that list simply has no path.
-Log shipping runs as an optional Fluent Bit sidecar that reads Caddy's log files
-from a shared volume rather than over the network.
+`virtual-lab-exit` is a layer-4 proxy with a fixed set of destinations — the
+Proxmox API, the Proxmox host's SSH port, Guacamole, and two named VU services
+matched by TLS SNI. Anything the backend wants to reach that is not on that list
+simply has no path. It also answers to the short alias `exit`, which is the name
+the deployed `.env` uses in `PROXMOX_BASE_URL`, `GUACAMOLE_URL` and the five
+`*_HOST` settings.
+
+Log shipping runs as an optional Fluent Bit sidecar that reads the endpoint's
+log files from `_LOGS` rather than over the network. It sits on the internal
+network like everything else and reaches Loki through the exit.
 
 ## Three journeys
 
@@ -131,12 +136,12 @@ from a shared volume rather than over the network.
 sequenceDiagram
     participant B as Browser
     participant H as Proxmox host
-    participant C as caddy (LXC 201)
-    participant A as backend
+    participant C as virtual-lab-endpoint (LXC 201)
+    participant A as virtual-lab-backend
     B->>H: HTTPS to the published address
     H->>C: DNAT 80/443/8888 to 10.10.10.100
     C->>C: Reject sources outside VU networks
-    C->>A: /api/* to backend:3000
+    C->>A: /api/* to virtual-lab-backend:3000
     A-->>B: Dashboard, instances, settings
 ```
 
@@ -148,7 +153,7 @@ The host-level forwarding is optional and explicit: it exists only when
 ```mermaid
 sequenceDiagram
     participant B as Browser
-    participant C as caddy (LXC 201)
+    participant C as virtual-lab-endpoint (LXC 201)
     participant G as Guacamole (LXC 200)
     participant N as Access nftables
     participant V as Student VM

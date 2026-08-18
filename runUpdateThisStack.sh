@@ -40,7 +40,7 @@ readonly BACKUP_DIR="${BACKUP_DIR:-$ROOT_DIR/_DATA/deployment-backups}"
 readonly BACKUP_FILE="$BACKUP_DIR/postgres-${IMAGE_TAG}-$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
 
 previous_backend_image=""
-previous_caddy_image=""
+previous_endpoint_image=""
 deployment_started=false
 
 log() {
@@ -68,11 +68,11 @@ rollback() {
 	log "Deployment failed; restoring the previous application images"
 	if [[ -n "$previous_backend_image" ]]; then
 		"${DOCKER[@]}" tag "$previous_backend_image" virtual-lab-backend:rollback
-		rollback_services+=(backend)
+		rollback_services+=(virtual-lab-backend)
 	fi
-	if [[ -n "$previous_caddy_image" ]]; then
-		"${DOCKER[@]}" tag "$previous_caddy_image" virtual-lab-caddy:rollback
-		rollback_services+=(caddy)
+	if [[ -n "$previous_endpoint_image" ]]; then
+		"${DOCKER[@]}" tag "$previous_endpoint_image" virtual-lab-endpoint:rollback
+		rollback_services+=(virtual-lab-endpoint)
 	fi
 
 	if (( ${#rollback_services[@]} > 0 )); then
@@ -96,42 +96,42 @@ else
 		fail "untracked files must be committed or ignored before deployment"
 fi
 
-mkdir -p "$BACKUP_DIR" ./_DATA/postgres ./_DATA/caddy_logs
-touch ./_DATA/caddy_logs/access.log
+mkdir -p "$BACKUP_DIR" ./_DATA/postgres ./_LOGS
+touch ./_LOGS/access.log
 
 log "Validating Compose configuration for revision $GIT_SHA"
 VIRTUAL_LAB_IMAGE_TAG="$IMAGE_TAG" "${COMPOSE[@]}" config --quiet
 
 log "Starting PostgreSQL for backup and schema validation"
-VIRTUAL_LAB_IMAGE_TAG="$IMAGE_TAG" "${COMPOSE[@]}" up -d --wait postgres
+VIRTUAL_LAB_IMAGE_TAG="$IMAGE_TAG" "${COMPOSE[@]}" up -d --wait virtual-lab-postgres
 
 log "Backing up PostgreSQL to $BACKUP_FILE"
-VIRTUAL_LAB_IMAGE_TAG="$IMAGE_TAG" "${COMPOSE[@]}" exec -T postgres \
+VIRTUAL_LAB_IMAGE_TAG="$IMAGE_TAG" "${COMPOSE[@]}" exec -T virtual-lab-postgres \
 	sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB"' | gzip > "$BACKUP_FILE"
 
 log "Building immutable application images with tag $IMAGE_TAG"
-VIRTUAL_LAB_IMAGE_TAG="$IMAGE_TAG" "${COMPOSE[@]}" build --pull backend caddy
+VIRTUAL_LAB_IMAGE_TAG="$IMAGE_TAG" "${COMPOSE[@]}" build --pull virtual-lab-backend virtual-lab-endpoint
 
-previous_backend_image="$(container_image_id backend)"
-previous_caddy_image="$(container_image_id caddy)"
+previous_backend_image="$(container_image_id virtual-lab-backend)"
+previous_endpoint_image="$(container_image_id virtual-lab-endpoint)"
 deployment_started=true
 
 log "Applying database schema in one transaction"
-VIRTUAL_LAB_IMAGE_TAG="$IMAGE_TAG" "${COMPOSE[@]}" exec -T postgres \
+VIRTUAL_LAB_IMAGE_TAG="$IMAGE_TAG" "${COMPOSE[@]}" exec -T virtual-lab-postgres \
 	sh -c 'psql -v ON_ERROR_STOP=1 --single-transaction -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
 	< backend/schema.sql
 
 log "Starting revision $GIT_SHA and waiting for service health"
 VIRTUAL_LAB_IMAGE_TAG="$IMAGE_TAG" "${COMPOSE[@]}" up -d --no-build --wait
 
-smoke_user="$(VIRTUAL_LAB_IMAGE_TAG="$IMAGE_TAG" "${COMPOSE[@]}" exec -T postgres \
+smoke_user="$(VIRTUAL_LAB_IMAGE_TAG="$IMAGE_TAG" "${COMPOSE[@]}" exec -T virtual-lab-postgres \
 	sh -c 'psql -Atq -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
 		-c "SELECT vu_id FROM users WHERE role = '\''admin'\'' ORDER BY vu_id LIMIT 1"')"
 [[ -n "$smoke_user" ]] || fail "an admin user is required for the reconciliation smoke test"
 
 log "Running authenticated read-only reconciliation smoke test"
 VIRTUAL_LAB_IMAGE_TAG="$IMAGE_TAG" "${COMPOSE[@]}" exec -T \
-	-e "DEPLOYMENT_SMOKE_USER=$smoke_user" backend node <<'NODE'
+	-e "DEPLOYMENT_SMOKE_USER=$smoke_user" virtual-lab-backend node <<'NODE'
 const { randomUUID } = require("node:crypto");
 const jwt = require("jsonwebtoken");
 

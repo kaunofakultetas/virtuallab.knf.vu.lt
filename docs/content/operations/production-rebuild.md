@@ -67,7 +67,8 @@ Worth adding to the drive if there is room, since it turns a later step from
 "reconfigure from memory" into "restore":
 
 ```bash
-# inside the old 201
+# inside the old 201 — installations predating the virtual-lab-* service
+# rename still answer to the short service names
 docker compose exec -T postgres pg_dumpall -U postgres | gzip > /mnt/backup/app-db.sql.gz
 tar -C /srv -czf /mnt/backup/stack.tar.gz virtual-proxmox-lab   # includes .env
 
@@ -825,7 +826,7 @@ be found`, rolls the images back, and leaves the database untouched.
 pct exec 201 -- sh -lc 'cd /srv/virtual-proxmox-lab && \
   docker network inspect external >/dev/null 2>&1 || docker network create external'
 pct exec 201 -- sh -lc 'cd /srv/virtual-proxmox-lab && \
-  install -d -m 0750 _DATA/postgres _DATA/caddy_logs'
+  install -d -m 0750 _DATA/postgres _LOGS'
 ```
 
 ```bash
@@ -847,7 +848,7 @@ by that point — create the admin, then rerun the deploy and it passes.
 
 ```bash
 pct exec 201 -- sh -lc 'cd /srv/virtual-proxmox-lab && \
-  ADMIN_PASSWORD="<password>" docker compose exec -T backend \
+  ADMIN_PASSWORD="<password>" docker compose exec -T virtual-lab-backend \
   npm run create-admin -- --vu-id <numeric-id>'
 ```
 
@@ -856,7 +857,7 @@ pct exec 201 -- sh -lc 'cd /srv/virtual-proxmox-lab && \
 ```bash
 pct exec 201 -- sh -lc 'cd /srv/virtual-proxmox-lab && docker compose ps'
 pct exec 201 -- sh -lc 'cd /srv/virtual-proxmox-lab && \
-  docker compose exec -T backend npm run preflight-network-tokens'
+  docker compose exec -T virtual-lab-backend npm run preflight-network-tokens'
 ```
 
 `preflight-network-tokens` exits `0`. Note that `final_read=500` in its output
@@ -883,7 +884,7 @@ docker compose exec -T \
   -e GATEWAY_TRUNK_INTERFACE=ens19 \
   -e GATEWAY_UPLINK_INTERFACE=eth2 \
   -e GATEWAY_UPSTREAM_RESOLVERS=1.1.1.1,8.8.8.8 \
-  backend npm run set-gateway-settings
+  virtual-lab-backend npm run set-gateway-settings
 ```
 
 **Verify:** `GET /network/readiness` shows `gateway-runtime-settings` passing
@@ -932,7 +933,7 @@ these applies, which cannot work. The API route for the flip is itself gated on
 `ready_for_active`, so SQL is the only path at this point.
 
 ```bash
-pct exec 201 -- sh -lc 'cd /srv/virtual-proxmox-lab && docker compose exec -T postgres \
+pct exec 201 -- sh -lc 'cd /srv/virtual-proxmox-lab && docker compose exec -T virtual-lab-postgres \
   psql -U postgres -d backend_db -c \
   "UPDATE metadata SET value = to_jsonb('"'"'active'"'"'::text) WHERE key = '"'"'settings.network.mode'"'"';"'
 ```

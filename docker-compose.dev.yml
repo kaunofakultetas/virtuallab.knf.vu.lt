@@ -1,7 +1,11 @@
 name: virtual-lab-dev
 
+# Development counterpart of docker-compose.yml: same services, but source
+# mounted for hot reload and ports published on the loopback interface. No
+# container_name here, so a dev stack can run beside the production one.
+
 services:
-    postgres:
+    virtual-lab-postgres:
         image: postgres:17-alpine
         environment:
             POSTGRES_USER: postgres
@@ -17,42 +21,42 @@ services:
         ports:
             - "127.0.0.1:5432:5432"
 
-    backend:
+    virtual-lab-backend:
         image: node:25-alpine
         working_dir: /app
         command: sh -c "npm ci && npm run dev"
         env_file:
-                        - ./.env
-                        - ./.env.development
+            - ./.env
+            - ./.env.development
         environment:
             NODE_ENV: development
-            DATABASE_URL: postgresql://postgres:dev-postgres@postgres:5432/backend_db
+            DATABASE_URL: postgresql://postgres:dev-postgres@virtual-lab-postgres:5432/backend_db
             PORT: 3000
         volumes:
             - ./backend:/app
             - backend_dev_node_modules:/app/node_modules
             - ./certs:/certs:ro
         depends_on:
-            postgres:
+            virtual-lab-postgres:
                 condition: service_healthy
         ports:
             - "127.0.0.1:3000:3000"
 
-    frontend:
+    virtual-lab-vite:
         image: node:22-alpine
         working_dir: /app
         command: sh -c "npm ci && npm run dev -- --host 0.0.0.0"
         environment:
-            VITE_API_PROXY_TARGET: http://backend:3000
+            VITE_API_PROXY_TARGET: http://virtual-lab-backend:3000
         volumes:
-            - ./frontend:/app
-            - frontend_dev_node_modules:/app/node_modules
+            - ./vite:/app
+            - vite_dev_node_modules:/app/node_modules
         depends_on:
-            - backend
+            - virtual-lab-backend
         ports:
             - "127.0.0.1:5173:5173"
 
-    docs:
+    virtual-lab-docs:
         image: node:22-alpine
         profiles: ["docs"]
         working_dir: /app
@@ -66,5 +70,5 @@ services:
 volumes:
     postgres_dev_data:
     backend_dev_node_modules:
-    frontend_dev_node_modules:
+    vite_dev_node_modules:
     docs_dev_node_modules:

@@ -62,18 +62,18 @@ cmd_deploy() {
 }
 
 cmd_preflight_tokens() {
-    in_ct "docker compose exec -T backend npm run preflight-network-tokens"
+    in_ct "docker compose exec -T virtual-lab-backend npm run preflight-network-tokens"
 }
 
 cmd_attempt_status() {
-    in_ct "docker compose exec -T postgres sh -c '\''psql -x -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -c \"SELECT id, mode, status, phase, applied_revision, error_code, created_at FROM network_reconciliation_attempts ORDER BY id DESC LIMIT 1\"'\''"
+    in_ct "docker compose exec -T virtual-lab-postgres sh -c '\''psql -x -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -c \"SELECT id, mode, status, phase, applied_revision, error_code, created_at FROM network_reconciliation_attempts ORDER BY id DESC LIMIT 1\"'\''"
 }
 
 # Prints the newest attempt's desired revision, planned actions, and checks, so
 # an apply decision can be reviewed before it is made. The SQL deliberately
 # contains no single quotes, which keeps the nested shell quoting readable.
 cmd_attempt_detail() {
-    in_ct "docker compose exec -T postgres sh -c '\''psql -x -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -c \"SELECT id, desired_revision, jsonb_array_length(checks) AS n_checks, jsonb_array_length(actions) AS n_actions FROM network_reconciliation_attempts ORDER BY id DESC LIMIT 1\" -c \"SELECT jsonb_pretty(actions) AS actions FROM network_reconciliation_attempts ORDER BY id DESC LIMIT 1\" -c \"SELECT jsonb_pretty(checks) AS checks FROM network_reconciliation_attempts ORDER BY id DESC LIMIT 1\"'\''"
+    in_ct "docker compose exec -T virtual-lab-postgres sh -c '\''psql -x -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -c \"SELECT id, desired_revision, jsonb_array_length(checks) AS n_checks, jsonb_array_length(actions) AS n_actions FROM network_reconciliation_attempts ORDER BY id DESC LIMIT 1\" -c \"SELECT jsonb_pretty(actions) AS actions FROM network_reconciliation_attempts ORDER BY id DESC LIMIT 1\" -c \"SELECT jsonb_pretty(checks) AS checks FROM network_reconciliation_attempts ORDER BY id DESC LIMIT 1\"'\''"
 }
 
 # Records the Gateway guest's observed interface names and upstream resolvers.
@@ -89,23 +89,23 @@ cmd_configure_gateway() {
         -e GATEWAY_TRUNK_INTERFACE=${trunk} \
         -e GATEWAY_UPLINK_INTERFACE=${uplink} \
         -e GATEWAY_UPSTREAM_RESOLVERS=${resolvers} \
-        backend npm run --silent set-gateway-settings"
+        virtual-lab-backend npm run --silent set-gateway-settings"
 }
 
 # Lists every setting. The SQL carries no single quotes on purpose; filter the
 # output locally rather than complicating the nested shell quoting.
 cmd_settings() {
-    in_ct "docker compose exec -T postgres sh -c '\''psql -Atq -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -c \"SELECT key, value FROM metadata ORDER BY key\"'\''"
+    in_ct "docker compose exec -T virtual-lab-postgres sh -c '\''psql -Atq -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -c \"SELECT key, value FROM metadata ORDER BY key\"'\''"
 }
 
 cmd_groups() {
-    in_ct "docker compose exec -T postgres sh -c '\''psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -c \"SELECT id, owner_id, profile_id, vlan_tag, vnet_name, subnet_cidr, state FROM network_groups ORDER BY id\"'\''"
+    in_ct "docker compose exec -T virtual-lab-postgres sh -c '\''psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -c \"SELECT id, owner_id, profile_id, vlan_tag, vnet_name, subnet_cidr, state FROM network_groups ORDER BY id\"'\''"
 }
 
 # Authenticated read-only readiness report, minted with a short-lived admin JWT
 # inside the backend container so no secret is passed through the shell.
 cmd_readiness() {
-    in_ct "docker compose exec -T backend node -e \"const jwt=require('\''jsonwebtoken'\'');const t=jwt.sign({vu_id:process.env.SMOKE_USER||'\''admin'\'',role:'\''admin'\''},process.env.BACKEND_JWT_SECRET,{expiresIn:'\''2m'\''});fetch('\''http://localhost:3000/network/readiness'\'',{headers:{authorization:'\''Bearer '\''+t}}).then(r=>r.json()).then(b=>{console.log('\''mode='\''+b.mode,'\''ready_for_active='\''+b.ready_for_active);for(const c of b.checks)if(c.status!=='\''pass'\'')console.log(c.status.toUpperCase(),c.key,'\''|'\'',c.detail);}).catch(e=>{console.error(e.message);process.exit(1)})\""
+    in_ct "docker compose exec -T virtual-lab-backend node -e \"const jwt=require('\''jsonwebtoken'\'');const t=jwt.sign({vu_id:process.env.SMOKE_USER||'\''admin'\'',role:'\''admin'\''},process.env.BACKEND_JWT_SECRET,{expiresIn:'\''2m'\''});fetch('\''http://localhost:3000/network/readiness'\'',{headers:{authorization:'\''Bearer '\''+t}}).then(r=>r.json()).then(b=>{console.log('\''mode='\''+b.mode,'\''ready_for_active='\''+b.ready_for_active);for(const c of b.checks)if(c.status!=='\''pass'\'')console.log(c.status.toUpperCase(),c.key,'\''|'\'',c.detail);}).catch(e=>{console.error(e.message);process.exit(1)})\""
 }
 
 cmd_vnets() {

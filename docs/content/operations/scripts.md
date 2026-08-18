@@ -97,8 +97,8 @@ The image tags reported by `status` are the first twelve characters of the
 deployed Git SHA, which is how you tell what a host is actually running:
 
 ```text
-backend running virtual-lab-backend:18e5a5a6ac4b
-caddy   running virtual-lab-caddy:18e5a5a6ac4b
+virtual-lab-backend  running virtual-lab-backend:18e5a5a6ac4b
+virtual-lab-endpoint running virtual-lab-endpoint:18e5a5a6ac4b
 ```
 
 ## `runUpdateThisStack.sh` — the production deploy
@@ -109,21 +109,37 @@ revision, then in order:
 1. Validates the Compose model for the resolved Git SHA.
 2. Starts PostgreSQL if needed and writes a compressed backup under
    `_DATA/deployment-backups`.
-3. Builds `virtual-lab-backend` and `virtual-lab-caddy`, tagged with the SHA.
+3. Builds `virtual-lab-backend` and `virtual-lab-endpoint`, tagged with the SHA.
 4. Applies `backend/schema.sql` in one transaction.
 5. Waits for Compose health checks.
 6. Runs an authenticated read-only reconciliation smoke test, using the first
    configured admin account.
 
 It updates services in place; it does not stop the stack first. If application
-startup fails, the previous backend and Caddy image IDs are restored
+startup fails, the previous backend and endpoint image IDs are restored
 automatically. **Database changes are not reversed** — the backup path is printed,
 so restore it after diagnosing the failed revision.
 
 :::note This is also how documentation ships
-There is no separate docs service. `Caddy.Dockerfile` builds `docs/` in its own
-stage and copies the output into the Caddy image at `/srv/docs`. Publishing a
-documentation change therefore means a full deploy — there is no lighter path.
+There is no separate docs service. `endpoint/Dockerfile` builds `docs/` in its
+own stage and copies the output into the endpoint image at `/srv/docs`, the same
+way it builds `vite/` into `/srv/frontend`. Publishing a documentation change
+therefore means a full deploy — there is no lighter path.
+:::
+
+:::caution One-time step when upgrading across the service rename
+Services and containers were renamed to `virtual-lab-*`. Compose treats the
+old containers as orphans, so `caddy` keeps holding 80, 443 and 8888 and the new
+`virtual-lab-endpoint` cannot bind them. Take the stack down once before the
+first deploy on this revision:
+
+```bash
+docker compose down --remove-orphans
+```
+
+The database lives in `_DATA/postgres` and survives that. The deployed `.env`
+needs no edit: the exit container keeps the alias `exit`, so `PROXMOX_BASE_URL`,
+`GUACAMOLE_URL` and the five `*_HOST` settings keep resolving.
 :::
 
 `--allow-dirty` exists only for a disposable development environment carrying
@@ -156,7 +172,7 @@ production application deploy.
 
 For `api-docker`, `install` stops after checkout when `.env` is absent. Create
 that file first; the runtime preparation step also creates the external Docker
-network and the `_DATA` directories the Compose model expects.
+network and the `_DATA` and `_LOGS` directories the Compose model expects.
 
 ## `setup-proxmox-host-network.sh` — host networking
 

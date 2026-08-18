@@ -1,12 +1,12 @@
 **
-!Caddyfile
-!frontend/
-!frontend/**
+!endpoint/Caddyfile
+!vite/
+!vite/**
 !docs/
 !docs/**
 
-frontend/node_modules/
-frontend/dist/
+vite/node_modules/
+vite/dist/
 docs/node_modules/
 docs/build/
 docs/.docusaurus/
