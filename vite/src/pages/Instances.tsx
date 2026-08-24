@@ -35,7 +35,7 @@ import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined";
 import type { Instance } from "@/types/instances";
 import type { LabProfile } from "@/types/labProfiles";
 import { getErrorMessage } from "@/utils/errors";
-import { copyInstanceIp } from "@/utils/instances";
+import { copyInstanceIp, networkLabel } from "@/utils/instances";
 
 const statusColor: Record<string, "success" | "warning" | "error" | "default"> =
     {
@@ -344,6 +344,7 @@ export default function Instances() {
                         <TableRow>
                             <TableCell>Name</TableCell>
                             <TableCell>Status</TableCell>
+                            <TableCell>Network</TableCell>
                             <TableCell>Runtime</TableCell>
                             <TableCell align="right">Actions</TableCell>
                         </TableRow>
@@ -351,7 +352,7 @@ export default function Instances() {
                     <TableBody>
                         {fetching ? (
                             <TableRow>
-                                <TableCell colSpan={4}>
+                                <TableCell colSpan={5}>
                                     <Box
                                         sx={{
                                             display: "flex",
@@ -365,7 +366,7 @@ export default function Instances() {
                             </TableRow>
                         ) : instances.length === 0 ? (
                             <TableRow>
-                                <TableCell colSpan={4}>
+                                <TableCell colSpan={5}>
                                     <Typography
                                         variant="body2"
                                         color="text.secondary"
@@ -383,6 +384,7 @@ export default function Instances() {
                                     actionLoading[`session-${instance.id}`];
                                 const isCopyingIp =
                                     copyingIpId === String(instance.id);
+                                const network = networkLabel(instance);
                                 return (
                                     <TableRow key={instance.id}>
                                         <TableCell>
@@ -414,6 +416,21 @@ export default function Instances() {
                                                     ] ?? "default"
                                                 }
                                             />
+                                        </TableCell>
+                                        <TableCell>
+                                            <Typography variant="body2">
+                                                {network.primary}
+                                            </Typography>
+                                            <Typography
+                                                variant="caption"
+                                                color="text.secondary"
+                                                sx={{
+                                                    fontFamily: "monospace",
+                                                    display: "block",
+                                                }}
+                                            >
+                                                {network.detail}
+                                            </Typography>
                                         </TableCell>
                                         <TableCell>
                                             <Typography

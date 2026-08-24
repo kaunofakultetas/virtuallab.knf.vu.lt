@@ -21,6 +21,7 @@ import {
     removeGroupPeering,
 } from "@/network/policy";
 import { createNetworkProxmoxObserver } from "@/network/proxmox-clients";
+import { reconcileNetworkDrift } from "@/network/drift-reconciler";
 import { NetworkTeardownError, releaseNetworkGroup } from "@/network/teardown";
 import {
     AccessClientConfigurationError,
@@ -136,6 +137,43 @@ router.post("/groups/:groupId/release", isAuthenticated, isAdmin, async (req, re
         }
         logger.error(error, "Error releasing a network group");
         return res.status(500).json({ error: "Failed to release the network group" });
+    }
+});
+
+/**
+ * Runs the drift sweep now instead of waiting for the ten-minute timer.
+ *
+ * Some changes are written to the database and become real only when something
+ * renders them onto the infrastructure. A group peering is the clearest case:
+ * it has to reach the Gateway's forward path *and* every target VM's firewall,
+ * and nothing but the drift sweep re-applies the second one. Waiting up to ten
+ * minutes is fine for a background correction and useless when a lab starts in
+ * five, which is what this is for.
+ *
+ * This is not the `apply: true` that `/reconciliation-attempts` refuses, and the
+ * distinction is the point. That would be an unconditional apply of the whole
+ * plan; this is the same observe-then-repair pass the scheduler already runs
+ * unattended, so it touches only what genuinely drifted and restarts Squid and
+ * dnsmasq only when the Gateway is actually wrong. It opens no capability the
+ * stack did not already exercise on its own -- it only changes when.
+ *
+ * `requestedBy` is the calling admin rather than `DRIFT_RECONCILER_PRINCIPAL`:
+ * the attempt log is an audit trail, and a person did ask for this one.
+ *
+ * The report is always returned with 200, including when the pass declined to
+ * run. `ran: false` with a reason, and `failed` entries alongside `repaired`
+ * ones, are results worth rendering -- collapsing them into an HTTP status
+ * would throw away the half that says what happened.
+ *
+ * Used by the admin Network page.
+ */
+router.post("/drift-reconciliations", isAuthenticated, isAdmin, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+    try {
+        return res.json(await reconcileNetworkDrift(req.user.vu_id));
+    } catch (error) {
+        logger.error(error, "Error running drift reconciliation");
+        return res.status(500).json({ error: "Failed to run drift reconciliation" });
     }
 });
 

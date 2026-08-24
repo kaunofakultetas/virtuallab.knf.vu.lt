@@ -14,6 +14,10 @@ export interface Instance {
     run_until: string | null;
     network_group_id: number | null;
     network_group_state: string | null;
+    // Null when the instance sits on the shared bridge rather than a reserved
+    // per-group VLAN, which is how `legacy` and `dry-run` mode provision.
+    network_group_vlan_tag: number | null;
+    network_group_subnet_cidr: string | null;
     profile_id: number | null;
     profile_name: string | null;
 }

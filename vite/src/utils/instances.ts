@@ -1,5 +1,6 @@
 import axios from "axios";
 import { getErrorMessage } from "@/utils/errors";
+import type { Instance } from "@/types/instances";
 
 type CopyIpResult =
     | { ok: true; ip: string }
@@ -31,3 +32,25 @@ export async function copyInstanceIp(instanceId: number): Promise<CopyIpResult> 
         return { ok: false, message: getErrorMessage(err, "Failed to get IP.") };
     }
 }
+
+/**
+ * The network an instance sits on, as a heading and a detail line.
+ *
+ * An instance provisioned in `legacy` or `dry-run` mode, or one created before
+ * per-group VLANs existed, holds no allocation of its own and shares the lab
+ * bridge with everything else. That is worth saying plainly rather than
+ * rendering an empty cell the reader has to interpret.
+ */
+export const networkLabel = (instance: Instance): { primary: string; detail: string } => {
+    if (instance.network_group_subnet_cidr === null) {
+        return {
+            primary: instance.profile_name ?? "Shared network",
+            detail: "Shared lab bridge",
+        };
+    }
+    return {
+        primary:
+            instance.profile_name ?? `Group ${instance.network_group_id}`,
+        detail: `${instance.network_group_subnet_cidr} · VLAN ${instance.network_group_vlan_tag}`,
+    };
+};

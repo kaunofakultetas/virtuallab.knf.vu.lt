@@ -38,7 +38,7 @@ import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined";
 import type { Instance, Template } from "@/types/instances";
 import type { LabProfile } from "@/types/labProfiles";
 import Switch from "@mui/material/Switch";
-import { copyInstanceIp } from "@/utils/instances";
+import { copyInstanceIp, networkLabel } from "@/utils/instances";
 
 type TypeFilter = "all" | "student_vm" | "lab_vm";
 
@@ -399,6 +399,7 @@ export default function AdminInstances() {
                             <TableCell>Owner</TableCell>
                             <TableCell>Type</TableCell>
                             <TableCell>Status</TableCell>
+                            <TableCell>Network</TableCell>
                             <TableCell>Runtime</TableCell>
                             <TableCell>Proxmox ID</TableCell>
                             <TableCell align="right">Actions</TableCell>
@@ -407,7 +408,7 @@ export default function AdminInstances() {
                     <TableBody>
                         {fetching ? (
                             <TableRow>
-                                <TableCell colSpan={7}>
+                                <TableCell colSpan={8}>
                                     <Box
                                         sx={{
                                             display: "flex",
@@ -421,7 +422,7 @@ export default function AdminInstances() {
                             </TableRow>
                         ) : filteredInstances.length === 0 ? (
                             <TableRow>
-                                <TableCell colSpan={7}>
+                                <TableCell colSpan={8}>
                                     <Typography
                                         variant="body2"
                                         color="text.secondary"
@@ -442,6 +443,7 @@ export default function AdminInstances() {
                                     deletingId === String(instance.id);
                                 const isCopyingIp =
                                     copyingIpId === String(instance.id);
+                                const network = networkLabel(instance);
 
                                 return (
                                     <TableRow key={instance.id}>
@@ -505,6 +507,21 @@ export default function AdminInstances() {
                                                     ] ?? "default"
                                                 }
                                             />
+                                        </TableCell>
+                                        <TableCell>
+                                            <Typography variant="body2">
+                                                {network.primary}
+                                            </Typography>
+                                            <Typography
+                                                variant="caption"
+                                                color="text.secondary"
+                                                sx={{
+                                                    fontFamily: "monospace",
+                                                    display: "block",
+                                                }}
+                                            >
+                                                {network.detail}
+                                            </Typography>
                                         </TableCell>
                                         <TableCell>
                                             <Typography

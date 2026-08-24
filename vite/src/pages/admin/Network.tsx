@@ -29,7 +29,9 @@ import AddOutlinedIcon from "@mui/icons-material/AddOutlined";
 import DeleteOutlinedIcon from "@mui/icons-material/DeleteOutlined";
 import RefreshOutlinedIcon from "@mui/icons-material/RefreshOutlined";
 import PlayArrowOutlinedIcon from "@mui/icons-material/PlayArrowOutlined";
+import BoltOutlinedIcon from "@mui/icons-material/BoltOutlined";
 import type {
+    DriftReconciliationReport,
     GroupPeering,
     NetworkCheckStatus,
     NetworkGroupSummary,
@@ -87,6 +89,8 @@ export default function AdminNetwork() {
     const [error, setError] = useState<string | null>(null);
     const [dryRunning, setDryRunning] = useState(false);
     const [lastAttempt, setLastAttempt] = useState<ReconciliationAttempt | null>(null);
+    const [reconciling, setReconciling] = useState(false);
+    const [lastDrift, setLastDrift] = useState<DriftReconciliationReport | null>(null);
     const [peeringDialogOpen, setPeeringDialogOpen] = useState(false);
     const [peeringDraft, setPeeringDraft] = useState<{ a: number | ""; b: number | "" }>({
         a: "",
@@ -162,6 +166,41 @@ export default function AdminNetwork() {
             });
         } finally {
             setDryRunning(false);
+        }
+    };
+
+    /**
+     * Runs the drift sweep now rather than waiting for the ten-minute timer.
+     *
+     * Slow by nature: it observes the Gateway, Access and every VM's firewall
+     * over SSH before it repairs anything. Synchronous anyway, like the dry run
+     * beside it -- the report only means something once the pass has finished.
+     */
+    const reconcileNow = async () => {
+        setReconciling(true);
+        try {
+            const response = await axios.post<DriftReconciliationReport>(
+                "/api/network/drift-reconciliations",
+            );
+            const report = response.data;
+            setLastDrift(report);
+            setSnackbar({
+                message: !report.ran
+                    ? `Reconciliation did not run: ${report.reason ?? "unknown reason"}`
+                    : report.drifted.length === 0
+                        ? "Everything already matches the desired state."
+                        : `Repaired ${report.repaired.join(", ") || "nothing"}`
+                            + `${report.failed.length > 0 ? `; ${report.failed.length} failed` : ""}.`,
+                severity: report.failed.length > 0 || !report.ran ? "error" : "success",
+            });
+            await fetchData(false);
+        } catch (err) {
+            setSnackbar({
+                message: getErrorMessage(err, "Failed to run reconciliation."),
+                severity: "error",
+            });
+        } finally {
+            setReconciling(false);
         }
     };
 
@@ -280,12 +319,24 @@ export default function AdminNetwork() {
                     <Tooltip title="Observes Proxmox, the Gateway and Access without changing anything">
                         <span>
                             <Button
-                                variant="contained"
+                                variant="outlined"
                                 startIcon={<PlayArrowOutlinedIcon />}
                                 onClick={() => void runDryRun()}
-                                disabled={dryRunning || fetching}
+                                disabled={dryRunning || reconciling || fetching}
                             >
                                 {dryRunning ? "Running…" : "Run dry-run"}
+                            </Button>
+                        </span>
+                    </Tooltip>
+                    <Tooltip title="Repairs anything that has drifted, instead of waiting for the ten-minute sweep. Use after changing a peering. A Gateway repair restarts Squid and dnsmasq, which drops in-flight student traffic through the proxy.">
+                        <span>
+                            <Button
+                                variant="contained"
+                                startIcon={<BoltOutlinedIcon />}
+                                onClick={() => void reconcileNow()}
+                                disabled={reconciling || dryRunning || fetching}
+                            >
+                                {reconciling ? "Reconciling…" : "Reconcile now"}
                             </Button>
                         </span>
                     </Tooltip>
@@ -564,6 +615,56 @@ export default function AdminNetwork() {
                             </TableBody>
                         </Table>
                     </Paper>
+
+                    {lastDrift && (
+                        <Paper variant="outlined" sx={{ p: 2 }}>
+                            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                                Last reconciliation
+                            </Typography>
+                            {!lastDrift.ran ? (
+                                <Alert severity="warning" sx={{ mt: 1.5 }}>
+                                    Did not run: {lastDrift.reason ?? "unknown reason"}
+                                </Alert>
+                            ) : lastDrift.drifted.length === 0 ? (
+                                <Alert severity="success" sx={{ mt: 1.5 }}>
+                                    Nothing had drifted; the infrastructure already matched the
+                                    desired state.
+                                </Alert>
+                            ) : (
+                                <Stack
+                                    direction="row"
+                                    spacing={1.5}
+                                    sx={{ mt: 1, flexWrap: "wrap", rowGap: 1 }}
+                                >
+                                    {lastDrift.drifted.map((component) => (
+                                        <Chip
+                                            key={component}
+                                            label={
+                                                lastDrift.repaired.includes(component)
+                                                    ? `${component}: repaired`
+                                                    : `${component}: drifted`
+                                            }
+                                            color={
+                                                lastDrift.repaired.includes(component)
+                                                    ? "success"
+                                                    : "error"
+                                            }
+                                            size="small"
+                                        />
+                                    ))}
+                                </Stack>
+                            )}
+                            {lastDrift.failed.map((failure) => (
+                                <Alert
+                                    key={`${failure.component}-${failure.detail}`}
+                                    severity="error"
+                                    sx={{ mt: 1.5 }}
+                                >
+                                    {failure.component}: {failure.detail}
+                                </Alert>
+                            ))}
+                        </Paper>
+                    )}
 
                     {lastAttempt && (
                         <Paper variant="outlined" sx={{ p: 2 }}>

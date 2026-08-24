@@ -26,6 +26,8 @@ export const Instances = {
         const res = await pool.query(
             `SELECT instance.*,
                     network_group.state AS network_group_state,
+                    network_group.vlan_tag AS network_group_vlan_tag,
+                    network_group.subnet_cidr AS network_group_subnet_cidr,
                     profile.id AS profile_id,
                     profile.name AS profile_name
              FROM instances instance
@@ -42,6 +44,8 @@ export const Instances = {
         const res = await pool.query(
             `SELECT instance.*,
                     network_group.state AS network_group_state,
+                    network_group.vlan_tag AS network_group_vlan_tag,
+                    network_group.subnet_cidr AS network_group_subnet_cidr,
                     profile.id AS profile_id,
                     profile.name AS profile_name
              FROM instances instance
@@ -55,6 +59,8 @@ export const Instances = {
         const res = await pool.query(
             `SELECT instance.*,
                     network_group.state AS network_group_state,
+                    network_group.vlan_tag AS network_group_vlan_tag,
+                    network_group.subnet_cidr AS network_group_subnet_cidr,
                     profile.id AS profile_id,
                     profile.name AS profile_name
              FROM instances instance

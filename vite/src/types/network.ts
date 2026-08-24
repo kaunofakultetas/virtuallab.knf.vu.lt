@@ -42,6 +42,27 @@ export interface NetworkGroupSummary {
  * The success shape of a network group release. A refusal never reaches the
  * client as a body -- the route answers those with 409 and an `error` string.
  */
+export type DriftComponent =
+    | "gateway-policy"
+    | "access-policy"
+    | "access-trunk"
+    | "vm-firewall";
+
+/**
+ * The outcome of one observe-then-repair pass.
+ *
+ * `ran: false` is not an error -- the pass declines outside `active` mode, and
+ * when another reconciliation already holds the lock. `failed` can be non-empty
+ * alongside `repaired`: components are repaired independently.
+ */
+export interface DriftReconciliationReport {
+    ran: boolean;
+    reason?: string;
+    drifted: DriftComponent[];
+    repaired: DriftComponent[];
+    failed: { component: DriftComponent; detail: string }[];
+}
+
 export interface NetworkTeardownOutcome {
     released: true;
     vlan_tag: number;
