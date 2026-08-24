@@ -34,6 +34,7 @@ import type {
     NetworkCheckStatus,
     NetworkGroupSummary,
     NetworkReadiness,
+    NetworkTeardownOutcome,
     ReconciliationAttempt,
 } from "@/types/network";
 import { getErrorMessage } from "@/utils/errors";
@@ -56,6 +57,25 @@ const groupStateColor: Record<
     error: "error",
 };
 
+/**
+ * Why a group cannot be released, or null when it can be.
+ *
+ * These mirror the guards inside `releaseNetworkGroup` on the server, which is
+ * where they are actually enforced. Restating them here only decides what the
+ * button looks like, so a disabled control can say why instead of letting the
+ * request travel to a 409.
+ */
+const releaseBlockedReason = (group: NetworkGroupSummary): string | null => {
+    if (group.instance_count > 0) {
+        return "The group still has VMs. Deleting the last one releases it automatically.";
+    }
+    if (group.vlan_tag === null) {
+        return "The group holds no VLAN or subnet, so there is nothing to release.";
+    }
+    return null;
+};
+
+
 const shortRevision = (revision: string | null) =>
     revision ? revision.slice(0, 12) : "—";
 
@@ -74,6 +94,8 @@ export default function AdminNetwork() {
     });
     const [savingPeering, setSavingPeering] = useState(false);
     const [removingPeering, setRemovingPeering] = useState<string | null>(null);
+    const [releaseTarget, setReleaseTarget] = useState<NetworkGroupSummary | null>(null);
+    const [releasing, setReleasing] = useState<number | null>(null);
     const [snackbar, setSnackbar] = useState<{
         message: string;
         severity: "success" | "error";
@@ -193,6 +215,40 @@ export default function AdminNetwork() {
             });
         } finally {
             setRemovingPeering(null);
+        }
+    };
+
+    /**
+     * Resumes teardown for one group, returning its VLAN and subnet to the pool.
+     *
+     * Teardown runs several reconciliations against Proxmox and the appliances,
+     * so this request can be slow. It is deliberately synchronous, like the
+     * dry-run above: the outcome is only meaningful once every step has either
+     * converged or refused.
+     *
+     * The dialog stays open on failure. A teardown that stops part-way leaves
+     * the group in `deleting` with its allocation intact, and the identical
+     * request is the correct retry once the cause is fixed.
+     */
+    const releaseGroup = async (group: NetworkGroupSummary) => {
+        setReleasing(group.id);
+        try {
+            const response = await axios.post<NetworkTeardownOutcome>(
+                `/api/network/groups/${group.id}/release`,
+            );
+            setReleaseTarget(null);
+            setSnackbar({
+                message: `Group ${group.id} released. VLAN ${response.data.vlan_tag} is back in the pool.`,
+                severity: "success",
+            });
+            await fetchData(false);
+        } catch (err) {
+            setSnackbar({
+                message: getErrorMessage(err, "Failed to release the network group."),
+                severity: "error",
+            });
+        } finally {
+            setReleasing(null);
         }
     };
 
@@ -357,44 +413,75 @@ export default function AdminNetwork() {
                                     <TableCell>Subnet</TableCell>
                                     <TableCell align="right">VMs</TableCell>
                                     <TableCell>Applied</TableCell>
+                                    <TableCell align="right">Actions</TableCell>
                                 </TableRow>
                             </TableHead>
                             <TableBody>
                                 {groups.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={8}>
+                                        <TableCell colSpan={9}>
                                             <Typography variant="body2" color="text.secondary">
                                                 No network groups yet.
                                             </Typography>
                                         </TableCell>
                                     </TableRow>
                                 ) : (
-                                    groups.map((group) => (
-                                        <TableRow key={group.id} hover>
-                                            <TableCell>{group.id}</TableCell>
-                                            <TableCell>{group.owner_id}</TableCell>
-                                            <TableCell>{group.profile_name}</TableCell>
-                                            <TableCell>
-                                                <Tooltip title={group.last_error ?? ""}>
-                                                    <Chip
-                                                        label={group.state}
-                                                        color={groupStateColor[group.state]}
-                                                        size="small"
-                                                    />
-                                                </Tooltip>
-                                            </TableCell>
-                                            <TableCell>{group.vlan_tag ?? "—"}</TableCell>
-                                            <TableCell sx={{ fontFamily: "monospace" }}>
-                                                {group.subnet_cidr ?? "—"}
-                                            </TableCell>
-                                            <TableCell align="right">
-                                                {group.instance_count}
-                                            </TableCell>
-                                            <TableCell sx={{ fontFamily: "monospace" }}>
-                                                {shortRevision(group.applied_revision)}
-                                            </TableCell>
-                                        </TableRow>
-                                    ))
+                                    groups.map((group) => {
+                                        const blockedReason = releaseBlockedReason(group);
+                                        return (
+                                            <TableRow key={group.id} hover>
+                                                <TableCell>{group.id}</TableCell>
+                                                <TableCell>{group.owner_id}</TableCell>
+                                                <TableCell>{group.profile_name}</TableCell>
+                                                <TableCell>
+                                                    <Tooltip title={group.last_error ?? ""}>
+                                                        <Chip
+                                                            label={group.state}
+                                                            color={groupStateColor[group.state]}
+                                                            size="small"
+                                                        />
+                                                    </Tooltip>
+                                                </TableCell>
+                                                <TableCell>{group.vlan_tag ?? "—"}</TableCell>
+                                                <TableCell sx={{ fontFamily: "monospace" }}>
+                                                    {group.subnet_cidr ?? "—"}
+                                                </TableCell>
+                                                <TableCell align="right">
+                                                    {group.instance_count}
+                                                </TableCell>
+                                                <TableCell sx={{ fontFamily: "monospace" }}>
+                                                    {shortRevision(group.applied_revision)}
+                                                </TableCell>
+                                                <TableCell align="right">
+                                                    <Tooltip
+                                                        title={
+                                                            blockedReason
+                                                            ?? "Return this group's VLAN and subnet to the pool."
+                                                        }
+                                                    >
+                                                        {/* A disabled button fires no events, so the
+                                                            tooltip needs a wrapper that still does. */}
+                                                        <span>
+                                                            <Button
+                                                                size="small"
+                                                                color="warning"
+                                                                onClick={() => setReleaseTarget(group)}
+                                                                // Teardown takes the reconciliation lock,
+                                                                // so a second release would only queue
+                                                                // behind the first and time out.
+                                                                disabled={
+                                                                    blockedReason !== null
+                                                                    || releasing !== null
+                                                                }
+                                                            >
+                                                                Release
+                                                            </Button>
+                                                        </span>
+                                                    </Tooltip>
+                                                </TableCell>
+                                            </TableRow>
+                                        );
+                                    })
                                 )}
                             </TableBody>
                         </Table>
@@ -587,6 +674,58 @@ export default function AdminNetwork() {
                         }
                     >
                         {savingPeering ? "Adding…" : "Add peering"}
+                    </Button>
+                </DialogActions>
+            </Dialog>
+
+            <Dialog
+                open={releaseTarget !== null}
+                onClose={() => releasing === null && setReleaseTarget(null)}
+                fullWidth
+                maxWidth="sm"
+            >
+                <DialogTitle>Release network group {releaseTarget?.id}</DialogTitle>
+                <DialogContent>
+                    <Stack spacing={2} sx={{ mt: 1 }}>
+                        <Typography variant="body2" color="text.secondary">
+                            This deletes the group&apos;s VNet, withdraws its VLAN from the Gateway,
+                            the Access appliance and the trunk, and returns the VLAN and subnet to
+                            the pool. The owner&apos;s next VM gets a fresh group and a different
+                            VLAN.
+                        </Typography>
+                        {releaseTarget && (
+                            <Stack spacing={0.5}>
+                                <Typography variant="body2">
+                                    Owner <strong>{releaseTarget.owner_id}</strong> on profile{" "}
+                                    <strong>{releaseTarget.profile_name}</strong>
+                                </Typography>
+                                <Typography variant="body2" sx={{ fontFamily: "monospace" }}>
+                                    VLAN {releaseTarget.vlan_tag} · {releaseTarget.vnet_name} ·{" "}
+                                    {releaseTarget.subnet_cidr}
+                                </Typography>
+                            </Stack>
+                        )}
+                        <Alert severity="info">
+                            Teardown runs several reconciliations and can take a while. If it stops
+                            part-way the group stays in <code>deleting</code> with its allocation
+                            reserved, and running this again resumes from where it stopped.
+                        </Alert>
+                    </Stack>
+                </DialogContent>
+                <DialogActions>
+                    <Button
+                        onClick={() => setReleaseTarget(null)}
+                        disabled={releasing !== null}
+                    >
+                        Cancel
+                    </Button>
+                    <Button
+                        variant="contained"
+                        color="warning"
+                        onClick={() => releaseTarget && void releaseGroup(releaseTarget)}
+                        disabled={releasing !== null}
+                    >
+                        {releasing !== null ? "Releasing…" : "Release group"}
                     </Button>
                 </DialogActions>
             </Dialog>

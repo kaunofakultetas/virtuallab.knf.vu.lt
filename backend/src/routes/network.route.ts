@@ -21,12 +21,14 @@ import {
     removeGroupPeering,
 } from "@/network/policy";
 import { createNetworkProxmoxObserver } from "@/network/proxmox-clients";
+import { NetworkTeardownError, releaseNetworkGroup } from "@/network/teardown";
 import {
     AccessClientConfigurationError,
     createAccessObserver,
 } from "@/network/access-clients";
 import { AccessObservationClient } from "@/network/adapters/access";
 import { createGatewayObserver } from "@/network/gateway-clients";
+import { NetworkGroup } from "@/types/network-groups";
 import { pool } from "@/utils/db";
 import { logger } from "@/utils/logger";
 import { Router } from "express";
@@ -34,6 +36,7 @@ import { z } from "zod";
 
 const router = Router();
 const revisionSchema = z.string().regex(/^[0-9a-f]{64}$/);
+const profileIdSchema = z.coerce.number().int().positive();
 const dryRunSchema = z.object({
     apply: z.literal(false),
     expected_revision: revisionSchema.optional(),
@@ -64,6 +67,75 @@ router.get("/groups", isAuthenticated, isAdmin, async (_req, res) => {
     } catch (error) {
         logger.error(error, "Error listing network groups");
         return res.status(500).json({ error: "Failed to list network groups" });
+    }
+});
+
+/**
+ * Resumes the teardown of a network group, releasing its VLAN and subnet.
+ *
+ * Provisioning already releases a group when its last VM is deleted. This exists
+ * for the case that path leaves behind: a teardown that failed part-way puts the
+ * group in `deleting` with its allocation still reserved, deliberately, and
+ * nothing moves it on -- `allocateNetworkGroup` resumes `error`, never
+ * `deleting`. Until somebody retries, the owner cannot create another VM on that
+ * profile, because `resolveNetworkAttachment` refuses every state but `creating`
+ * and `active`. Teardown is idempotent, so a retry continues from wherever the
+ * previous attempt stopped.
+ *
+ * Every guard stays in `releaseNetworkGroup` rather than being restated here: it
+ * refuses a group that still has instances, one whose VNet a guest still
+ * references, and any network mode other than `active`. This route reports a
+ * refusal; it never overrides one.
+ *
+ * Used by the admin Network page. The equivalent CLI is
+ * `npm run release-network-group`, which this deliberately does not replace --
+ * the script still works when the API is down.
+ */
+router.post("/groups/:groupId/release", isAuthenticated, isAdmin, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+    const groupId = profileIdSchema.safeParse(req.params.groupId);
+    if (!groupId.success) {
+        return res.status(400).json({ error: "Invalid network group ID" });
+    }
+
+    try {
+        const group = (await pool.query<NetworkGroup>(
+            "SELECT * FROM network_groups WHERE id = $1",
+            [groupId.data],
+        )).rows[0];
+        if (!group) return res.status(404).json({ error: "Network group not found" });
+
+        const outcome = await releaseNetworkGroup(group, req.user.vu_id);
+        if (!outcome.released) {
+            // A refusal is a legitimate answer, not a fault: the group gained a
+            // VM, holds no allocation, or the mode forbids teardown. 409 keeps
+            // it distinguishable from the 500 a genuine failure produces.
+            return res.status(409).json({ error: outcome.reason });
+        }
+        logger.info(
+            {
+                networkGroupId: group.id,
+                vlanTag: outcome.vlan_tag,
+                vnetName: outcome.vnet_name,
+                steps: outcome.steps,
+                requestedBy: req.user.vu_id,
+            },
+            "Released a network group and returned its VLAN to the pool",
+        );
+        return res.json(outcome);
+    } catch (error) {
+        if (error instanceof NetworkTeardownError) {
+            // The group stays in `deleting` with its allocation reserved, which
+            // is what makes an identical request a valid retry once the cause is
+            // fixed. `step` tells the operator where it stopped.
+            logger.error(
+                { err: error, networkGroupId: groupId.data },
+                "Network group release failed; the group remains in `deleting`",
+            );
+            return res.status(409).json({ error: error.message, step: error.step });
+        }
+        logger.error(error, "Error releasing a network group");
+        return res.status(500).json({ error: "Failed to release the network group" });
     }
 });
 
@@ -142,7 +214,6 @@ router.get("/reconciliation-attempts/:id", isAuthenticated, isAdmin, async (req,
  * next reconciliation renders it, on the same path provisioning and teardown
  * use. That keeps the apply surface exactly where it already is.
  */
-const profileIdSchema = z.coerce.number().int().positive();
 const peeringBodySchema = z.object({
     group_a_id: z.number().int().positive(),
     group_b_id: z.number().int().positive(),

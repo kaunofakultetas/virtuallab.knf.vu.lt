@@ -1,0 +1,15 @@
+info:
+  name: Release Network Group
+  type: http
+  seq: 5
+
+http:
+  method: POST
+  url: "{{API_URL}}/network/groups/1/release"
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

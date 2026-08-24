@@ -38,6 +38,17 @@ export interface NetworkGroupSummary {
     instance_count: number;
 }
 
+/**
+ * The success shape of a network group release. A refusal never reaches the
+ * client as a body -- the route answers those with 409 and an `error` string.
+ */
+export interface NetworkTeardownOutcome {
+    released: true;
+    vlan_tag: number;
+    vnet_name: string;
+    steps: string[];
+}
+
 export interface GroupPeering {
     group_a_id: number;
     group_b_id: number;
