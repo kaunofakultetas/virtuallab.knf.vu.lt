@@ -8,7 +8,10 @@ import {
     NetworkTeardownError,
     releaseNetworkGroup,
 } from "../src/network/teardown";
-import { ReconciliationAttempt } from "../src/network/reconciliation-attempts";
+import {
+    ReconciliationAttempt,
+    ReconciliationLockedError,
+} from "../src/network/reconciliation-attempts";
 
 function group(overrides: Partial<NetworkGroup> = {}): NetworkGroup {
     return {
@@ -52,8 +55,14 @@ function attempt(id: string, overrides: Partial<ReconciliationAttempt> = {}): Re
 
 function harness(overrides: Partial<NetworkTeardownDependencies> = {}) {
     const order: string[] = [];
+    const slept: number[] = [];
+    const recorded: string[] = [];
     const dependencies: NetworkTeardownDependencies = {
         getMode: async () => "active",
+        // Recorded rather than performed: the retry backoff is real time in
+        // production and would be real time here too.
+        async sleep(milliseconds) { slept.push(milliseconds); },
+        async recordTeardownError(_groupId, lastError) { recorded.push(lastError); },
         async markDeleting(groupId) {
             order.push("mark-deleting");
             return group({ id: groupId, state: "deleting" });
@@ -68,7 +77,7 @@ function harness(overrides: Partial<NetworkTeardownDependencies> = {}) {
         gatewayRevision: async () => "b".repeat(64),
         ...overrides,
     };
-    return { order, dependencies };
+    return { order, slept, recorded, dependencies };
 }
 
 test("teardown runs the exact inverse of provisioning", async () => {
@@ -182,6 +191,71 @@ test("a revision that never settles fails the named step", async () => {
             error.step === "access-policy" && /after 2 attempts/.test(error.message)
         ),
     );
+});
+
+test("a stranded teardown records why it stopped, on the row it stranded", async () => {
+    // The group stays `deleting` with its allocation reserved either way. What
+    // changes is that the operator can now see the reason on the row instead of
+    // finding `last_error = NULL` and having to go to the logs.
+    const { recorded, dependencies } = harness({
+        async reconcileAccessPolicy() {
+            throw new Error("Access apply is blocked by required checks: access-live-trunks");
+        },
+    });
+
+    await assert.rejects(() => releaseNetworkGroup(group(), "vu1234", dependencies));
+    assert.equal(recorded.length, 1);
+    assert.match(recorded[0], /access-live-trunks/);
+});
+
+test("a teardown that succeeds records no error", async () => {
+    const { recorded, dependencies } = harness();
+
+    assert.equal((await releaseNetworkGroup(group(), "vu1234", dependencies)).released, true);
+    assert.deepEqual(recorded, []);
+});
+
+test("a held reconciliation lock is waited out, not spun through", async () => {
+    // Regression: the loop used a bare `continue`, so all three attempts were
+    // spent inside a millisecond. Both things it retries are cleared by another
+    // operation finishing -- appliance time, not CPU time -- so retrying with no
+    // delay made three attempts worth exactly one, and teardown failed whenever
+    // the ten-minute drift sweep happened to be mid-repair.
+    let calls = 0;
+    const { slept, dependencies } = harness({
+        async reconcileGatewayPolicy() {
+            calls += 1;
+            throw new ReconciliationLockedError();
+        },
+        revisionAttempts: 3,
+        revisionRetryMs: 3_000,
+    });
+
+    await assert.rejects(
+        () => releaseNetworkGroup(group(), "vu1234", dependencies),
+        (error: NetworkTeardownError) => (
+            error.step === "gateway-policy"
+            && /already running/.test(error.message)
+        ),
+    );
+    assert.equal(calls, 3);
+    // Two waits for three attempts: nothing is gained by sleeping before failing.
+    assert.deepEqual(slept, [3_000, 3_000]);
+});
+
+test("a lock that clears between attempts lets teardown finish", async () => {
+    let calls = 0;
+    const { slept, dependencies } = harness({
+        async reconcileGatewayPolicy() {
+            calls += 1;
+            if (calls === 1) throw new ReconciliationLockedError();
+            return attempt("1");
+        },
+        revisionRetryMs: 3_000,
+    });
+
+    assert.equal((await releaseNetworkGroup(group(), "vu1234", dependencies)).released, true);
+    assert.deepEqual(slept, [3_000]);
 });
 
 test("an attempt that finishes failed is a teardown failure", async () => {

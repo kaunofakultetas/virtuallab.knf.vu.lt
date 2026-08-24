@@ -56,9 +56,36 @@ export class RestrictedSshAccessObservationClient implements AccessObservationCl
     }
 }
 
+/**
+ * Whether the trunk carries every VLAN the plan wants, ignoring extras.
+ *
+ * Deliberately not set equality, and the asymmetry is the whole point.
+ *
+ * Teardown marks a group `deleting` before it touches any appliance, which drops
+ * that group's VLAN out of `trunks.access_vlan_ids` while the Access appliance is
+ * still physically carrying it. Under equality that makes both trunk checks fail,
+ * and because they are `required` and absent from ACCESS_APPLY_FIXABLE_CHECKS
+ * they block the Access policy apply outright -- which is the step teardown runs
+ * *next*, and which runs BEFORE the trunk step that would have pruned the extra
+ * VLAN. Teardown therefore manufactured the exact condition that blocked it, on
+ * every allocated group, with no retry able to clear it.
+ *
+ * The two directions are not equally dangerous. A *missing* desired VLAN still
+ * fails, and must: policy written for a VLAN the trunk cannot carry is policy
+ * that silently never takes effect. An *extra* VLAN is inert -- once the group's
+ * VNet and guest interface are gone nothing offers frames for it -- and it is
+ * still reported and still pruned, because `access-trunk-persistent` and
+ * `access-trunk-live` in access-trunk.ts compare by equality and are what the
+ * trunk applier and the drift sweep actually act on.
+ */
 function sameVlans(left: number[], right: number[]): boolean {
     const canonical = (values: number[]) => [...new Set(values)].sort((a, b) => a - b);
     return JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
+}
+
+function carriesEveryVlan(observed: number[], desired: number[]): boolean {
+    const present = new Set(observed);
+    return desired.every((vlan) => present.has(vlan));
 }
 
 export function planAccess(
@@ -78,8 +105,15 @@ export function planAccess(
     });
     const persistentTopologyMatches = observation.net1.name === "eth1"
         && observation.net1.bridge === accessPlan.desired_state.transport.bridge;
-    const persistentTrunksMatch = sameVlans(observation.net1.trunks, desiredTrunks);
-    const liveTrunksMatch = observation.host_veth.exists
+    // Two questions, deliberately separated. "Carried" decides the check status,
+    // and therefore whether the Access policy apply is allowed to proceed at all.
+    // "Exact" decides whether a trunk update is planned, so an extra VLAN is
+    // still reported and still pruned -- it just no longer bars the door.
+    const persistentTrunksCarried = carriesEveryVlan(observation.net1.trunks, desiredTrunks);
+    const liveTrunksCarried = observation.host_veth.exists
+        && carriesEveryVlan(observation.host_veth.vlan_ids, desiredTrunks);
+    const persistentTrunksExact = sameVlans(observation.net1.trunks, desiredTrunks);
+    const liveTrunksExact = observation.host_veth.exists
         && sameVlans(observation.host_veth.vlan_ids, desiredTrunks);
     const guestReport = compareAccessObservation(accessPlan, observation.guest);
     const checks: ReconciliationDryRun["checks"] = [
@@ -105,9 +139,9 @@ export function planAccess(
         {
             key: "access-persistent-trunks",
             component: "access",
-            status: persistentTrunksMatch ? "pass" : "fail",
+            status: persistentTrunksCarried ? "pass" : "fail",
             required: true,
-            detail: `Expected [${desiredTrunks.join(", ")}], observed [${observation.net1.trunks.join(", ")}]`,
+            detail: `Requires [${desiredTrunks.join(", ")}], observed [${observation.net1.trunks.join(", ")}]`,
         },
         {
             key: "access-migration-vlan",
@@ -130,9 +164,9 @@ export function planAccess(
         {
             key: "access-live-trunks",
             component: "access",
-            status: liveTrunksMatch ? "pass" : "fail",
+            status: liveTrunksCarried ? "pass" : "fail",
             required: true,
-            detail: `Expected [${desiredTrunks.join(", ")}], observed [${observation.host_veth.vlan_ids.join(", ")}]`,
+            detail: `Requires [${desiredTrunks.join(", ")}], observed [${observation.host_veth.vlan_ids.join(", ")}]`,
         },
         ...guestReport.checks.map((check) => ({
             key: `access-guest-${check.key}`,
@@ -143,7 +177,7 @@ export function planAccess(
         })),
     ];
     const actions: ReconciliationDryRun["actions"] = [];
-    if (!persistentTopologyMatches || !persistentTrunksMatch) {
+    if (!persistentTopologyMatches || !persistentTrunksExact) {
         actions.push({
             component: "access",
             operation: "update",
@@ -156,7 +190,7 @@ export function planAccess(
             },
         });
     }
-    if (!liveTrunksMatch) {
+    if (!liveTrunksExact) {
         actions.push({
             component: "access",
             operation: "update",

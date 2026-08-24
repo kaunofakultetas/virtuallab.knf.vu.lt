@@ -271,6 +271,34 @@ export async function markNetworkGroupDeleting(groupId: number): Promise<Network
 }
 
 /**
+ * Records why a teardown stopped, on the row it stopped on.
+ *
+ * Guarded on `deleting` so it can only ever annotate a group that teardown
+ * actually owns; `markNetworkGroupError` refuses that state on purpose, because
+ * demoting a mid-teardown group to `error` would drag it back into the
+ * operational plan while its VNet was already gone.
+ *
+ * The state is deliberately left alone. This writes a reason, not a transition:
+ * the group stays `deleting` and stays retryable, and the allocation stays
+ * reserved. Without it a stranded group carried no diagnosis at all -- the only
+ * record of why it stopped was a log line, and the operator looking at the row
+ * saw `deleting` with a NULL `last_error` and nothing to act on.
+ */
+export async function markNetworkGroupTeardownError(
+    groupId: number,
+    lastError: string,
+): Promise<void> {
+    await pool.query(
+        `UPDATE network_groups
+         SET last_error = $2,
+             updated_at = NOW()
+         WHERE id = $1
+           AND state = 'deleting'`,
+        [groupId, lastError],
+    );
+}
+
+/**
  * Releases a torn-down group's VLAN and subnet by removing the row.
  *
  * Both guards matter and neither is redundant: `deleting` proves the caller went

@@ -80,6 +80,46 @@ test("plans persistent and live trunk updates independently", () => {
     assert.deepEqual(live.actions.map(({ resource }) => resource), ["bridge/veth200i1/vlans"]);
 });
 
+test("an extra trunk VLAN mid-teardown is pruned, not treated as a blocker", () => {
+    // Regression, and the reason group teardown could never complete: teardown
+    // marks a group `deleting` before it touches any appliance, so the desired
+    // trunk list shrinks while the Access appliance is still carrying the VLAN.
+    // These two checks are `required` and not in ACCESS_APPLY_FIXABLE_CHECKS, so
+    // failing them blocked the Access policy apply -- the step teardown runs
+    // next, and the one that runs before the trunk step that prunes the extra.
+    const result = planAccess(infrastructurePlan, {
+        ...observation,
+        net1: { ...observation.net1, trunks: [2000, 2002, 2007] },
+        host_veth: { ...observation.host_veth, vlan_ids: [2000, 2002, 2007] },
+    });
+
+    assert.equal(result.checks.find(({ key }) => key === "access-persistent-trunks")?.status, "pass");
+    assert.equal(result.checks.find(({ key }) => key === "access-live-trunks")?.status, "pass");
+
+    // Tolerated for the gate, still planned away: the extra VLAN is reported and
+    // pruned, it just no longer bars every other Access change behind it.
+    assert.deepEqual(
+        result.actions.map(({ resource }) => resource).sort(),
+        ["bridge/veth200i1/vlans", "lxc/200/net1"],
+    );
+});
+
+test("a trunk missing a desired VLAN still fails closed", () => {
+    // The dangerous direction, and the one these checks exist for: policy
+    // written for a VLAN the trunk cannot carry silently never takes effect.
+    const persistent = planAccess(infrastructurePlan, {
+        ...observation,
+        net1: { ...observation.net1, trunks: [2000] },
+    });
+    const live = planAccess(infrastructurePlan, {
+        ...observation,
+        host_veth: { ...observation.host_veth, vlan_ids: [2000] },
+    });
+
+    assert.equal(persistent.checks.find(({ key }) => key === "access-persistent-trunks")?.status, "fail");
+    assert.equal(live.checks.find(({ key }) => key === "access-live-trunks")?.status, "fail");
+});
+
 test("fails closed for malformed topology and plans guest drift", () => {
     assert.throws(
         () => planAccess(infrastructurePlan, { ...observation, vmid: 201 }),
