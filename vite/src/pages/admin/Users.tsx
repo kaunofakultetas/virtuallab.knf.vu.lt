@@ -1,3 +1,18 @@
+// -----------------------------------------------------------
+//  [*] Admin — users
+//
+//  The user table (sortable by last login) with three
+//  dialogs: bulk create (paste VU IDs, one shared password
+//  or auto-generated ones), the creation-results dialog —
+//  the ONLY place generated passwords ever appear, with
+//  per-row and copy-all actions, so close it only after
+//  saving them — and per-user edit (role and/or password
+//  reset, the new password revealed on click).
+//
+//  Used by:
+//    - router.tsx — route /admin/users
+// -----------------------------------------------------------
+
 import { useEffect, useState } from "react";
 import axios from "axios";
 import Box from "@mui/material/Box";
@@ -96,6 +111,7 @@ export default function Users() {
         setShowResults(false);
     };
 
+    // The bulk textarea accepts newlines, commas and semicolons alike.
     const parseBulkIds = (raw: string): string[] =>
         raw
             .split(/[\n,;]+/)

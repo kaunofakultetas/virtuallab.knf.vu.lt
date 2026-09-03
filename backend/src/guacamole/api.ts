@@ -1,3 +1,26 @@
+// -----------------------------------------------------------
+//  [*] Guacamole — the HTTP API client
+//
+//  One class wrapping Guacamole's REST API. Auth is lazy:
+//  the admin token is fetched on first use and refreshed
+//  once per request on a 403, so an expired session heals
+//  itself mid-flight. Connections are cached BY NAME (names
+//  are our instance IDs) and the cache is invalidated by
+//  every mutating call, refreshed by listConnections().
+//
+//  The RDP/SSH create and update methods carry Guacamole's
+//  full parameter sheets with mostly empty strings — that is
+//  what the Guacamole API expects for "unset"; only
+//  hostname, credentials, port and the one-session-per-user
+//  attribute actually vary.
+//
+//  Used by:
+//    - guacamole/index.ts — the app-wide singleton
+//    - instances.controller.ts / instances.route.ts — user,
+//      connection and session-URL management
+//    - users.controller.ts, metrics-poller.ts
+// -----------------------------------------------------------
+
 import { Agent, fetch } from "undici";
 import { logger } from "@/utils/logger";
 import { metadata } from "@/utils/metadata";
@@ -15,6 +38,7 @@ import {
     GuacamoleUsersResponse,
 } from "./types";
 
+
 export class GuacamoleClient {
     private readonly baseUrl: string;
     private readonly publicUrl: string | null;
@@ -30,6 +54,7 @@ export class GuacamoleClient {
     private authToken: string | null = null;
     private dataSource: string | null = "postgresql";
 
+    // Keyed by connection NAME (our instance ID), not Guacamole's identifier.
     private connectionCache: Record<string, GuacamoleConnectionSummary> = {};
     private connectionCacheFetching: Promise<GuacamoleConnectionsResponse> | null =
         null;
@@ -51,6 +76,8 @@ export class GuacamoleClient {
         });
     }
 
+    // parentIdentifier and the request timeout come from the metadata store;
+    // cached for the client's lifetime, so changing them needs a restart.
     private async getSettings(): Promise<{
         parentIdentifier: string;
         timeoutMs: number;
@@ -67,10 +94,17 @@ export class GuacamoleClient {
         return this.settingsCache;
     }
 
+
+    // -------------------------------------------------------
+    // Connection cache
+    // -------------------------------------------------------
+
     invalidateConnectionCache() {
         this.connectionCacheOutdated = true;
     }
 
+    // The fetch is deduplicated: concurrent callers share one in-flight
+    // listConnections() instead of stampeding the API.
     async getConnectionCache(
         refetch: boolean = false,
     ): Promise<Record<string, GuacamoleConnectionSummary>> {
@@ -84,6 +118,11 @@ export class GuacamoleClient {
         }
         return this.connectionCache;
     }
+
+
+    // -------------------------------------------------------
+    // Auth and session URLs
+    // -------------------------------------------------------
 
     async getToken(
         username: string,
@@ -133,6 +172,8 @@ export class GuacamoleClient {
         }
     }
 
+    // Logs in AS THE STUDENT (their Guacamole password is their user ID) and
+    // builds the deep link straight into the connection's client view.
     async getSessionUrl(userId: string, connectionId: string): Promise<string> {
         const userAuth = await this.getToken(userId, userId);
         const urlB64Data = `${connectionId}\0c\0${this.dataSource}`;
@@ -148,6 +189,14 @@ export class GuacamoleClient {
         this.dataSource = data.dataSource;
     }
 
+
+    // -------------------------------------------------------
+    // Transport — every method below funnels through this
+    // -------------------------------------------------------
+
+    // GETs retry with linear backoff; one 403 triggers a re-login without
+    // consuming an attempt. 404s stay out of the error counter because this
+    // codebase regularly uses them as a normal "missing" signal.
     private async request<T>(
         method: GuacamoleHTTPMethod,
         path: string,
@@ -176,6 +225,8 @@ export class GuacamoleClient {
 
         const { timeoutMs } = await this.getSettings();
         for (let attempt = 1; attempt <= attempts; attempt++) {
+            // The token rides in the query string on every attempt, so a
+            // mid-loop re-login is picked up automatically.
             opts.query["token"] = this.authToken!;
             const queryString = `?${new URLSearchParams(opts.query).toString()}`;
             const url = `${this.baseUrl}${path}${queryString}`;
@@ -258,7 +309,7 @@ export class GuacamoleClient {
 
                 logger.warn(
                     { err, attempt, method, path },
-                    "retrying proxmox GET",
+                    "retrying guacamole GET",
                 );
                 await new Promise((r) => setTimeout(r, 300 * attempt));
             } finally {
@@ -269,6 +320,11 @@ export class GuacamoleClient {
         throw new Error("unreachable");
     }
 
+
+    // -------------------------------------------------------
+    // Users
+    // -------------------------------------------------------
+
     async getUsers(): Promise<GuacamoleUsersResponse> {
         return this.request<GuacamoleUsersResponse>(
             "GET",
@@ -276,6 +332,7 @@ export class GuacamoleClient {
         );
     }
 
+    // null on 404 — "no such user" is an answer, not an error.
     async getUser(username: string): Promise<GuacamoleUser | null> {
         try {
             return await this.request<GuacamoleUser>(
@@ -322,6 +379,11 @@ export class GuacamoleClient {
             `/api/session/data/${this.dataSource}/users/${username}/permissions`,
         );
     }
+
+
+    // -------------------------------------------------------
+    // RDP connections
+    // -------------------------------------------------------
 
     async createConnection(
         machineIp: string,
@@ -431,6 +493,9 @@ export class GuacamoleClient {
         );
     }
 
+    // Same sheet as createConnection, resent in full with the new hostname —
+    // Guacamole's PUT replaces the whole parameter set, so a partial update
+    // would blank everything else.
     async updateConnectionIp(
         machineId: string,
         machineOwnerId: string,
@@ -541,13 +606,19 @@ export class GuacamoleClient {
         );
     }
 
+
+    // -------------------------------------------------------
+    // Connection listing, permissions and lookups
+    // -------------------------------------------------------
+
     async listConnections(): Promise<GuacamoleConnectionsResponse> {
         const resp = await this.request<GuacamoleConnectionsResponse>(
             "GET",
             `/api/session/data/${this.dataSource}/connections`,
         );
 
-        // Update connectionCache
+        // Rebuild the cache in place — clearing keys rather than swapping the
+        // object keeps references handed out earlier valid.
         for (const key of Object.keys(this.connectionCache)) {
             delete this.connectionCache[key];
         }
@@ -598,6 +669,11 @@ export class GuacamoleClient {
         );
         this.connectionCacheOutdated = true;
     }
+
+
+    // -------------------------------------------------------
+    // SSH connections — the leaner parameter sheet
+    // -------------------------------------------------------
 
     async createSshConnection(
         machineIp: string,
@@ -711,6 +787,7 @@ export class GuacamoleClient {
         );
     }
 
+    // Idempotent: deleting an already-absent user succeeds silently.
     async deleteUser(username: string): Promise<void> {
         try {
             await this.request<void>(

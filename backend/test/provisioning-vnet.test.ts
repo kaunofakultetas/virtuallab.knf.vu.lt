@@ -1,3 +1,13 @@
+// -----------------------------------------------------------
+//  [*] Tests — the per-provisioning VNet step
+//
+//  Plan-ownership checks and the bounded retry around
+//  concurrent revision changes.
+//
+//  Covers src/network/provisioning-vnet.ts. Run with `npm
+//  test` (the whole suite) inside the backend container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import { InfrastructureApplyRevisionError } from "../src/network/infrastructure-apply-runner";

@@ -1,3 +1,20 @@
+// -----------------------------------------------------------
+//  [*] Network adapters — Proxmox VNets: observe, plan, act
+//
+//  The VNet component's three halves: observe (zones +
+//  VNets in one snapshot), plan (grade the observation
+//  against the infrastructure plan, emitting create/update
+//  actions), and execute (run the mutations, one SDN apply,
+//  then the caller's verification). Unowned lab* VNets are
+//  reported as non-required failing checks — visible, but
+//  never auto-deleted.
+//
+//  Used by:
+//    - infrastructure-apply-runner.ts, infrastructure-apply.ts
+//    - infrastructure-reconciler.ts — the dry-run
+//    - test/proxmox-vnet-reconciliation.test.ts
+// -----------------------------------------------------------
+
 import {
     ProxmoxNodeTaskStatus,
     ProxmoxSdnVnet,
@@ -44,6 +61,27 @@ export type ProxmoxVnetActionTransition = (
 
 export type ProxmoxVnetPostApplyVerification = () => Promise<void>;
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// executeProxmoxVnetActions
+// -----------------------------------------------------------
+//
+// Runs the mutations in order, then ONE SDN apply for the
+// whole batch (SDN edits are staged until applied), then
+// the caller's verification. On any failure every started
+// action is transitioned to "failed" so the attempt record
+// knows which mutations may have reached Proxmox.
+//
+// Used by:
+//   - infrastructure-apply.ts — applyProxmoxVnetActions
+// -----------------------------------------------------------
+
 export async function executeProxmoxVnetActions(
     client: ProxmoxVnetMutationClient,
     actions: ProxmoxVnetMutationAction[],
@@ -80,6 +118,22 @@ export async function executeProxmoxVnetActions(
     }
 }
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// observeProxmoxVnets
+// -----------------------------------------------------------
+//
+// Used by:
+//   - infrastructure-apply-runner.ts,
+//     infrastructure-reconciler.ts
+// -----------------------------------------------------------
+
 export async function observeProxmoxVnets(
     client: ProxmoxVnetObservationClient,
 ): Promise<ProxmoxVnetObservation> {
@@ -89,6 +143,28 @@ export async function observeProxmoxVnets(
     ]);
     return { zones, vnets };
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// planProxmoxVnets
+// -----------------------------------------------------------
+//
+// Grades the observation against the plan: the zone must
+// exist, every desired VNet must exist with the right
+// zone/tag (a mismatch plans an update, absence a create),
+// and lab-prefixed VNets the plan does not own are reported
+// as non-required failures — never deleted here.
+//
+// Used by:
+//   - infrastructure-apply-runner.ts,
+//     infrastructure-reconciler.ts
+// -----------------------------------------------------------
 
 export function planProxmoxVnets(
     plan: InfrastructurePlan,

@@ -1,3 +1,14 @@
+// -----------------------------------------------------------
+//  [*] Tests — the rendered Gateway configuration
+//
+//  The squid.conf, dnsmasq, nftables and networkd text
+//  renderGatewayConfiguration emits — SNI splicing, DHCP
+//  broadcast, counted denials and all.
+//
+//  Covers src/network/gateway-render.ts. Run with `npm test`
+//  (the whole suite) inside the backend container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import {

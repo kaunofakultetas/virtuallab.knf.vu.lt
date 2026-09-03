@@ -1,3 +1,21 @@
+// -----------------------------------------------------------
+//  [*] Components — the template create/edit dialog
+//
+//  The shared form both template admin pages drive:
+//  identity fields on top, then connection settings that
+//  swap with the connection type. Credential fields use the
+//  three-way mode selects — "creatorId" and "userId" are
+//  placeholders the BACKEND resolves to real IDs when a
+//  session opens; only "custom" stores a literal value.
+//
+//  Fully controlled: the parent owns TemplateFormValues and
+//  receives partial changes through onChange.
+//
+//  Used by:
+//    - pages/admin/Templates.tsx — the create dialog
+//    - pages/admin/TemplateDetails.tsx — the edit dialog
+// -----------------------------------------------------------
+
 import React from "react";
 import Box from "@mui/material/Box";
 import Dialog from "@mui/material/Dialog";
@@ -58,6 +76,21 @@ const connectionTypeOptions = [
     { value: "ssh", label: "SSH (browser terminal)" },
     { value: "web", label: "Web interface (HTTP/HTTPS)" },
 ];
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// TemplateFormDialog
+// -----------------------------------------------------------
+//
+// Used by:
+//   - admin/Templates.tsx, admin/TemplateDetails.tsx
+// -----------------------------------------------------------
 
 export function TemplateFormDialog({
     open,

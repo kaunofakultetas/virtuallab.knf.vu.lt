@@ -1,3 +1,18 @@
+// -----------------------------------------------------------
+//  [*] Utils — the metrics poll loop
+//
+//  Refreshes every gauge in metrics.ts that mirrors external
+//  state: Postgres row counts, the Proxmox cluster view, and
+//  Guacamole sessions. The three sources run in parallel and
+//  fail independently — one dead source logs a warning and
+//  leaves its gauges stale (visible through the per-source
+//  last-success timestamp) while the others keep updating.
+//
+//  Used by:
+//    - index.ts — schedules pollMetrics() on an interval
+//      via toad-scheduler
+// -----------------------------------------------------------
+
 import { proxmox } from "@/proxmox";
 import { guacamole } from "@/guacamole";
 import { pool } from "@/utils/db";
@@ -22,6 +37,25 @@ import {
     vlabUsersTotal,
 } from "@/utils/metrics";
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// recordSource
+// -----------------------------------------------------------
+//
+// Wraps one source's poll in its own timer and last-success
+// stamp, and swallows its failure — a broken Proxmox API
+// must not stop the Postgres gauges from refreshing.
+//
+// Used by:
+//   - pollMetrics (below) — once per source
+// -----------------------------------------------------------
+
 const recordSource = async (source: string, fn: () => Promise<void>) => {
     const stopTimer = metricsPollDurationSeconds.startTimer({ source });
     try {
@@ -36,6 +70,25 @@ const recordSource = async (source: string, fn: () => Promise<void>) => {
         stopTimer();
     }
 };
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// pollPostgres
+// -----------------------------------------------------------
+//
+// Row counts grouped by role/status/type. Gauges are reset
+// before re-set so a group that dropped to zero disappears
+// instead of freezing at its last value.
+//
+// Used by:
+//   - pollMetrics (below)
+// -----------------------------------------------------------
 
 const pollPostgres = async () => {
     const [users, instances, templates] = await Promise.all([
@@ -66,6 +119,10 @@ const pollPostgres = async () => {
     }
 };
 
+
+// The subset of a /cluster/resources entry the poller reads; every field
+// beyond type/id is optional because node, vm and storage rows share the
+// same endpoint.
 type ClusterResource = {
     type: string;
     id: string;
@@ -85,6 +142,25 @@ type ClusterResource = {
     storage?: string;
     online?: number;
 };
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// pollProxmox
+// -----------------------------------------------------------
+//
+// Node, storage and VM gauges from three parallel
+// /cluster/resources reads. Everything is reset-then-set so
+// removed nodes/VMs/storages vanish from the export.
+//
+// Used by:
+//   - pollMetrics (below)
+// -----------------------------------------------------------
 
 const pollProxmox = async () => {
     const [nodes, vms, storages] = await Promise.all([
@@ -178,6 +254,25 @@ const pollProxmox = async () => {
     }
 };
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// pollGuacamole
+// -----------------------------------------------------------
+//
+// User/connection totals and the live session sum. Uses the
+// cached connection list with forceRefresh, so the poll is
+// what keeps that cache warm for the rest of the app.
+//
+// Used by:
+//   - pollMetrics (below)
+// -----------------------------------------------------------
+
 const pollGuacamole = async () => {
     const [users, connections] = await Promise.all([
         guacamole.getUsers(),
@@ -191,6 +286,24 @@ const pollGuacamole = async () => {
         connList.reduce((sum, c) => sum + (c.activeConnections ?? 0), 0),
     );
 };
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// pollMetrics
+// -----------------------------------------------------------
+//
+// One tick of the loop: all three sources in parallel, each
+// isolated by recordSource. Never rejects.
+//
+// Used by:
+//   - index.ts — the scheduled poll job
+// -----------------------------------------------------------
 
 export const pollMetrics = async () => {
     await Promise.all([

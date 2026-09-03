@@ -1,20 +1,28 @@
+// -----------------------------------------------------------
+//  [*] Scripts — apply-access-trunk (operator CLI)
+//
+//  Operator entry point for reconciling the Access LXC's
+//  VLAN trunk. Unlike the policy applier, this mutates the
+//  hypervisor rather than the container: `pct set 200
+//  --net1 ...,trunks=<list>` for the persistent allowlist
+//  and `bridge vlan add/del` for the running veth. Both
+//  halves are needed, because neither implies the other.
+//
+//  Provisioning drives the same runner automatically; this
+//  exists so trunk drift can be repaired without creating a
+//  VM to trigger it.
+//
+//  Usage:
+//    npm run apply-access-trunk -- --requested-by <vu_id>
+//      --expected-revision <sha256> --confirm APPLY-ACCESS-TRUNK
+// -----------------------------------------------------------
+
 import { createAccessObserver, createAccessTrunkApplier } from "@/network/access-clients";
 import { AccessTrunkApplyError } from "@/network/access-trunk-apply";
 import { AccessTrunkApplyRunner } from "@/network/access-trunk-runner";
 import { pool } from "@/utils/db";
 import { z } from "zod";
 
-/**
- * Operator entry point for reconciling the Access LXC's VLAN trunk.
- *
- * Unlike the policy applier, this mutates the hypervisor rather than the
- * container: `pct set 200 --net1 ...,trunks=<list>` for the persistent
- * allowlist and `bridge vlan add/del` for the running veth. Both halves are
- * needed, because neither implies the other.
- *
- * Provisioning drives the same runner automatically; this exists so trunk drift
- * can be repaired without creating a VM to trigger it.
- */
 const argumentsSchema = z.object({
     requestedBy: z.string().min(1),
     expectedRevision: z.string().regex(/^[0-9a-f]{64}$/),
@@ -23,10 +31,12 @@ const argumentsSchema = z.object({
     confirmation: z.literal("APPLY-ACCESS-TRUNK"),
 });
 
+
 function option(name: string): string | undefined {
     const index = process.argv.indexOf(name);
     return index >= 0 ? process.argv[index + 1] : undefined;
 }
+
 
 async function main(): Promise<void> {
     const parsed = argumentsSchema.safeParse({
@@ -76,6 +86,7 @@ async function main(): Promise<void> {
         await pool.end();
     }
 }
+
 
 main().catch((error: unknown) => {
     if (error instanceof AccessTrunkApplyError) {

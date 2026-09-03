@@ -1,26 +1,33 @@
 #!/usr/bin/env python3
+############################################################
+#  [*] Gateway apply — policy installer inside VM 202
+#
+#  Applies rendered Gateway policy with a dead-man's switch.
+#  This encodes the procedure that was proven by hand:
+#  stage, validate offline, arm an automatic rollback,
+#  install, reload, verify — and only then let the caller
+#  commit. If the caller never commits (the ruleset locked
+#  it out, or the orchestrator died mid-apply), the timer
+#  restores the previous state on its own.
+#
+#  VM 202 has no serial console, so an unreachable guest
+#  means offline disk surgery. The timer is therefore armed
+#  BEFORE anything is installed, and the caller is expected
+#  to prove reachability over a NEW connection before
+#  committing.
+#
+#  Operations (JSON on stdin, JSON on stdout; stdlib only):
+#    stage    — validate and install a revision, arm timer
+#    commit   — cancel the timer, discard the backup
+#    rollback — restore the backup now, cancel the timer
+#    status   — report the current transaction, if any
+#
+#  Used by:
+#    - apply_gateway_forced_command.py — pushes this file to
+#      the guest over SSH on every backend apply call, so
+#      the guest can never drift onto a stale applier
+############################################################
 
-"""Applies rendered Gateway policy inside VM 202, with a dead-man's switch.
-
-This encodes the procedure that was proven by hand: stage, validate offline,
-arm an automatic rollback, install, reload, verify, and only then let the caller
-commit. If the caller never commits -- because the ruleset locked it out, or the
-orchestrator died mid-apply -- the timer restores the previous state on its own.
-
-VM 202 has no serial console, so an unreachable guest means offline disk
-surgery. The timer is therefore armed BEFORE anything is installed, and the
-caller is expected to prove reachability over a NEW connection before
-committing.
-
-Operations:
-  stage     validate and install a revision, arming a rollback timer
-  commit    cancel the timer and discard the backup (the change becomes permanent)
-  rollback  restore the backup immediately and cancel the timer
-  status    report the current transaction, if any
-
-Standard library only. Reads its request as JSON on stdin, answers JSON on
-stdout.
-"""
 
 import datetime
 import hashlib
@@ -33,6 +40,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# Everything transactional lives under /run — tmpfs — so a reboot clears a
+# half-finished transaction together with the timer that guarded it.
 STATE_DIR = Path("/run/virtual-lab-gateway")
 BACKUP_DIR = STATE_DIR / "backup"
 STAGE_DIR = STATE_DIR / "stage"
@@ -76,26 +85,89 @@ MIN_ROLLBACK_SECONDS = 60
 MAX_ROLLBACK_SECONDS = 1800
 
 
-class ApplyError(Exception):
-    """A failure that should be reported to the caller, not a crash."""
 
+
+
+
+
+
+############################################################
+# ApplyError
+############################################################
+#
+# A failure that should be reported to the caller as a clean
+# stderr line and exit code — not a crash with a traceback.
+############################################################
+
+class ApplyError(Exception):
+    pass
+
+
+
+
+
+
+
+
+############################################################
+# run
+############################################################
+#
+# The shared subprocess wrapper: captured output, text mode,
+# a 60 s default timeout, check=True unless the caller opts
+# out.
+#
+# Used by:
+#   - nearly every function in this file
+############################################################
 
 def run(command: list[str], *, check: bool = True, timeout: int = 60) -> subprocess.CompletedProcess:
     return subprocess.run(command, check=check, capture_output=True, text=True, timeout=timeout)
 
 
+
+
+
+
+
+
+############################################################
+# allowed
+############################################################
+#
+# True when a requested path is one of the four exact
+# managed files or matches a managed VLAN-unit pattern.
+#
+# Used by:
+#   - operation_stage (below) — rejects unmanaged paths
+############################################################
+
 def allowed(path: str) -> bool:
     return path in ALLOWED_EXACT or any(pattern.fullmatch(path) for pattern in ALLOWED_PATTERNS)
 
 
-def existing_variable_paths() -> list[str]:
-    """Managed paths that vary with desired state and currently exist on disk.
 
-    Only the pattern-matched paths are enumerated. The four exact files are
-    emitted by every full render, so treating them as prunable would let a
-    partial request delete squid.conf. The VLAN files are the ones that legitimately
-    disappear when a group is released.
-    """
+
+
+
+
+
+############################################################
+# existing_variable_paths
+############################################################
+#
+# Managed paths that vary with desired state and currently
+# exist on disk. Only the pattern-matched paths are
+# enumerated: the four exact files are emitted by every full
+# render, so treating them as prunable would let a partial
+# request delete squid.conf. The VLAN files are the ones
+# that legitimately disappear when a group is released.
+#
+# Used by:
+#   - operation_stage (below) — computes the prune set
+############################################################
+
+def existing_variable_paths() -> list[str]:
     found = []
     for directory in (Path("/etc/systemd/network"),):
         if not directory.is_dir():
@@ -107,6 +179,24 @@ def existing_variable_paths() -> list[str]:
                 found.append(str(candidate))
     return sorted(found)
 
+
+
+
+
+
+
+
+############################################################
+# parse_request
+############################################################
+#
+# Reads and validates the JSON request from stdin: bounded
+# size, version/target/operation checks, and a strict UUID
+# request ID.
+#
+# Used by:
+#   - main (below)
+############################################################
 
 def parse_request() -> dict[str, Any]:
     raw = sys.stdin.buffer.read(MAX_REQUEST_BYTES + 1)
@@ -126,6 +216,23 @@ def parse_request() -> dict[str, Any]:
     return request
 
 
+
+
+
+
+
+
+############################################################
+# read_transaction
+############################################################
+#
+# The staged transaction record, or None when nothing is
+# staged.
+#
+# Used by:
+#   - operation_stage / commit / rollback / status (below)
+############################################################
+
 def read_transaction() -> dict[str, Any] | None:
     try:
         return json.loads(TRANSACTION_FILE.read_text())
@@ -133,10 +240,46 @@ def read_transaction() -> dict[str, Any] | None:
         return None
 
 
+
+
+
+
+
+
+############################################################
+# timer_active
+############################################################
+#
+# True while the rollback timer is armed — the window in
+# which a staged transaction still awaits its commit.
+#
+# Used by:
+#   - operation_stage (below) — refuses to stack transactions
+#   - every operation's response (the rollback_armed field)
+############################################################
+
 def timer_active() -> bool:
     result = run(["systemctl", "is-active", f"{ROLLBACK_UNIT}.timer"], check=False)
     return result.stdout.strip() == "active"
 
+
+
+
+
+
+
+
+############################################################
+# live_revision
+############################################################
+#
+# The desired-state revision embedded in the live managed
+# table, or None when the table is absent or carries no
+# revision comment.
+#
+# Used by:
+#   - verify, operation_rollback, operation_status (below)
+############################################################
 
 def live_revision() -> str | None:
     tables = run(["nft", "list", "tables"]).stdout
@@ -146,13 +289,27 @@ def live_revision() -> str | None:
     return match.group(1) if match else None
 
 
-def validate_staged(files: dict[str, str]) -> list[str]:
-    """Offline validation of staged content.
 
-    Every validator here is necessary but not sufficient. `squid -k parse` in
-    particular never binds a socket, so a port collision passes parse and only
-    fatals at start; the service restart below is the real gate.
-    """
+
+
+
+
+
+############################################################
+# validate_staged
+############################################################
+#
+# Offline validation of staged content. Every validator here
+# is necessary but not sufficient: `squid -k parse` in
+# particular never binds a socket, so a port collision
+# passes parse and only fatals at start — the service
+# restart in reload_services is the real gate.
+#
+# Used by:
+#   - operation_stage (below)
+############################################################
+
+def validate_staged(files: dict[str, str]) -> list[str]:
     performed = []
     nft_path = STAGE_DIR / "virtual-lab-gateway.nft"
     if nft_path.exists():
@@ -171,12 +328,26 @@ def validate_staged(files: dict[str, str]) -> list[str]:
     return performed
 
 
-def arm_rollback(seconds: int, paths: list[str]) -> None:
-    """Writes and schedules the restore, before anything is installed.
 
-    The script restores from the backup captured in this transaction rather than
-    re-deriving desired state, so it puts back exactly what was in force.
-    """
+
+
+
+
+
+############################################################
+# arm_rollback
+############################################################
+#
+# Writes and schedules the restore, before anything is
+# installed. The script restores from the backup captured in
+# this transaction rather than re-deriving desired state, so
+# it puts back exactly what was in force.
+#
+# Used by:
+#   - operation_stage (below)
+############################################################
+
+def arm_rollback(seconds: int, paths: list[str]) -> None:
     lines = ["#!/bin/sh", "# Automatic rollback for a Gateway policy apply.", "set -e", ""]
     for path in paths:
         backup = BACKUP_DIR / path.lstrip("/").replace("/", "_")
@@ -214,9 +385,32 @@ def arm_rollback(seconds: int, paths: list[str]) -> None:
     ])
 
 
+
+
+
+
+
+
+############################################################
+# cancel_rollback
+############################################################
+#
+# Stops the timer and clears any failed unit state so the
+# next apply can reuse the unit name.
+#
+# Used by:
+#   - operation_commit, operation_rollback (below)
+############################################################
+
 def cancel_rollback() -> None:
     run(["systemctl", "stop", f"{ROLLBACK_UNIT}.timer"], check=False)
     run(["systemctl", "reset-failed", f"{ROLLBACK_UNIT}.timer", f"{ROLLBACK_UNIT}.service"], check=False)
+
+
+
+
+
+
 
 
 # `50-<parent>.<vlan>.netdev` -> `<parent>.<vlan>`. Only names derived from a
@@ -224,19 +418,35 @@ def cancel_rollback() -> None:
 VLAN_NETDEV = re.compile(rf"^50-({INTERFACE}\.\d{{4}})\.netdev$")
 
 
+
+
+
+
+
+
+############################################################
+# remove_pruned_vlan_links
+############################################################
+#
+# Deletes the VLAN interfaces whose .netdev files this
+# transaction removed. systemd-networkd creates netdevs but
+# never destroys them: removing the file and reloading
+# leaves the interface up and carrying an address, so a
+# released group's VLAN would stay live on the Gateway until
+# the next reboot. Verification would catch it — it observes
+# the interface after the files are gone — but catching it
+# means the apply fails rather than converges, so the link
+# has to be removed here.
+#
+# The rollback needs no counterpart: restoring the .netdev
+# file and reloading recreates the interface, which is how
+# networkd made it in the first place.
+#
+# Used by:
+#   - reload_services (below)
+############################################################
+
 def remove_pruned_vlan_links(pruned: list[str]) -> list[str]:
-    """Deletes the VLAN interfaces whose .netdev files this transaction removed.
-
-    systemd-networkd creates netdevs but never destroys them: removing the file
-    and reloading leaves the interface up and carrying an address, so a released
-    group's VLAN would stay live on the Gateway until the next reboot. The
-    verification step catches it -- it observed the interface after the files were
-    gone -- but catching it means the apply fails rather than converges, so the
-    link has to be removed here.
-
-    The rollback needs no counterpart: restoring the .netdev file and reloading
-    recreates the interface, which is how networkd made it in the first place.
-    """
     removed = []
     for path in pruned:
         match = VLAN_NETDEV.match(Path(path).name)
@@ -253,14 +463,28 @@ def remove_pruned_vlan_links(pruned: list[str]) -> list[str]:
     return removed
 
 
-def reload_services(paths: list[str], pruned: list[str] | None = None) -> list[str]:
-    """Reloads what the staged paths actually affect.
 
-    networkd is reloaded only when networkd files were staged, and it is done
-    FIRST: a VLAN subinterface must exist before dnsmasq binds to its address.
-    Without this a group's networkd files would be written and never take
-    effect, which is invisible until the first group is allocated.
-    """
+
+
+
+
+
+############################################################
+# reload_services
+############################################################
+#
+# Reloads what the staged paths actually affect. networkd is
+# reloaded only when networkd files were staged, and it is
+# done FIRST: a VLAN subinterface must exist before dnsmasq
+# binds to its address. Without this a group's networkd
+# files would be written and never take effect — invisible
+# until the first group is allocated.
+#
+# Used by:
+#   - operation_stage (below)
+############################################################
+
+def reload_services(paths: list[str], pruned: list[str] | None = None) -> list[str]:
     reloaded = []
     if any(path.startswith("/etc/systemd/network/") for path in paths):
         run(["networkctl", "reload"])
@@ -278,8 +502,24 @@ def reload_services(paths: list[str], pruned: list[str] | None = None) -> list[s
     return reloaded
 
 
+
+
+
+
+
+
+############################################################
+# verify
+############################################################
+#
+# Confirms the services actually run and the kernel carries
+# the requested revision.
+#
+# Used by:
+#   - operation_stage, operation_commit (below)
+############################################################
+
 def verify(revision: str) -> dict[str, Any]:
-    """Confirms the services actually run and the kernel carries the revision."""
     inactive = [
         service for service in ("nftables", "dnsmasq", "squid")
         if run(["systemctl", "is-active", service], check=False).stdout.strip() != "active"
@@ -293,7 +533,29 @@ def verify(revision: str) -> dict[str, Any]:
     }
 
 
+
+
+
+
+
+
+############################################################
+# operation_stage
+############################################################
+#
+# The main event: back up, install, arm the dead-man's
+# switch. Everything before arm_rollback may raise freely;
+# everything after it runs under the timer, so a crash there
+# still converges back on its own.
+#
+# Used by:
+#   - main (below) — operation "stage"
+############################################################
+
 def operation_stage(request: dict[str, Any]) -> dict[str, Any]:
+    # STEP 1: validate the request — revision shape, non-empty
+    # files, every path inside the managed allowlist
+    # ========================================================
     revision = request.get("revision", "")
     if not re.fullmatch(r"[0-9a-f]{64}", str(revision)):
         raise ApplyError("revision must be a 64 character hex digest")
@@ -304,23 +566,37 @@ def operation_stage(request: dict[str, Any]) -> dict[str, Any]:
     if rejected:
         raise ApplyError(f"refusing to write unmanaged path(s): {', '.join(sorted(rejected)[:5])}")
 
+
+    # STEP 2: refuse to stack transactions — a staged apply with
+    # a live timer must commit or roll back first
+    # ==========================================================
     existing = read_transaction()
     if existing and timer_active():
         raise ApplyError(
             f"transaction {existing['transaction_id']} is still awaiting commit or rollback",
         )
 
+
+    # STEP 3: bound the rollback window
+    # =================================
     rollback_seconds = int(request.get("rollback_seconds", 300))
     if not MIN_ROLLBACK_SECONDS <= rollback_seconds <= MAX_ROLLBACK_SECONDS:
         raise ApplyError(
             f"rollback_seconds must be between {MIN_ROLLBACK_SECONDS} and {MAX_ROLLBACK_SECONDS}",
         )
 
+
+    # STEP 4: start from clean stage/backup directories
+    # =================================================
     for directory in (STAGE_DIR, BACKUP_DIR):
         shutil.rmtree(directory, ignore_errors=True)
         directory.mkdir(parents=True, exist_ok=True)
     STATE_DIR.chmod(0o700)
 
+
+    # STEP 5: stage the candidates and back up every file this
+    # transaction touches — overwrites and prunes alike
+    # ========================================================
     # A group that was released leaves managed VLAN files behind: the renderer
     # emits nothing for it, so writing alone can never converge. Anything managed
     # and no longer desired is removed as part of the same transaction.
@@ -336,11 +612,18 @@ def operation_stage(request: dict[str, Any]) -> dict[str, Any]:
     for path in prune:
         shutil.copy2(path, BACKUP_DIR / path.lstrip("/").replace("/", "_"))
 
+
+    # STEP 6: validate offline, then arm the dead-man's switch —
+    # from here on a crash rolls itself back
+    # ==========================================================
     validators = validate_staged(files)
     # The rollback must cover pruned paths too, or an abandoned transaction would
     # leave the guest missing files it had before.
     arm_rollback(rollback_seconds, sorted([*files, *prune]))
 
+
+    # STEP 7: install the new files and delete the pruned ones
+    # ========================================================
     for path, content in sorted(files.items()):
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -350,9 +633,15 @@ def operation_stage(request: dict[str, Any]) -> dict[str, Any]:
     for path in prune:
         Path(path).unlink(missing_ok=True)
 
+
+    # STEP 8: make it live — service reloads — and verify
+    # ===================================================
     reloaded = reload_services(sorted([*files, *prune]), prune)
     verification = verify(str(revision))
 
+
+    # STEP 9: record the transaction for commit/rollback
+    # ==================================================
     transaction_id = f"gw-{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
     transaction = {
         "transaction_id": transaction_id,
@@ -385,6 +674,25 @@ def operation_stage(request: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+
+
+
+
+
+
+############################################################
+# operation_commit
+############################################################
+#
+# Makes a staged transaction permanent — but only a
+# converged one: committing an unconverged apply would keep
+# a broken ruleset and cancel the very timer that would have
+# fixed it.
+#
+# Used by:
+#   - main (below) — operation "commit"
+############################################################
+
 def operation_commit(request: dict[str, Any]) -> dict[str, Any]:
     transaction = read_transaction()
     if not transaction:
@@ -413,6 +721,23 @@ def operation_commit(request: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+
+
+
+
+
+
+############################################################
+# operation_rollback
+############################################################
+#
+# Restores immediately by running the same script the timer
+# would have run, then cancels the timer.
+#
+# Used by:
+#   - main (below) — operation "rollback"
+############################################################
+
 def operation_rollback(request: dict[str, Any]) -> dict[str, Any]:
     transaction = read_transaction()
     if not transaction:
@@ -431,6 +756,23 @@ def operation_rollback(request: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+
+
+
+
+
+
+############################################################
+# operation_status
+############################################################
+#
+# Read-only report: staged transaction, timer state, live
+# revision.
+#
+# Used by:
+#   - main (below) — operation "status"
+############################################################
+
 def operation_status(_request: dict[str, Any]) -> dict[str, Any]:
     transaction = read_transaction()
     return {
@@ -439,6 +781,24 @@ def operation_status(_request: dict[str, Any]) -> dict[str, Any]:
         "observed_revision": live_revision(),
     }
 
+
+
+
+
+
+
+
+############################################################
+# main
+############################################################
+#
+# Root check, request parsing, operation dispatch, and the
+# JSON envelope on stdout.
+#
+# Used by:
+#   - the __main__ guard — this file is pushed to the guest
+#     and executed by apply_gateway_forced_command.py
+############################################################
 
 def main() -> None:
     if os.geteuid() != 0:
@@ -463,6 +823,14 @@ def main() -> None:
     }, sort_keys=True, separators=(",", ":")))
 
 
+
+
+
+
+
+
+# Known failure types become one stderr line and exit 1; the forced command
+# forwards that stderr to the backend verbatim.
 if __name__ == "__main__":
     try:
         main()

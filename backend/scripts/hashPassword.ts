@@ -1,9 +1,21 @@
+// -----------------------------------------------------------
+//  [*] Scripts — hash-password (operator CLI)
+//
+//  Prints a bcrypt hash for a password — for seeding or
+//  fixing user rows by hand. Invalid --rounds values fall
+//  back to 10 silently rather than erroring.
+//
+//  Usage:
+//    npm run hash-password -- --password <pw> [--rounds 10]
+// -----------------------------------------------------------
+
 import bcrypt from "bcryptjs";
 
 type Args = {
     password: string;
     rounds: number;
 };
+
 
 function parseArgs(): Args {
     const argv = process.argv.slice(2);
@@ -45,11 +57,13 @@ function parseArgs(): Args {
     return { password, rounds };
 }
 
+
 async function main() {
     const { password, rounds } = parseArgs();
     const hash = await bcrypt.hash(password, rounds);
     console.log(hash);
 }
+
 
 void main().catch((err: Error) => {
     console.error(err.message);

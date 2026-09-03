@@ -1,3 +1,27 @@
+// -----------------------------------------------------------
+//  [*] Proxmox — API types
+//
+//  Shapes of what the Proxmox VE API sends and accepts,
+//  grouped to mirror the client's sections: client plumbing,
+//  VM listings, guest agent, tasks, node networks, SDN,
+//  guest config, and the firewall family. Create/Update
+//  variants take booleans where the read shapes carry 0/1 —
+//  encodeForm in api.ts does the translation.
+//
+//  Field names with hyphens ("ip-address") are verbatim API
+//  keys; the client's getVms/getVm rewrite hyphens to
+//  underscores only where an interface here says so.
+//
+//  Used by:
+//    - proxmox/api.ts and everything that calls it
+//    - network/adapters/* — the SDN and firewall shapes
+// -----------------------------------------------------------
+
+
+// -----------------------------------------------------------
+// Client plumbing
+// -----------------------------------------------------------
+
 export type ProxmoxHTTPMethod = "GET" | "POST" | "DELETE" | "PUT";
 
 export interface ProxmoxClientConfig {
@@ -19,15 +43,19 @@ export class ProxmoxApiError extends Error {
     }
 }
 
+// Every Proxmox response wraps its payload in { data: ... }.
 export interface ProxmoxApiResponse<T> {
     data: T;
 }
 
+
+// -----------------------------------------------------------
+// VM listings and status
+// -----------------------------------------------------------
+
 export type ProxmoxVMStatus = "running" | "stopped";
 
-/**
- * https://pve.proxmox.com/pve-docs/api-viewer/#/nodes/{node}/qemu
- */
+// https://pve.proxmox.com/pve-docs/api-viewer/#/nodes/{node}/qemu
 export interface ProxmoxNodeVM {
     vmid: number;
     status: ProxmoxVMStatus;
@@ -59,9 +87,7 @@ export interface ProxmoxNodeVM {
     uptime: number | null;
 }
 
-/**
- * https://pve.proxmox.com/pve-docs/api-viewer/#/nodes/{node}/qemu/{vmid}/status/current
- */
+// https://pve.proxmox.com/pve-docs/api-viewer/#/nodes/{node}/qemu/{vmid}/status/current
 export interface ProxmoxNodeVMStatus {
     vmid: number;
     status: ProxmoxVMStatus;
@@ -97,9 +123,11 @@ export interface ProxmoxNodeVMStatus {
     uptime: number | null;
 }
 
-/**
- * https://pve.proxmox.com/pve-docs/api-viewer/#/nodes/{node}/qemu/{vmid}/agent/network-get-interfaces
- */
+
+// -----------------------------------------------------------
+// Guest agent — network-get-interfaces
+// https://pve.proxmox.com/pve-docs/api-viewer/#/nodes/{node}/qemu/{vmid}/agent/network-get-interfaces
+// -----------------------------------------------------------
 
 export interface ProxmoxNodeVMNetIfaceIPAddr {
     "ip-address": string;
@@ -124,6 +152,11 @@ export interface ProxmoxNodeVMNetIface {
     "ip-addresses": ProxmoxNodeVMNetIfaceIPAddr[];
     statistics: ProxmoxNodeVMNetIfaceStatistics;
 }
+
+
+// -----------------------------------------------------------
+// Tasks — the UPID every write returns
+// -----------------------------------------------------------
 
 export interface ProxmoxNodeTaskStatus {
     id: string;
@@ -159,6 +192,11 @@ export class ProxmoxTaskTimeoutError extends Error {
         this.name = "ProxmoxTaskTimeoutError";
     }
 }
+
+
+// -----------------------------------------------------------
+// Node networks and SDN
+// -----------------------------------------------------------
 
 export interface ProxmoxNodeNetwork {
     iface: string;
@@ -225,11 +263,23 @@ export type ProxmoxSdnSubnetUpdate = Partial<Omit<ProxmoxSdnSubnetCreate, "subne
     digest?: string;
 };
 
+
+// -----------------------------------------------------------
+// Guest config
+// -----------------------------------------------------------
+
+// Only the fields the backend actually writes: NIC strings by index, a
+// delete list, and the optimistic-concurrency digest.
 export type ProxmoxGuestConfigUpdate = {
     digest?: string;
     delete?: string;
     [networkDevice: `net${number}`]: string | undefined;
 };
+
+
+// -----------------------------------------------------------
+// Firewall — rules, security groups, IPSets, options
+// -----------------------------------------------------------
 
 export interface ProxmoxFirewallRule {
     pos: number;
@@ -300,11 +350,11 @@ export interface ProxmoxFirewallOptions {
     enable?: number;
     dhcp?: number;
     ipfilter?: number;
-    /** Drops frames whose source MAC is not the one Proxmox assigned the NIC. */
+    // Drops frames whose source MAC is not the one Proxmox assigned the NIC.
     macfilter?: number;
-    /** IPv6 neighbour discovery. Off means IPv6 cannot establish on the segment. */
+    // IPv6 neighbour discovery. Off means IPv6 cannot establish on the segment.
     ndp?: number;
-    /** IPv6 router advertisements, which a lab VM must never be able to send. */
+    // IPv6 router advertisements, which a lab VM must never be able to send.
     radv?: number;
     log_level_in?: string;
     log_level_out?: string;
@@ -326,6 +376,11 @@ export interface ProxmoxFirewallOptionsUpdate {
     policy_out?: string;
     digest?: string;
 }
+
+
+// -----------------------------------------------------------
+// Storage
+// -----------------------------------------------------------
 
 export interface ProxmoxNodeStorageStatus {
     active: number;

@@ -1,9 +1,27 @@
+// -----------------------------------------------------------
+//  [*] Controllers — Users: the users table DAO
+//
+//  Account management around the vu_id identity. Two kinds
+//  of account live in one table: password accounts (bcrypt
+//  hash stored) and SSO accounts (password NULL) — the NULL
+//  is what passwordLogin and getProfile branch on.
+//
+//  delete() is the heavyweight: it tears down the user's
+//  instances first and treats a failed instance delete as
+//  fatal, while a failed Guacamole cleanup only logs — the
+//  DB row is already gone by then.
+//
+//  Used by:
+//    - auth.route.ts — every login/user-admin endpoint
+// -----------------------------------------------------------
+
 import { ExtendedUser, User, UserRole } from "@/types/auth";
 import { Instances } from "@/controllers/instances.controller";
 import { pool } from "@/utils/db";
 import { logger } from "@/utils/logger";
 import { guacamole } from "@/guacamole";
 import bcrypt from "bcryptjs";
+
 
 export const Users = {
     async create(vu_id: string, password: string, role: UserRole = "student") {
@@ -17,6 +35,7 @@ export const Users = {
 
             return res.rows[0];
         } catch (err) {
+            // 23505 = unique violation — the vu_id is taken.
             if ((err as any).code === "23505") {
                 throw new Error("User with this vu_id already exists");
             } else {
@@ -56,6 +75,7 @@ export const Users = {
             return null;
         }
 
+        // Fire-and-forget: the login answer must not wait on the timestamp.
         this.updateLastLogin(user.vu_id).then(() => {});
 
         return {
@@ -64,6 +84,8 @@ export const Users = {
         };
     },
 
+    // First SSO login creates the account (password NULL); later logins just
+    // bump last_login. Always a student — roles are granted by an admin.
     async upsertSsoUser(vu_id: string): Promise<User> {
         const res = await pool.query(
             `INSERT INTO users (vu_id, password, role)
@@ -86,6 +108,8 @@ export const Users = {
         return true;
     },
 
+    // Instances first (fatal on failure), then the DB row, then Guacamole
+    // (best-effort) — see the header banner.
     async delete(vu_id: string): Promise<boolean> {
         const ownedInstances = await Instances.getAllForUser(vu_id);
 

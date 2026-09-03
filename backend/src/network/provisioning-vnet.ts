@@ -1,3 +1,16 @@
+// -----------------------------------------------------------
+//  [*] Network — making a group's VNet real in Proxmox
+//
+//  The VNet half of provisioning: full-desired-state VNet
+//  reconciliation under the network mutator token, with a
+//  bounded retry around concurrent revision changes.
+//
+//  Used by:
+//    - provisioning-network.ts — the first infrastructure
+//      step before a VM attaches
+//    - test/provisioning-vnet.test.ts
+// -----------------------------------------------------------
+
 import { NetworkGroup } from "@/types/network-groups";
 import { pool } from "@/utils/db";
 import {
@@ -11,10 +24,8 @@ import { ReconciliationAttempt } from "./reconciliation-attempts";
 
 export class NetworkGroupVnetError extends Error {}
 
-/**
- * How many times to re-read the plan when a concurrent allocation changes the
- * desired revision between our read and the reconciliation lock.
- */
+// How many times to re-read the plan when a concurrent allocation changes the
+// desired revision between our read and the reconciliation lock.
 export const VNET_APPLY_REVISION_ATTEMPTS = 3;
 
 export type EnsureNetworkGroupVnetDependencies = {
@@ -22,6 +33,24 @@ export type EnsureNetworkGroupVnetDependencies = {
     applyVnets?: (input: InfrastructureApplyInput) => Promise<ReconciliationAttempt>;
     revisionAttempts?: number;
 };
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// applyVnetsWithMutator
+// -----------------------------------------------------------
+//
+// One runner invocation on a freshly built mutator client,
+// closed whatever happens.
+//
+// Used by:
+//   - ensureNetworkGroupVnet (below) — the default applier
+// -----------------------------------------------------------
 
 async function applyVnetsWithMutator(
     input: InfrastructureApplyInput,
@@ -37,19 +66,35 @@ async function applyVnetsWithMutator(
     }
 }
 
-/**
- * Makes an allocated group's SDN VNet exist in Proxmox before a VM attaches to
- * it.
- *
- * Reconciliation stays full-desired-state rather than per-group: the runner
- * plans every owned VNet, so this converges drift from earlier failures and is
- * a no-op once everything matches.
- *
- * The runner requires an exact desired revision. A concurrent allocation can
- * move that revision between our read and the reconciliation lock, so a bounded
- * retry re-reads the plan instead of failing a provisioning request for a race
- * that is already resolved.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// ensureNetworkGroupVnet
+// -----------------------------------------------------------
+//
+// Makes an allocated group's SDN VNet exist in Proxmox
+// before a VM attaches to it.
+//
+// Reconciliation stays full-desired-state rather than
+// per-group: the runner plans every owned VNet, so this
+// converges drift from earlier failures and is a no-op once
+// everything matches.
+//
+// The runner requires an exact desired revision. A
+// concurrent allocation can move that revision between our
+// read and the reconciliation lock, so a bounded retry
+// re-reads the plan instead of failing a provisioning
+// request for a race that is already resolved.
+//
+// Used by:
+//   - provisioning-network.ts
+// -----------------------------------------------------------
+
 export async function ensureNetworkGroupVnet(
     group: NetworkGroup,
     requestedBy: string,

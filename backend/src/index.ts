@@ -1,8 +1,37 @@
+// -----------------------------------------------------------
+//  [*] Backend — process entry point
+//
+//  Express wiring, the background jobs, and the shutdown
+//  path. Middleware order is deliberate: request ID first
+//  (everything downstream logs it), then access log, then
+//  metrics, then body/cookie parsing, then the routers.
+//
+//    GET  /            — liveness ("ok")
+//    GET  /health      — liveness (JSON)
+//    /metrics          — metricsRouter (Prometheus scrape)
+//    /auth             — authRouter
+//    /templates        — templatesRouter
+//    /instances        — instancesRouter
+//    /guacamole        — guacamoleRouter
+//    /metadata         — metadataRouter
+//    /lab-profiles     — labProfilesRouter
+//    /network          — networkRouter
+//
+//  Background jobs (toad-scheduler):
+//    every 15 s  — instance status sync from Proxmox
+//    every 15 s  — Prometheus gauge refresh (pollMetrics)
+//    every 1 m   — expired instance removal
+//    every 10 m  — network drift reconciliation
+// -----------------------------------------------------------
+
+// Shared singletons
 import { pool } from "@/utils/db";
 import { logger } from "@/utils/logger";
 import { metadata } from "@/utils/metadata";
 import { initSaml } from "@/utils/saml";
 import { pollMetrics } from "@/utils/metrics-poller";
+
+// Routers, one per mount point above
 import { authRouter } from "@/routes/auth.route";
 import { instancesRouter } from "@/routes/instances.route";
 import { templatesRouter } from "@/routes/templates.route";
@@ -11,6 +40,8 @@ import { metadataRouter } from "@/routes/metadata.route";
 import { metricsRouter } from "@/routes/metrics.route";
 import { labProfilesRouter } from "@/routes/lab-profiles.route";
 import { networkRouter } from "@/routes/network.route";
+
+// Job handlers and middleware
 import { Instances } from "@/controllers/instances.controller";
 import { loggerMiddleware } from "@/middleware/logger.middleware";
 import { metricsMiddleware } from "@/middleware/metrics.middleware";
@@ -30,6 +61,7 @@ import cookieParser from "cookie-parser";
 import { Server } from "http";
 import path from "path";
 import fs from "fs";
+
 
 const app: Application = express();
 const port: number = process.env.PORT ? parseInt(process.env.PORT) : 3000;
@@ -60,6 +92,27 @@ app.use("/lab-profiles", labProfilesRouter);
 app.use("/network", networkRouter);
 
 app.use(errorHandlerMiddleware);
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// shutdown
+// -----------------------------------------------------------
+//
+// Graceful stop with a 10 s hard deadline: HTTP first (stops
+// new work, drains in-flight requests), then the scheduler,
+// then the DB pool LAST — both of the former still need it.
+// The deadline timer is unref'ed so it cannot itself keep
+// the process alive.
+//
+// Used by:
+//   - the SIGTERM / SIGINT handlers below
+// -----------------------------------------------------------
 
 let server: Server | undefined;
 let shuttingDown = false;
@@ -102,6 +155,26 @@ const shutdown = async (signal: string) => {
 
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 process.on("SIGINT", () => void shutdown("SIGINT"));
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// bootstrap
+// -----------------------------------------------------------
+//
+// Startup order: schema + metadata defaults (idempotent on
+// every boot), SAML, the four background jobs, and only then
+// listen — so a request never arrives before the database is
+// ready. Any failure here tears everything down and exits.
+//
+// Used by:
+//   - the `void bootstrap()` call at the bottom of this file
+// -----------------------------------------------------------
 
 async function bootstrap() {
     try {
@@ -202,5 +275,6 @@ async function bootstrap() {
         process.exit(1);
     }
 }
+
 
 void bootstrap();

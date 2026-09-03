@@ -1,3 +1,33 @@
+// -----------------------------------------------------------
+//  [*] Routes — network: reconciliation and policy admin
+//
+//  Mounted at /network, admin-only throughout. The read side
+//  exposes the readiness report, the rendered plan and the
+//  group list; the write side is deliberately narrow — a
+//  dry-run reconciliation, an on-demand drift sweep, a
+//  stuck-group release, and the two policy tables (allowed
+//  domains, group peerings) that only become real when the
+//  next reconciliation renders them.
+//
+//    GET    /network/readiness                    — checks
+//    GET    /network/plan                         — plan
+//    GET    /network/groups                       — groups
+//    POST   /network/groups/:groupId/release      — teardown
+//    POST   /network/drift-reconciliations        — sweep now
+//    POST   /network/reconciliation-attempts      — dry-run
+//    GET    /network/reconciliation-attempts/:id  — one attempt
+//    GET    /network/profiles/:profileId/domains  — list
+//    POST   /network/profiles/:profileId/domains  — add
+//    DELETE /network/profiles/:pid/domains/:domain — remove
+//    GET    /network/peerings                     — list
+//    POST   /network/peerings                     — add
+//    DELETE /network/peerings/:aId/:bId           — remove
+//
+//  Used by:
+//    - admin/Network.tsx — everything here
+//    - admin/Settings.tsx — the readiness report
+// -----------------------------------------------------------
+
 import { isAdmin, isAuthenticated } from "@/middleware/auth.middleware";
 import { getNetworkPlan } from "@/network/desired-state";
 import { getNetworkGroups } from "@/network/groups";
@@ -38,11 +68,30 @@ import { z } from "zod";
 const router = Router();
 const revisionSchema = z.string().regex(/^[0-9a-f]{64}$/);
 const profileIdSchema = z.coerce.number().int().positive();
+// apply is pinned to false: only dry-run reconciliation exists over HTTP.
 const dryRunSchema = z.object({
     apply: z.literal(false),
     expected_revision: revisionSchema.optional(),
     idempotency_key: z.string().min(1).max(255).optional(),
 }).strict();
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// GET /network/readiness
+// -----------------------------------------------------------
+//
+// The full readiness report — the same one that gates
+// flipping settings.network.mode to "active".
+//
+// Used by:
+//   - admin/Network.tsx, admin/Settings.tsx
+// -----------------------------------------------------------
 
 router.get("/readiness", isAuthenticated, isAdmin, async (_req, res) => {
     try {
@@ -53,6 +102,23 @@ router.get("/readiness", isAuthenticated, isAdmin, async (_req, res) => {
     }
 });
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// GET /network/plan
+// -----------------------------------------------------------
+//
+// The rendered desired-state plan, straight from the DB.
+//
+// Used by:
+//   - admin/Network.tsx — the plan panel
+// -----------------------------------------------------------
+
 router.get("/plan", isAuthenticated, isAdmin, async (_req, res) => {
     try {
         return res.json(await getNetworkPlan());
@@ -61,6 +127,21 @@ router.get("/plan", isAuthenticated, isAdmin, async (_req, res) => {
         return res.status(500).json({ error: "Failed to generate network plan" });
     }
 });
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// GET /network/groups
+// -----------------------------------------------------------
+//
+// Used by:
+//   - admin/Network.tsx — the groups table
+// -----------------------------------------------------------
 
 router.get("/groups", isAuthenticated, isAdmin, async (_req, res) => {
     try {
@@ -71,27 +152,45 @@ router.get("/groups", isAuthenticated, isAdmin, async (_req, res) => {
     }
 });
 
-/**
- * Resumes the teardown of a network group, releasing its VLAN and subnet.
- *
- * Provisioning already releases a group when its last VM is deleted. This exists
- * for the case that path leaves behind: a teardown that failed part-way puts the
- * group in `deleting` with its allocation still reserved, deliberately, and
- * nothing moves it on -- `allocateNetworkGroup` resumes `error`, never
- * `deleting`. Until somebody retries, the owner cannot create another VM on that
- * profile, because `resolveNetworkAttachment` refuses every state but `creating`
- * and `active`. Teardown is idempotent, so a retry continues from wherever the
- * previous attempt stopped.
- *
- * Every guard stays in `releaseNetworkGroup` rather than being restated here: it
- * refuses a group that still has instances, one whose VNet a guest still
- * references, and any network mode other than `active`. This route reports a
- * refusal; it never overrides one.
- *
- * Used by the admin Network page. The equivalent CLI is
- * `npm run release-network-group`, which this deliberately does not replace --
- * the script still works when the API is down.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// POST /network/groups/:groupId/release
+// -----------------------------------------------------------
+//
+// Resumes the teardown of a network group, releasing its
+// VLAN and subnet.
+//
+// Provisioning already releases a group when its last VM is
+// deleted. This exists for the case that path leaves
+// behind: a teardown that failed part-way puts the group in
+// `deleting` with its allocation still reserved,
+// deliberately, and nothing moves it on —
+// `allocateNetworkGroup` resumes `error`, never `deleting`.
+// Until somebody retries, the owner cannot create another
+// VM on that profile, because `resolveNetworkAttachment`
+// refuses every state but `creating` and `active`. Teardown
+// is idempotent, so a retry continues from wherever the
+// previous attempt stopped.
+//
+// Every guard stays in `releaseNetworkGroup` rather than
+// being restated here: it refuses a group that still has
+// instances, one whose VNet a guest still references, and
+// any network mode other than `active`. This route reports
+// a refusal; it never overrides one.
+//
+// Used by:
+//   - admin/Network.tsx — the release button
+//   - the equivalent CLI is `npm run release-network-group`,
+//     which this deliberately does not replace — the script
+//     still works when the API is down
+// -----------------------------------------------------------
+
 router.post("/groups/:groupId/release", isAuthenticated, isAdmin, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: "Unauthorized" });
     const groupId = profileIdSchema.safeParse(req.params.groupId);
@@ -140,33 +239,53 @@ router.post("/groups/:groupId/release", isAuthenticated, isAdmin, async (req, re
     }
 });
 
-/**
- * Runs the drift sweep now instead of waiting for the ten-minute timer.
- *
- * Some changes are written to the database and become real only when something
- * renders them onto the infrastructure. A group peering is the clearest case:
- * it has to reach the Gateway's forward path *and* every target VM's firewall,
- * and nothing but the drift sweep re-applies the second one. Waiting up to ten
- * minutes is fine for a background correction and useless when a lab starts in
- * five, which is what this is for.
- *
- * This is not the `apply: true` that `/reconciliation-attempts` refuses, and the
- * distinction is the point. That would be an unconditional apply of the whole
- * plan; this is the same observe-then-repair pass the scheduler already runs
- * unattended, so it touches only what genuinely drifted and restarts Squid and
- * dnsmasq only when the Gateway is actually wrong. It opens no capability the
- * stack did not already exercise on its own -- it only changes when.
- *
- * `requestedBy` is the calling admin rather than `DRIFT_RECONCILER_PRINCIPAL`:
- * the attempt log is an audit trail, and a person did ask for this one.
- *
- * The report is always returned with 200, including when the pass declined to
- * run. `ran: false` with a reason, and `failed` entries alongside `repaired`
- * ones, are results worth rendering -- collapsing them into an HTTP status
- * would throw away the half that says what happened.
- *
- * Used by the admin Network page.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// POST /network/drift-reconciliations
+// -----------------------------------------------------------
+//
+// Runs the drift sweep now instead of waiting for the
+// ten-minute timer.
+//
+// Some changes are written to the database and become real
+// only when something renders them onto the infrastructure.
+// A group peering is the clearest case: it has to reach the
+// Gateway's forward path *and* every target VM's firewall,
+// and nothing but the drift sweep re-applies the second
+// one. Waiting up to ten minutes is fine for a background
+// correction and useless when a lab starts in five, which
+// is what this is for.
+//
+// This is not the `apply: true` that
+// `/reconciliation-attempts` refuses, and the distinction
+// is the point. That would be an unconditional apply of the
+// whole plan; this is the same observe-then-repair pass the
+// scheduler already runs unattended, so it touches only
+// what genuinely drifted and restarts Squid and dnsmasq
+// only when the Gateway is actually wrong. It opens no
+// capability the stack did not already exercise on its own
+// — it only changes when.
+//
+// `requestedBy` is the calling admin rather than
+// `DRIFT_RECONCILER_PRINCIPAL`: the attempt log is an audit
+// trail, and a person did ask for this one.
+//
+// The report is always returned with 200, including when
+// the pass declined to run. `ran: false` with a reason, and
+// `failed` entries alongside `repaired` ones, are results
+// worth rendering — collapsing them into an HTTP status
+// would throw away the half that says what happened.
+//
+// Used by:
+//   - admin/Network.tsx — the "reconcile now" button
+// -----------------------------------------------------------
+
 router.post("/drift-reconciliations", isAuthenticated, isAdmin, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: "Unauthorized" });
     try {
@@ -176,6 +295,27 @@ router.post("/drift-reconciliations", isAuthenticated, isAdmin, async (req, res)
         return res.status(500).json({ error: "Failed to run drift reconciliation" });
     }
 });
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// POST /network/reconciliation-attempts
+// -----------------------------------------------------------
+//
+// Plans a dry-run reconciliation: observe everything,
+// compute the diff, persist the attempt — apply is refused
+// by schema. The Access observer is mandatory (503 when not
+// configured); the Gateway observer is optional and its
+// checks are simply omitted when absent.
+//
+// Used by:
+//   - admin/Network.tsx — the dry-run button
+// -----------------------------------------------------------
 
 router.post("/reconciliation-attempts", isAuthenticated, isAdmin, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: "Unauthorized" });
@@ -228,6 +368,21 @@ router.post("/reconciliation-attempts", isAuthenticated, isAdmin, async (req, re
     }
 });
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// GET /network/reconciliation-attempts/:id
+// -----------------------------------------------------------
+//
+// Used by:
+//   - admin/Network.tsx — the attempt detail view
+// -----------------------------------------------------------
+
 router.get("/reconciliation-attempts/:id", isAuthenticated, isAdmin, async (req, res) => {
     const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
     if (!/^\d+$/.test(id)) {
@@ -243,19 +398,45 @@ router.get("/reconciliation-attempts/:id", isAuthenticated, isAdmin, async (req,
     }
 });
 
-/**
- * Policy administration.
- *
- * These are the only two inputs to network desired state that are not derived
- * from something else, and they were previously editable only in SQL. Writing
- * here changes the database and nothing more: the change becomes real when the
- * next reconciliation renders it, on the same path provisioning and teardown
- * use. That keeps the apply surface exactly where it already is.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// Policy administration — allowed domains and peerings
+// -----------------------------------------------------------
+//
+// These are the only two inputs to network desired state
+// that are not derived from something else, and they were
+// previously editable only in SQL. Writing here changes the
+// database and nothing more: the change becomes real when
+// the next reconciliation renders it, on the same path
+// provisioning and teardown use. That keeps the apply
+// surface exactly where it already is.
+// -----------------------------------------------------------
+
 const peeringBodySchema = z.object({
     group_a_id: z.number().int().positive(),
     group_b_id: z.number().int().positive(),
 }).strict();
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// GET /network/profiles/:profileId/domains
+// -----------------------------------------------------------
+//
+// Used by:
+//   - admin/Network.tsx — the domain list per profile
+// -----------------------------------------------------------
 
 router.get("/profiles/:profileId/domains", isAuthenticated, isAdmin, async (req, res) => {
     const profileId = profileIdSchema.safeParse(req.params.profileId);
@@ -267,6 +448,21 @@ router.get("/profiles/:profileId/domains", isAuthenticated, isAdmin, async (req,
         return res.status(500).json({ error: "Failed to list allowed web domains" });
     }
 });
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// POST /network/profiles/:profileId/domains
+// -----------------------------------------------------------
+//
+// Used by:
+//   - admin/Network.tsx — the add-domain form
+// -----------------------------------------------------------
 
 router.post("/profiles/:profileId/domains", isAuthenticated, isAdmin, async (req, res) => {
     const profileId = profileIdSchema.safeParse(req.params.profileId);
@@ -284,6 +480,7 @@ router.post("/profiles/:profileId/domains", isAuthenticated, isAdmin, async (req
     try {
         return res.status(201).json(await addAllowedDomain(profileId.data, parsed.data));
     } catch (error) {
+        // 23503 = foreign-key violation — the profile does not exist.
         if ((error as { code?: string }).code === "23503") {
             return res.status(404).json({ error: "Lab profile not found" });
         }
@@ -291,6 +488,21 @@ router.post("/profiles/:profileId/domains", isAuthenticated, isAdmin, async (req
         return res.status(500).json({ error: "Failed to add the allowed web domain" });
     }
 });
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// DELETE /network/profiles/:profileId/domains/:domain
+// -----------------------------------------------------------
+//
+// Used by:
+//   - admin/Network.tsx — the domain delete button
+// -----------------------------------------------------------
 
 router.delete("/profiles/:profileId/domains/:domain", isAuthenticated, isAdmin, async (req, res) => {
     const profileId = profileIdSchema.safeParse(req.params.profileId);
@@ -306,6 +518,21 @@ router.delete("/profiles/:profileId/domains/:domain", isAuthenticated, isAdmin, 
     }
 });
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// GET /network/peerings
+// -----------------------------------------------------------
+//
+// Used by:
+//   - admin/Network.tsx — the peerings table
+// -----------------------------------------------------------
+
 router.get("/peerings", isAuthenticated, isAdmin, async (_req, res) => {
     try {
         return res.json(await listGroupPeerings());
@@ -314,6 +541,21 @@ router.get("/peerings", isAuthenticated, isAdmin, async (_req, res) => {
         return res.status(500).json({ error: "Failed to list group peerings" });
     }
 });
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// POST /network/peerings
+// -----------------------------------------------------------
+//
+// Used by:
+//   - admin/Network.tsx — the add-peering form
+// -----------------------------------------------------------
 
 router.post("/peerings", isAuthenticated, isAdmin, async (req, res) => {
     const parsed = peeringBodySchema.safeParse(req.body);
@@ -328,6 +570,7 @@ router.post("/peerings", isAuthenticated, isAdmin, async (req, res) => {
         if (error instanceof NetworkPolicyError) {
             return res.status(400).json({ error: error.message });
         }
+        // 23503 = foreign-key violation — a named group does not exist.
         if ((error as { code?: string }).code === "23503") {
             return res.status(404).json({ error: "One or both network groups do not exist" });
         }
@@ -335,6 +578,21 @@ router.post("/peerings", isAuthenticated, isAdmin, async (req, res) => {
         return res.status(500).json({ error: "Failed to add the group peering" });
     }
 });
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// DELETE /network/peerings/:groupAId/:groupBId
+// -----------------------------------------------------------
+//
+// Used by:
+//   - admin/Network.tsx — the peering delete button
+// -----------------------------------------------------------
 
 router.delete("/peerings/:groupAId/:groupBId", isAuthenticated, isAdmin, async (req, res) => {
     const a = profileIdSchema.safeParse(req.params.groupAId);
@@ -354,5 +612,12 @@ router.delete("/peerings/:groupAId/:groupBId", isAuthenticated, isAdmin, async (
         return res.status(500).json({ error: "Failed to remove the group peering" });
     }
 });
+
+
+
+
+
+
+
 
 export { router as networkRouter };

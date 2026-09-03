@@ -1,3 +1,14 @@
+// -----------------------------------------------------------
+//  [*] Tests — pure Access trunk planning
+//
+//  The persistent and live halves planned independently, and
+//  the migration-VLAN invariant that refuses an empty
+//  desired list.
+//
+//  Covers src/network/access-trunk.ts. Run with `npm test`
+//  (the whole suite) inside the backend container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import {

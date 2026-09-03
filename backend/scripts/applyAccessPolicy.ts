@@ -1,23 +1,32 @@
+// -----------------------------------------------------------
+//  [*] Scripts — apply-access-policy (operator CLI)
+//
+//  Operator entry point for applying rendered Access guest
+//  policy to LXC 200. Deliberately a CLI and not an HTTP
+//  route, matching apply-network-vnets and
+//  apply-gateway-policy: the plan keeps active
+//  infrastructure mutation off the API surface until the
+//  behaviour is proven operationally. Provisioning drives
+//  the same runner automatically; this exists so drift can
+//  be repaired without creating a VM to trigger it.
+//
+//  `--expected-revision` is the INFRASTRUCTURE revision, not
+//  the Access policy revision. The policy revision is a
+//  function of the guest's observed Docker bridges, so a
+//  caller cannot hold it as a precondition; the
+//  infrastructure revision is the one a dry-run publishes.
+//
+//  Usage:
+//    npm run apply-access-policy -- --requested-by <vu_id>
+//      --expected-revision <sha256> --confirm APPLY-ACCESS-POLICY
+// -----------------------------------------------------------
+
 import { AccessApplyError } from "@/network/access-apply";
 import { AccessApplyRunner } from "@/network/access-apply-runner";
 import { createAccessApplier, createAccessObserver } from "@/network/access-clients";
 import { pool } from "@/utils/db";
 import { z } from "zod";
 
-/**
- * Operator entry point for applying rendered Access guest policy to LXC 200.
- *
- * Deliberately a CLI and not an HTTP route, matching apply-network-vnets and
- * apply-gateway-policy: the plan keeps active infrastructure mutation off the
- * API surface until the behaviour is proven operationally. Provisioning drives
- * the same runner automatically; this exists so drift can be repaired without
- * creating a VM to trigger it.
- *
- * `--expected-revision` is the INFRASTRUCTURE revision, not the Access policy
- * revision. The policy revision is a function of the guest's observed Docker
- * bridges, so a caller cannot hold it as a precondition; the infrastructure
- * revision is the one a dry-run publishes.
- */
 const argumentsSchema = z.object({
     requestedBy: z.string().min(1),
     expectedRevision: z.string().regex(/^[0-9a-f]{64}$/),
@@ -26,10 +35,12 @@ const argumentsSchema = z.object({
     confirmation: z.literal("APPLY-ACCESS-POLICY"),
 });
 
+
 function option(name: string): string | undefined {
     const index = process.argv.indexOf(name);
     return index >= 0 ? process.argv[index + 1] : undefined;
 }
+
 
 async function main(): Promise<void> {
     const parsed = argumentsSchema.safeParse({
@@ -80,6 +91,7 @@ async function main(): Promise<void> {
         await pool.end();
     }
 }
+
 
 main().catch((error: unknown) => {
     if (error instanceof AccessApplyError) {

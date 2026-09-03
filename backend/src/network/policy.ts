@@ -1,28 +1,52 @@
+// -----------------------------------------------------------
+//  [*] Network — policy tables: allowed domains, peerings
+//
+//  Administration of the two policy inputs that are not
+//  derived from anything: which web domains a profile may
+//  reach, and which groups may talk to each other.
+//
+//  Both are edited here and nowhere else, so validation
+//  lives in one place. The database is authoritative;
+//  nothing in this file touches infrastructure. A change
+//  becomes real when the next reconciliation renders it,
+//  which is the same path provisioning and teardown use.
+//
+//  Used by:
+//    - network.route.ts — the policy admin endpoints
+//    - test/network-policy.test.ts
+// -----------------------------------------------------------
+
 import { pool } from "@/utils/db";
 import { z } from "zod";
 
-/**
- * Administration of the two policy inputs that are not derived from anything:
- * which web domains a profile may reach, and which groups may talk to each
- * other.
- *
- * Both are edited here and nowhere else, so validation lives in one place. The
- * database is authoritative; nothing in this file touches infrastructure. A
- * change becomes real when the next reconciliation renders it, which is the
- * same path provisioning and teardown use.
- */
-
 export class NetworkPolicyError extends Error {}
 
-/**
- * A hostname, not a URL and not a pattern.
- *
- * Squid is handed these as `dstdomain` and `ssl::server_name` values with a
- * leading dot for subdomain matches, so anything carrying a scheme, a path, a
- * port or a wildcard would either widen the allowlist or fail to parse on the
- * Gateway — after the apply, where it is expensive to discover. Matches the
- * database CHECK constraints rather than restating them loosely.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// domainSchema / allowedDomainSchema
+// -----------------------------------------------------------
+//
+// A hostname, not a URL and not a pattern.
+//
+// Squid is handed these as `dstdomain` and
+// `ssl::server_name` values with a leading dot for
+// subdomain matches, so anything carrying a scheme, a path,
+// a port or a wildcard would either widen the allowlist or
+// fail to parse on the Gateway — after the apply, where it
+// is expensive to discover. Matches the database CHECK
+// constraints rather than restating them loosely.
+//
+// Used by:
+//   - network.route.ts — validating POST bodies
+//   - addAllowedDomain (below)
+// -----------------------------------------------------------
+
 export const domainSchema = z
     .string()
     .min(1)
@@ -47,6 +71,21 @@ export type AllowedWebDomain = {
     include_subdomains: boolean;
 };
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// listAllowedDomains
+// -----------------------------------------------------------
+//
+// Used by:
+//   - network.route.ts — GET .../domains
+// -----------------------------------------------------------
+
 export async function listAllowedDomains(profileId: number): Promise<AllowedWebDomain[]> {
     const result = await pool.query<AllowedWebDomain>(
         `SELECT profile_id, domain, include_subdomains
@@ -58,11 +97,25 @@ export async function listAllowedDomains(profileId: number): Promise<AllowedWebD
     return result.rows;
 }
 
-/**
- * Upserts rather than inserts, so re-adding a domain to flip
- * `include_subdomains` is not a conflict an admin has to resolve by deleting
- * first.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// addAllowedDomain
+// -----------------------------------------------------------
+//
+// Upserts rather than inserts, so re-adding a domain to
+// flip `include_subdomains` is not a conflict an admin has
+// to resolve by deleting first.
+//
+// Used by:
+//   - network.route.ts — POST .../domains
+// -----------------------------------------------------------
+
 export async function addAllowedDomain(
     profileId: number,
     input: z.infer<typeof allowedDomainSchema>,
@@ -78,6 +131,21 @@ export async function addAllowedDomain(
     return result.rows[0];
 }
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// removeAllowedDomain
+// -----------------------------------------------------------
+//
+// Used by:
+//   - network.route.ts — DELETE .../domains/:domain
+// -----------------------------------------------------------
+
 export async function removeAllowedDomain(
     profileId: number,
     domain: string,
@@ -89,10 +157,26 @@ export async function removeAllowedDomain(
     return (result.rowCount ?? 0) > 0;
 }
 
+
 export type GroupPeering = {
     group_a_id: number;
     group_b_id: number;
 };
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// listGroupPeerings
+// -----------------------------------------------------------
+//
+// Used by:
+//   - network.route.ts — GET /peerings
+// -----------------------------------------------------------
 
 export async function listGroupPeerings(): Promise<GroupPeering[]> {
     const result = await pool.query<GroupPeering>(
@@ -101,15 +185,31 @@ export async function listGroupPeerings(): Promise<GroupPeering[]> {
     return result.rows;
 }
 
-/**
- * Peering is undirected, and the table enforces `group_a_id < group_b_id`.
- *
- * Ordering the pair here rather than rejecting an out-of-order one means
- * `(7, 4)` and `(4, 7)` are the same peering, which is what an admin means. Not
- * doing so would let the same relationship be stored twice under two keys, and
- * removing one would leave the other rendering rules for a peering the admin
- * believed they had deleted.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// orderPeering
+// -----------------------------------------------------------
+//
+// Peering is undirected, and the table enforces
+// `group_a_id < group_b_id`.
+//
+// Ordering the pair here rather than rejecting an
+// out-of-order one means `(7, 4)` and `(4, 7)` are the same
+// peering, which is what an admin means. Not doing so would
+// let the same relationship be stored twice under two keys,
+// and removing one would leave the other rendering rules
+// for a peering the admin believed they had deleted.
+//
+// Used by:
+//   - addGroupPeering, removeGroupPeering (below)
+// -----------------------------------------------------------
+
 export function orderPeering(groupAId: number, groupBId: number): GroupPeering {
     if (!Number.isInteger(groupAId) || !Number.isInteger(groupBId)) {
         throw new NetworkPolicyError("Peering group IDs must be integers");
@@ -121,6 +221,21 @@ export function orderPeering(groupAId: number, groupBId: number): GroupPeering {
         ? { group_a_id: groupAId, group_b_id: groupBId }
         : { group_a_id: groupBId, group_b_id: groupAId };
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// addGroupPeering
+// -----------------------------------------------------------
+//
+// Used by:
+//   - network.route.ts — POST /peerings
+// -----------------------------------------------------------
 
 export async function addGroupPeering(
     groupAId: number,
@@ -138,6 +253,21 @@ export async function addGroupPeering(
     // successful outcome for an idempotent add rather than a missing result.
     return result.rows[0] ?? pair;
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// removeGroupPeering
+// -----------------------------------------------------------
+//
+// Used by:
+//   - network.route.ts — DELETE /peerings/:aId/:bId
+// -----------------------------------------------------------
 
 export async function removeGroupPeering(
     groupAId: number,

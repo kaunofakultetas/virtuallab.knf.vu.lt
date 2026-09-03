@@ -1,3 +1,22 @@
+// -----------------------------------------------------------
+//  [*] Sidebar — the collapsible left navigation
+//
+//  The NAV table below is the single source of the app's
+//  navigation: sections of items, with the Admin section
+//  filtered out for non-admins. Collapsed mode narrows to
+//  icons with tooltips. Logout at the bottom shares
+//  PageLayout's handler with the Navbar.
+//
+//  Split into (root component last):
+//
+//    NAV         — the section/item table
+//    SidebarItem — one nav row (active state from NavLink)
+//    Sidebar     — the bar itself
+//
+//  Used by:
+//    - PageLayout.tsx — every signed-in page
+// -----------------------------------------------------------
+
 import { useState } from "react";
 import { NavLink } from "react-router-dom";
 import Box from "@mui/material/Box";
@@ -23,6 +42,8 @@ import { useAuth } from "@/utils/AuthGuard";
 
 const SIDEBAR_W = 220;
 const SIDEBAR_W_COLLAPSED = 64;
+// The brand burgundy, used directly so the active row stays burgundy in
+// dark mode too (theme primary flips to pink there).
 const ACTIVE_COLOR = "#78003F";
 
 interface NavItem {
@@ -36,6 +57,24 @@ interface NavSection {
     adminOnly?: boolean;
     items: NavItem[];
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// NAV
+// -----------------------------------------------------------
+//
+// The navigation table. Order here is display order; paths
+// must match router.tsx.
+//
+// Used by:
+//   - Sidebar (below)
+// -----------------------------------------------------------
 
 const NAV: NavSection[] = [
     {
@@ -116,6 +155,25 @@ const NAV: NavSection[] = [
     },
 ];
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// SidebarItem
+// -----------------------------------------------------------
+//
+// One nav row. `end` on the root path so "/" is not marked
+// active on every child route; collapsed rows keep their
+// label as a tooltip.
+//
+// Used by:
+//   - Sidebar (below)
+// -----------------------------------------------------------
+
 function SidebarItem({
     item,
     collapsed,
@@ -178,6 +236,21 @@ interface SidebarProps {
     onLogout: () => void;
 }
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// Sidebar
+// -----------------------------------------------------------
+//
+// Used by:
+//   - PageLayout.tsx
+// -----------------------------------------------------------
+
 export function Sidebar({ onLogout }: SidebarProps) {
     const [collapsed, setCollapsed] = useState(false);
     const auth = useAuth();
@@ -201,6 +274,7 @@ export function Sidebar({ onLogout }: SidebarProps) {
                 overflow: "hidden",
             }}
         >
+            {/* Collapse toggle */}
             <Box
                 sx={{
                     display: "flex",
@@ -222,6 +296,7 @@ export function Sidebar({ onLogout }: SidebarProps) {
 
             <Divider />
 
+            {/* The scrolling section list */}
             <Box
                 sx={{ flex: 1, overflowY: "auto", overflowX: "hidden", py: 1 }}
             >
@@ -257,6 +332,7 @@ export function Sidebar({ onLogout }: SidebarProps) {
 
             <Divider />
 
+            {/* Logout pinned to the bottom */}
             <Tooltip title={collapsed ? "Logout" : ""} placement="right" arrow>
                 <Box
                     onClick={onLogout}

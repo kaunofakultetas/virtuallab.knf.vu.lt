@@ -1,3 +1,15 @@
+// -----------------------------------------------------------
+//  [*] Guacamole — the app-wide client singleton
+//
+//  One GuacamoleClient built from the GUACAMOLE_* env vars.
+//  publicUrl is what students' browsers can reach; baseUrl
+//  is what the backend dials inside the stack.
+//
+//  Used by:
+//    - instances (controller + route), users.controller.ts,
+//      metrics-poller.ts
+// -----------------------------------------------------------
+
 import { GuacamoleClient } from "./api";
 
 export const guacamole = new GuacamoleClient({

@@ -1,3 +1,18 @@
+// -----------------------------------------------------------
+//  [*] Network — the Gateway apply runner
+//
+//  Wraps a Gateway policy apply in the same audit machinery
+//  as a VNet apply: shared reconciliation lock, pinned
+//  revision, observe-first readiness gating, and a
+//  persisted attempt whose action states say what really
+//  happened to the guest.
+//
+//  Used by:
+//    - drift-reconciler.ts — repairing Gateway drift
+//    - scripts/applyGatewayPolicy.ts — the operator CLI
+//    - test/gateway-apply-runner.test.ts
+// -----------------------------------------------------------
+
 import { GatewayObservationClient, planGateway } from "./adapters/gateway";
 import { GatewayPlan } from "./gateway-desired-state";
 import { getGatewayPlan } from "./gateway-plan";
@@ -32,17 +47,15 @@ export class GatewayApplyReadinessError extends Error {
     }
 }
 
-/**
- * Checks an apply is expected to resolve, so a drifted Gateway is not blocked
- * from being repaired by the very drift the apply exists to fix.
- *
- * Everything NOT listed here blocks, and that split is deliberate: these are
- * the checks whose subject is guest configuration the applier rewrites. A
- * failing `gateway-vm-status`, `gateway-trunk-topology`, `gateway-uplink-connected`,
- * `gateway-management-address` or `gateway-default-route` describes hypervisor or
- * cloud-init state that no amount of file writing will correct, so applying over
- * it would only produce a confusing partial success.
- */
+// Checks an apply is expected to resolve, so a drifted Gateway is not blocked
+// from being repaired by the very drift the apply exists to fix.
+//
+// Everything NOT listed here blocks, and that split is deliberate: these are
+// the checks whose subject is guest configuration the applier rewrites. A
+// failing `gateway-vm-status`, `gateway-trunk-topology`, `gateway-uplink-connected`,
+// `gateway-management-address` or `gateway-default-route` describes hypervisor or
+// cloud-init state that no amount of file writing will correct, so applying over
+// it would only produce a confusing partial success.
 export const GATEWAY_APPLY_FIXABLE_CHECKS = new Set([
     "gateway-nftables-revision",
     "gateway-managed-files",
@@ -67,6 +80,7 @@ export type GatewayApplyRunnerInput = {
     idempotencyKey?: string;
 };
 
+
 function policyAction(
     revision: string,
     executionState: ReconciliationAction["execution_state"],
@@ -80,14 +94,30 @@ function policyAction(
     };
 }
 
-/**
- * Applies Gateway policy and records the attempt, so a mutation of the guest
- * leaves the same audit trail a VNet apply does.
- *
- * It takes the shared reconciliation advisory lock, which means a Gateway apply
- * and a VNet apply can never run concurrently. That matters because both derive
- * their desired state from the same group rows.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// GatewayApplyRunner
+// -----------------------------------------------------------
+//
+// Applies Gateway policy and records the attempt, so a
+// mutation of the guest leaves the same audit trail a VNet
+// apply does.
+//
+// It takes the shared reconciliation advisory lock, which
+// means a Gateway apply and a VNet apply can never run
+// concurrently. That matters because both derive their
+// desired state from the same group rows.
+//
+// Used by:
+//   - drift-reconciler.ts, scripts/applyGatewayPolicy.ts
+// -----------------------------------------------------------
+
 export class GatewayApplyRunner {
     constructor(private readonly dependencies: GatewayApplyRunnerDependencies) {}
 

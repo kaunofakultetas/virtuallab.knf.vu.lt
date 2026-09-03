@@ -1,3 +1,23 @@
+// -----------------------------------------------------------
+//  [*] Network — the dry-run reconciler
+//
+//  Observes every component (Proxmox VNets, Access, and the
+//  Gateway when its observer is configured), grades them
+//  against the plans, and persists the result as a dry-run
+//  attempt. Nothing here mutates infrastructure; the apply
+//  runners do that.
+//
+//  Component observations run settled — one broken channel
+//  becomes a failing check instead of discarding the
+//  healthy evidence gathered from the others. Error text is
+//  sanitised before persisting: transport failures can
+//  quote commands or URLs that embed credentials.
+//
+//  Used by:
+//    - network.route.ts — POST /reconciliation-attempts
+//    - test/infrastructure-reconciler.test.ts
+// -----------------------------------------------------------
+
 import { InfrastructurePlan, getInfrastructurePlan } from "./infrastructure-desired-state";
 import {
     ReconciliationAttempt,
@@ -55,19 +75,20 @@ export type InfrastructureReconcilerDependencies = {
     database: Pick<ReconciliationPool, "connect">;
     proxmox: ProxmoxVnetObservationClient;
     access: AccessObservationClient;
-    /**
-     * Optional, because Gateway observation needs a configured restricted SSH
-     * principal that a development stack may not have. When it is absent the
-     * dry-run simply reports no Gateway checks; when it is present but fails,
-     * the failure is reported as a check rather than discarding the healthy
-     * evidence gathered from the other components.
-     */
+    // Optional, because Gateway observation needs a configured restricted SSH
+    // principal that a development stack may not have. When it is absent the
+    // dry-run simply reports no Gateway checks; when it is present but fails,
+    // the failure is reported as a check rather than discarding the healthy
+    // evidence gathered from the other components.
     gateway?: GatewayObservationClient;
     getPlan?: (client: ReconciliationLockClient) => Promise<InfrastructurePlan>;
     getGatewayPlan?: () => Promise<GatewayPlan>;
     createAttempts?: (client: ReconciliationLockClient) => ReconciliationAttemptStore;
 };
 
+
+// Attempts are readable by every admin, and transport errors can quote the
+// command line or URL that failed — scrub anything credential-shaped.
 function sanitizedError(error: unknown): { code: string; detail: string } {
     const rawDetail = error instanceof Error ? error.message : "Unknown reconciliation failure";
     const detail = rawDetail
@@ -79,6 +100,7 @@ function sanitizedError(error: unknown): { code: string; detail: string } {
         detail: detail.slice(0, 1000),
     };
 }
+
 
 function failedObservation(
     component: "proxmox-vnet" | "access" | "gateway",
@@ -97,6 +119,9 @@ function failedObservation(
     };
 }
 
+
+// Both a rejected observation AND a planner that throws on it become the
+// same failing check — the dry-run itself keeps going.
 function planComponent<T>(
     component: "proxmox-vnet" | "access" | "gateway",
     result: PromiseSettledResult<T>,
@@ -110,14 +135,33 @@ function planComponent<T>(
     }
 }
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// InfrastructureReconciler
+// -----------------------------------------------------------
+//
+// dryRun(): under the shared lock — abandon stale attempts,
+// pin the revision (when the caller supplied one), observe
+// all components settled, grade, persist. The checks and
+// actions are sorted so two identical dry-runs produce
+// byte-identical attempt records.
+//
+// Used by:
+//   - network.route.ts
+// -----------------------------------------------------------
+
 export class InfrastructureReconciler {
     constructor(private readonly dependencies: InfrastructureReconcilerDependencies) {}
 
-    /**
-     * Gateway desired state is a different document from the infrastructure
-     * plan, hashed separately, so it is read here rather than derived from
-     * `plan`. Returns null when no observer is configured.
-     */
+    // Gateway desired state is a different document from the infrastructure
+    // plan, hashed separately, so it is read here rather than derived from
+    // `plan`. Returns null when no observer is configured.
     private async observeGateway(): Promise<
         { plan: GatewayPlan; observation: unknown } | null
     > {

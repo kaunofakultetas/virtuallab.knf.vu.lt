@@ -1,19 +1,45 @@
+// -----------------------------------------------------------
+//  [*] Network — the two-phase Access trunk apply
+//
+//  Observe → apply → prove → commit against the Proxmox
+//  host's trunk executor
+//  (infra/access/apply_access_trunk_forced_command.py). The
+//  host arms a rollback timer before touching anything, so
+//  every failure path is safe to abandon; the pre-commit
+//  proof runs through the read-only Access observer, which
+//  happens to report both halves of the trunk — exactly
+//  what has to be proven.
+//
+//  Split into (executor last):
+//
+//    ACCESS_TRUNK_ROLLBACK_SECONDS      — default window
+//    AccessTrunkApplyError              — staged failures
+//    response schemas                   — the host's answers
+//    RestrictedSshAccessTrunkApplyClient — the SSH channel
+//    accessTrunkDrift                   — the proof check
+//    applyAccessTrunk                   — the flow itself
+//    abandon                            — best-effort rollback
+//
+//  Used by:
+//    - access-trunk-runner.ts — the audited entry point
+//    - access-clients.ts — constructs the SSH client
+//    - test/access-trunk-apply.test.ts
+// -----------------------------------------------------------
+
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { AccessTrunkPlan } from "./access-trunk";
 import { AccessHostObservation, AccessObservationClient } from "./adapters/access";
 import { RestrictedSshTransport } from "./adapters/restricted-ssh";
 
-/**
- * Default window between applying and committing a trunk change. Long enough
- * for an independent observation over a fresh connection, short enough that a
- * severed transport restores itself in minutes. The host clamps this to its own
- * bounds.
- */
+// Default window between applying and committing a trunk change. Long enough
+// for an independent observation over a fresh connection, short enough that a
+// severed transport restores itself in minutes. The host clamps this to its own
+// bounds.
 export const ACCESS_TRUNK_ROLLBACK_SECONDS = 300;
 
 export class AccessTrunkApplyError extends Error {
-    /** Whether the immediate rollback succeeded; undefined if none was attempted. */
+    // Whether the immediate rollback succeeded; undefined if none was attempted.
     rolledBack?: boolean;
 
     constructor(
@@ -33,11 +59,9 @@ export class AccessTrunkApplyError extends Error {
 const vlanSchema = z.number().int().min(2).max(4094);
 
 const observationShape = {
-    /**
-     * The raw `net1:` line. Carried so an apply can pass it back as an
-     * optimistic-concurrency precondition rather than re-deriving a value the
-     * host would have to trust.
-     */
+    // The raw `net1:` line. Carried so an apply can pass it back as an
+    // optimistic-concurrency precondition rather than re-deriving a value the
+    // host would have to trust.
     net1: z.string().min(1),
     persistent_vlan_ids: z.array(vlanSchema),
     live_veth_present: z.boolean(),
@@ -95,6 +119,27 @@ export interface AccessTrunkApplyClient {
     rollback(transactionId: string): Promise<unknown>;
 }
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// RestrictedSshAccessTrunkApplyClient
+// -----------------------------------------------------------
+//
+// AccessTrunkApplyClient over the restricted-SSH transport.
+// Every answer is matched to the request that asked for it,
+// the same rule the Access observation and apply clients
+// follow — without it a stale answer left in the channel
+// could be read as this transaction's result.
+//
+// Used by:
+//   - access-clients.ts — createAccessTrunkApplier
+// -----------------------------------------------------------
+
 export class RestrictedSshAccessTrunkApplyClient implements AccessTrunkApplyClient {
     constructor(private readonly transport: Pick<RestrictedSshTransport, "execute">) {}
 
@@ -143,11 +188,6 @@ export class RestrictedSshAccessTrunkApplyClient implements AccessTrunkApplyClie
         });
     }
 
-    /**
-     * Matches every answer to the request that asked for it, the same rule the
-     * Access observation and apply clients follow. Without it a stale answer
-     * left in the channel could be read as this transaction's result.
-     */
     private async execute<Output extends { request_id: string }>(
         schema: z.ZodType<Output>,
         request: (requestId: string) => Record<string, unknown>,
@@ -161,22 +201,21 @@ export class RestrictedSshAccessTrunkApplyClient implements AccessTrunkApplyClie
     }
 }
 
+
 export type AccessTrunkApplyDependencies = {
     apply: AccessTrunkApplyClient;
-    /**
-     * Used for the pre-commit proof. Deliberately a different client from
-     * `apply`: it reaches the host through the read-only Access observer
-     * principal, so a commit is never authorised by the session that made the
-     * change. It also happens to report both halves of the trunk — the
-     * container's persistent `trunks=` and the running veth's membership — which
-     * is exactly what has to be proven.
-     */
+    // Used for the pre-commit proof. Deliberately a different client from
+    // `apply`: it reaches the host through the read-only Access observer
+    // principal, so a commit is never authorised by the session that made the
+    // change. It also happens to report both halves of the trunk — the
+    // container's persistent `trunks=` and the running veth's membership — which
+    // is exactly what has to be proven.
     observe: AccessObservationClient;
     rollbackSeconds?: number;
 };
 
 export type AccessTrunkApplyResult = {
-    /** False when desired state already held, in which case nothing was staged. */
+    // False when desired state already held, in which case nothing was staged.
     changed: boolean;
     transaction_id: string | null;
     desired_vlan_ids: number[];
@@ -185,9 +224,11 @@ export type AccessTrunkApplyResult = {
     removed: number[];
 };
 
+
 function canonical(vlanIds: number[]): number[] {
     return [...new Set(vlanIds)].sort((left, right) => left - right);
 }
+
 
 function sameVlans(left: number[], right: number[]): boolean {
     const a = canonical(left);
@@ -195,15 +236,32 @@ function sameVlans(left: number[], right: number[]): boolean {
     return a.length === b.length && a.every((vlan, index) => vlan === b[index]);
 }
 
-/**
- * Compares an independent Access observation against the desired trunk.
- *
- * Both halves are checked, because either can hold while the other drifts:
- * `pct set` writes only the persistent allowlist and `bridge vlan` only the
- * running veth. A trunk that is persistent-correct but live-stale passes no
- * traffic today; one that is live-correct but persistent-stale stops passing
- * traffic at the next restart.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// accessTrunkDrift
+// -----------------------------------------------------------
+//
+// Compares an independent Access observation against the
+// desired trunk.
+//
+// Both halves are checked, because either can hold while
+// the other drifts: `pct set` writes only the persistent
+// allowlist and `bridge vlan` only the running veth. A
+// trunk that is persistent-correct but live-stale passes no
+// traffic today; one that is live-correct but
+// persistent-stale stops passing traffic at the next
+// restart.
+//
+// Used by:
+//   - applyAccessTrunk (below) — the pre-commit proof
+// -----------------------------------------------------------
+
 export function accessTrunkDrift(
     desiredVlanIds: number[],
     observation: AccessHostObservation,
@@ -226,16 +284,33 @@ export function accessTrunkDrift(
     return drift;
 }
 
-/**
- * Reconciles the Access LXC's VLAN trunk and commits only once an independent
- * observation agrees that both halves converged.
- *
- * The host arms a rollback timer before touching anything, so every failure
- * path below is safe to abandon: not committing is itself the recovery. An
- * explicit rollback is still attempted because it recovers in seconds rather
- * than minutes, but it is best-effort — the timer remains the guarantee, and the
- * host cancels it only after the restore succeeds.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// applyAccessTrunk
+// -----------------------------------------------------------
+//
+// Reconciles the Access LXC's VLAN trunk and commits only
+// once an independent observation agrees that both halves
+// converged.
+//
+// The host arms a rollback timer before touching anything,
+// so every failure path below is safe to abandon: not
+// committing is itself the recovery. An explicit rollback
+// is still attempted because it recovers in seconds rather
+// than minutes, but it is best-effort — the timer remains
+// the guarantee, and the host cancels it only after the
+// restore succeeds.
+//
+// Used by:
+//   - access-trunk-runner.ts
+// -----------------------------------------------------------
+
 export async function applyAccessTrunk(
     plan: AccessTrunkPlan,
     dependencies: AccessTrunkApplyDependencies,
@@ -363,11 +438,26 @@ export async function applyAccessTrunk(
     };
 }
 
-/**
- * Best-effort immediate rollback. A failure here is recorded on the error rather
- * than replacing it: the original cause is what an operator needs, and the
- * host's timer still restores the previous state either way.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// abandon
+// -----------------------------------------------------------
+//
+// Best-effort immediate rollback. A failure here is
+// recorded on the error rather than replacing it: the
+// original cause is what an operator needs, and the host's
+// timer still restores the previous state either way.
+//
+// Used by:
+//   - applyAccessTrunk (above) — every failure path
+// -----------------------------------------------------------
+
 async function abandon(
     dependencies: AccessTrunkApplyDependencies,
     transactionId: string,

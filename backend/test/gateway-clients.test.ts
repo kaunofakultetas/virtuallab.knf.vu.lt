@@ -1,3 +1,13 @@
+// -----------------------------------------------------------
+//  [*] Tests — Gateway SSH channel construction
+//
+//  The optional observer (null when unconfigured) versus the
+//  applier that refuses instead.
+//
+//  Covers src/network/gateway-clients.ts. Run with `npm
+//  test` (the whole suite) inside the backend container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import {

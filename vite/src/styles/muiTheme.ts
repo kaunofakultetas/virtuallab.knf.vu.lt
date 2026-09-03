@@ -1,3 +1,14 @@
+// -----------------------------------------------------------
+//  [*] Styles — the MUI theme, both modes
+//
+//  The brand palettes (VU burgundy #78003F as light
+//  primary, its brighter #D6336C counterpart in dark mode)
+//  and the factory that turns a mode into a full MUI theme.
+//
+//  Used by:
+//    - AppProviders.tsx — rebuilt on every mode flip
+// -----------------------------------------------------------
+
 import { createTheme } from "@mui/material/styles";
 
 const palettes = {
@@ -24,6 +35,7 @@ const palettes = {
         border: "#3A3A3A",
     },
 } as const;
+
 
 export const getMuiTheme = (mode: "light" | "dark") => {
     const p = palettes[mode];

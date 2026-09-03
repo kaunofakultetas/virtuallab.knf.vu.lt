@@ -1,3 +1,16 @@
+// -----------------------------------------------------------
+//  [*] Routes — Prometheus scrape endpoint
+//
+//  Mounted at /metrics. Guarded by a bearer token from
+//  METRICS_TOKEN — when that env var is unset the endpoint
+//  is PUBLIC, and says so loudly in the log at boot.
+//
+//    GET /metrics — the full registry, Prometheus format
+//
+//  Used by:
+//    - the Prometheus scraper in the monitoring stack
+// -----------------------------------------------------------
+
 import { NextFunction, Request, Response, Router } from "express";
 import { logger } from "@/utils/logger";
 import { registry } from "@/utils/metrics";
@@ -12,6 +25,8 @@ if (!expectedToken) {
     );
 }
 
+
+// Bearer-token gate; pass-through when no token is configured.
 const requireToken = (req: Request, res: Response, next: NextFunction) => {
     if (!expectedToken) return next();
 
@@ -22,6 +37,7 @@ const requireToken = (req: Request, res: Response, next: NextFunction) => {
     res.setHeader("WWW-Authenticate", 'Bearer realm="metrics"');
     res.status(401).send("unauthorized");
 };
+
 
 metricsRouter.get("/", requireToken, async (_req: Request, res: Response) => {
     res.setHeader("Content-Type", registry.contentType);

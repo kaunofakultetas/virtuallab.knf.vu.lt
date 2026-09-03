@@ -1,3 +1,15 @@
+// -----------------------------------------------------------
+//  [*] Tests — the Gateway desired-state builder
+//
+//  Interface validation, canonical subnets and domains,
+//  peering edges in both directions, and the hashed
+//  revision.
+//
+//  Covers src/network/gateway-desired-state.ts. Run with
+//  `npm test` (the whole suite) inside the backend
+//  container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";

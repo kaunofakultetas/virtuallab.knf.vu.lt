@@ -1,3 +1,19 @@
+// -----------------------------------------------------------
+//  [*] Network — the readiness report
+//
+//  Everything that must be true before the mode switch to
+//  "active" is allowed: control-plane invariants from the
+//  database, the Proxmox-side observations, the Gateway's
+//  recorded runtime settings, datacenter firewall
+//  enforcement, and whether the provisioning executors can
+//  even be constructed. ready_for_active is simply "every
+//  required check passes".
+//
+//  Used by:
+//    - network.route.ts — GET /network/readiness
+//    - metadata.route.ts — gating the mode flip to active
+// -----------------------------------------------------------
+
 import { NetworkGroupState } from "@/types/network-groups";
 import { pool } from "@/utils/db";
 import {
@@ -40,6 +56,7 @@ export type NetworkReadinessReport = {
     };
 };
 
+// The one-row invariant sweep below returns counts as strings (pg's bigint).
 type ReadinessRow = {
     profile_count: string;
     template_count: string;
@@ -55,13 +72,28 @@ type ReadinessRow = {
     error_group_count: string;
 };
 
-/**
- * Reports whether the Gateway's guest-specific facts have been recorded.
- *
- * These cannot be derived from the database, and rendering policy against
- * guessed interface names would produce plausible but wrong configuration, so
- * an unconfigured Gateway is a required readiness failure rather than a default.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// checkGatewayRuntimeSettings
+// -----------------------------------------------------------
+//
+// Reports whether the Gateway's guest-specific facts have
+// been recorded. These cannot be derived from the database,
+// and rendering policy against guessed interface names
+// would produce plausible but wrong configuration, so an
+// unconfigured Gateway is a required readiness failure
+// rather than a default.
+//
+// Used by:
+//   - getNetworkReadiness (below)
+// -----------------------------------------------------------
+
 async function checkGatewayRuntimeSettings(): Promise<{
     status: ObservationStatus;
     detail: string;
@@ -84,19 +116,37 @@ async function checkGatewayRuntimeSettings(): Promise<{
     }
 }
 
-/**
- * Reports whether the four executors provisioning drives can actually be built.
- *
- * Constructing a client opens no connection; it only proves the principal,
- * identity file and forced command are configured. That is the property worth
- * grading here, because a missing channel does not surface until a student
- * presses the button: the VNet would be created, and then the request would fail
- * with the group already allocated and half its infrastructure in place.
- *
- * The Gateway observer is required despite being optional for a dry-run. It is
- * the independent channel an apply proves itself through, and committing without
- * that proof is the one thing the two-phase design exists to prevent.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// checkProvisioningExecutors
+// -----------------------------------------------------------
+//
+// Reports whether the executors provisioning drives can
+// actually be built.
+//
+// Constructing a client opens no connection; it only proves
+// the principal, identity file and forced command are
+// configured. That is the property worth grading here,
+// because a missing channel does not surface until a
+// student presses the button: the VNet would be created,
+// and then the request would fail with the group already
+// allocated and half its infrastructure in place.
+//
+// The Gateway observer is required despite being optional
+// for a dry-run. It is the independent channel an apply
+// proves itself through, and committing without that proof
+// is the one thing the two-phase design exists to prevent.
+//
+// Used by:
+//   - getNetworkReadiness (below)
+// -----------------------------------------------------------
+
 function checkProvisioningExecutors(): { status: ObservationStatus; detail: string } {
     const channels: [string, () => unknown][] = [
         ["proxmox-vnet-mutator", createNetworkProxmoxMutator],
@@ -127,6 +177,26 @@ function checkProvisioningExecutors(): { status: ObservationStatus; detail: stri
             : `Unconfigured provisioning executor(s): ${missing.join(", ")}`,
     };
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// getNetworkReadiness
+// -----------------------------------------------------------
+//
+// Assembles the report: the parallel reads, then the check
+// list in a fixed order — control-plane invariants first,
+// the Proxmox observations spliced in, the Gateway/firewall
+// /executor checks last.
+//
+// Used by:
+//   - network.route.ts, metadata.route.ts
+// -----------------------------------------------------------
 
 export async function getNetworkReadiness(): Promise<NetworkReadinessReport> {
     const executors = checkProvisioningExecutors();

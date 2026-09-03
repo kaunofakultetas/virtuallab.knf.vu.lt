@@ -1,9 +1,24 @@
+// -----------------------------------------------------------
+//  [*] Scripts — render-access (operator CLI)
+//
+//  Renders Access configuration from a desired-state input
+//  file, either as JSON on stdout or — with --output-dir —
+//  as a rootfs/ bundle plus a manifest of sha256 digests,
+//  ready to compare against what a guest reports.
+//
+//  Usage:
+//    npm run render-access -- <input.json> [--output-dir <dir>]
+// -----------------------------------------------------------
+
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { buildAccessPlan, AccessDesiredStateInput } from "@/network/access-desired-state";
 import { renderAccessConfiguration } from "@/network/access-render";
 
+
+// The same absolute-path mapping renderedAccessFiles uses, written under
+// <output>/rootfs/ with a manifest.json of digests beside it.
 async function writeBundle(
     outputDirectory: string,
     rendered: ReturnType<typeof renderAccessConfiguration>,
@@ -28,6 +43,7 @@ async function writeBundle(
     );
 }
 
+
 async function main(): Promise<void> {
     const inputPath = process.argv[2];
     if (!inputPath) {
@@ -51,6 +67,7 @@ async function main(): Promise<void> {
         process.stdout.write(`${JSON.stringify(rendered, null, 2)}\n`);
     }
 }
+
 
 main().catch((error: unknown) => {
     console.error(error instanceof Error ? error.message : error);

@@ -1,3 +1,23 @@
+// -----------------------------------------------------------
+//  [*] Routes — metadata: the admin settings API
+//
+//  Mounted at /metadata, admin-only throughout. Only keys
+//  present in metadata.defaults exist as far as this API is
+//  concerned; DELETE resets to the default rather than
+//  removing the row, so a setting can never disappear.
+//
+//  Flipping settings.network.mode to "active" is special:
+//  it is refused (409, with the failing checks) until the
+//  network readiness report passes.
+//
+//    GET    /metadata      — all settings with defaults
+//    PATCH  /metadata/:key — update one setting
+//    DELETE /metadata/:key — reset one setting to default
+//
+//  Used by:
+//    - admin/Settings.tsx — the settings page
+// -----------------------------------------------------------
+
 import { isAdmin, isAuthenticated } from "@/middleware/auth.middleware";
 import { validateRequest } from "@/middleware/zod-validation.middleware";
 import {
@@ -11,7 +31,24 @@ import { Router } from "express";
 
 const router = Router();
 
-// List all known settings with current values and defaults (admin only)
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// GET /metadata
+// -----------------------------------------------------------
+//
+// Every catalogued setting with its current value, default
+// and last-updated stamp.
+//
+// Used by:
+//   - admin/Settings.tsx — the settings table
+// -----------------------------------------------------------
+
 router.get("/", isAuthenticated, isAdmin, async (_req, res) => {
     try {
         const entries = await metadata.getAll();
@@ -22,7 +59,27 @@ router.get("/", isAuthenticated, isAdmin, async (_req, res) => {
     }
 });
 
-// Update a setting value (admin only)
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// PATCH /metadata/:key
+// -----------------------------------------------------------
+//
+// Updates one known setting. The network-mode value is
+// checked by hand here (the generic schema only knows
+// "scalar"), and going active runs the full readiness
+// report first — failing required checks come back in the
+// 409 body so the UI can show WHY.
+//
+// Used by:
+//   - admin/Settings.tsx — the edit dialog
+// -----------------------------------------------------------
+
 router.patch(
     "/:key",
     isAuthenticated,
@@ -69,7 +126,24 @@ router.patch(
     },
 );
 
-// Reset a setting to its default value (admin only)
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// DELETE /metadata/:key
+// -----------------------------------------------------------
+//
+// "Reset", not delete: writes the default value back, so
+// the row keeps existing and getAll() stays complete.
+//
+// Used by:
+//   - admin/Settings.tsx — the reset button
+// -----------------------------------------------------------
+
 router.delete(
     "/:key",
     isAuthenticated,
@@ -94,5 +168,12 @@ router.delete(
         }
     },
 );
+
+
+
+
+
+
+
 
 export { router as metadataRouter };

@@ -1,3 +1,14 @@
+// -----------------------------------------------------------
+//  [*] Tests — the attempt repository and lock
+//
+//  Attempt lifecycle guards (running-only updates) and the
+//  try-lock semantics.
+//
+//  Covers src/network/reconciliation-attempts.ts. Run with
+//  `npm test` (the whole suite) inside the backend
+//  container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import { QueryResult, QueryResultRow } from "pg";

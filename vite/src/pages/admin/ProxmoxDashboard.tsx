@@ -1,3 +1,22 @@
+// -----------------------------------------------------------
+//  [*] Admin — Proxmox running instances
+//
+//  View-only live dashboard of running Proxmox VMs
+//  (GET /api/instances/all/running), auto-refreshing every
+//  5 s. Background refreshes neither flash the spinner nor
+//  surface errors — a transient poll failure just leaves
+//  the last good data on screen.
+//
+//  Split into (root component first):
+//
+//    AdminProxmoxDashboard — the page (default export)
+//    formatMemory          — bytes → "x.xx / y.yy GiB"
+//    formatUptime          — seconds → "1d 2h 3m"
+//
+//  Used by:
+//    - router.tsx — route /admin/proxmox-dashboard
+// -----------------------------------------------------------
+
 import { useEffect, useState } from "react";
 import axios from "axios";
 import { getErrorMessage } from "@/utils/errors";
@@ -14,6 +33,7 @@ import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
 import Alert from "@mui/material/Alert";
 
+// The raw Proxmox VM listing fields this table renders.
 interface RunningProxmoxVm {
     vmid: number;
     name: string | null;
@@ -26,12 +46,16 @@ interface RunningProxmoxVm {
     tags: string | null;
 }
 
+
 export default function AdminProxmoxDashboard() {
     const [instances, setInstances] = useState<RunningProxmoxVm[]>([]);
     const [fetching, setFetching] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
 
+
+    // showLoading=false is the 5 s background poll: no spinner, no error
+    // banner — stale data beats a flickering table.
     const fetchRunningInstances = async (showLoading = true) => {
         if (showLoading) {
             setFetching(true);
@@ -59,6 +83,7 @@ export default function AdminProxmoxDashboard() {
         }
     };
 
+
     useEffect(() => {
         void fetchRunningInstances(true);
 
@@ -68,6 +93,7 @@ export default function AdminProxmoxDashboard() {
 
         return () => clearInterval(interval);
     }, []);
+
 
     return (
         <Stack spacing={2}>
@@ -174,6 +200,8 @@ export default function AdminProxmoxDashboard() {
     );
 }
 
+
+// Bytes → "used / max GiB", or an em dash when either side is unknown.
 function formatMemory(used: number | null, max: number | null): string {
     if (typeof used !== "number" || typeof max !== "number" || max <= 0) {
         return "—";
@@ -184,6 +212,8 @@ function formatMemory(used: number | null, max: number | null): string {
     return `${usedGiB.toFixed(2)} / ${maxGiB.toFixed(2)} GiB`;
 }
 
+
+// Seconds → the largest two meaningful units.
 function formatUptime(uptimeSec: number | null): string {
     if (typeof uptimeSec !== "number" || uptimeSec < 0) return "—";
 
@@ -195,4 +225,3 @@ function formatUptime(uptimeSec: number | null): string {
     if (hours > 0) return `${hours}h ${minutes}m`;
     return `${minutes}m`;
 }
-

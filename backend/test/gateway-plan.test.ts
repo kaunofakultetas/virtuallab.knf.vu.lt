@@ -1,3 +1,13 @@
+// -----------------------------------------------------------
+//  [*] Tests — the Gateway plan's database half
+//
+//  Fail-closed runtime settings and the operational
+//  group/peering queries feeding buildGatewayPlan.
+//
+//  Covers src/network/gateway-plan.ts. Run with `npm test`
+//  (the whole suite) inside the backend container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import {

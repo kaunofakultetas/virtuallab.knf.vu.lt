@@ -1,24 +1,28 @@
+// -----------------------------------------------------------
+//  [*] Network — picking the address a session targets
+//
+//  Picking a VM address is a trust boundary: the chosen
+//  address is handed to Guacamole and to the web proxy, so
+//  a wrong pick points a user's session at a machine that
+//  is not theirs. Every unverifiable input is refused here
+//  rather than resolved by guesswork.
+//
+//  Used by:
+//    - instances.controller.ts — the guest-IP wait loop
+//    - test/address-selection.test.ts
+// -----------------------------------------------------------
+
 import { isIP } from "node:net";
 
-/**
- * Picking a VM address is a trust boundary: the chosen address is handed to
- * Guacamole and to the web proxy, so a wrong pick points a user's session at a
- * machine that is not theirs. Every unverifiable input is refused here rather
- * than resolved by guesswork.
- */
 export class AddressSelectionError extends Error {}
 
 export type InstanceAddressSelection = {
-    /**
-     * The subnet of the instance's allocated network group, or `null` while the
-     * group holds no allocation — which is every group in legacy and dry-run
-     * mode.
-     */
+    // The subnet of the instance's allocated network group, or `null` while
+    // the group holds no allocation — which is every group in legacy and
+    // dry-run mode.
     subnetCidr: string | null;
-    /**
-     * Legacy fallback. The shared lab bridge is not modelled as a subnet, so the
-     * configured address prefix stays the only signal available there.
-     */
+    // Legacy fallback. The shared lab bridge is not modelled as a subnet, so
+    // the configured address prefix stays the only signal available there.
     legacyPrefix: string;
 };
 
@@ -27,6 +31,8 @@ type Ipv4Network = {
     prefix: number;
 };
 
+
+// Dotted quad → uint32.
 function toIpv4Number(address: string): number {
     return address.split(".").reduce(
         (result, octet) => (result << 8) | Number(octet),
@@ -34,10 +40,14 @@ function toIpv4Number(address: string): number {
     ) >>> 0;
 }
 
+
 function maskFor(prefix: number): number {
     return prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
 }
 
+
+// Strict CIDR parse — see the inline guards for the two ways a sloppy parse
+// would end up matching every address on earth.
 function parseIpv4Cidr(cidr: string): Ipv4Network {
     const [address, prefixText, extra] = cidr.split("/");
     // Number("") is 0, so a trailing slash would otherwise parse as /0 and match
@@ -57,13 +67,16 @@ function parseIpv4Cidr(cidr: string): Ipv4Network {
     return { network: toIpv4Number(address) & maskFor(prefix), prefix };
 }
 
+
 function contains(network: Ipv4Network, address: string): boolean {
     return (toIpv4Number(address) & maskFor(network.prefix)) === network.network;
 }
 
+
 // The guest agent reports these while DHCP is still running, or for the guest's
 // own loopback. None of them can ever identify a reachable VM.
 const UNROUTABLE_RANGES = ["0.0.0.0/8", "127.0.0.0/8", "169.254.0.0/16"].map(parseIpv4Cidr);
+
 
 function usableIpv4Addresses(addresses: readonly string[]): string[] {
     return addresses.filter(
@@ -73,16 +86,32 @@ function usableIpv4Addresses(addresses: readonly string[]): string[] {
     );
 }
 
-/**
- * Resolves the address a session should target from the IPv4 addresses reported
- * by the QEMU guest agent.
- *
- * With an allocated subnet, only membership in that subnet qualifies: a string
- * prefix cannot express a mask, so `10.10.100.5` would pass a `10.10.` test
- * while sitting outside `10.10.10.0/24`. Nothing falls back to the prefix in
- * that case — an isolated VM that has not yet taken a lease on its own subnet
- * must report "not ready", never an address on some other network.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// selectInstanceAddress
+// -----------------------------------------------------------
+//
+// Resolves the address a session should target from the
+// IPv4 addresses reported by the QEMU guest agent.
+//
+// With an allocated subnet, only membership in that subnet
+// qualifies: a string prefix cannot express a mask, so
+// `10.10.100.5` would pass a `10.10.` test while sitting
+// outside `10.10.10.0/24`. The legacy-prefix fallback below
+// it exists for a group that gained its allocation AFTER
+// its VMs were provisioned on the shared bridge — the
+// inline comments carry the full reasoning.
+//
+// Used by:
+//   - instances.controller.ts — getInsideNetIPv4
+// -----------------------------------------------------------
+
 export function selectInstanceAddress(
     addresses: readonly string[],
     selection: InstanceAddressSelection,

@@ -1,3 +1,22 @@
+// -----------------------------------------------------------
+//  [*] Network — the group state machine and allocator
+//
+//  Every transition a network group makes lives here, each
+//  one guarded in SQL so a concurrent writer can never
+//  observe a half-move: planned → creating (allocation,
+//  under an advisory lock), creating → active (promotion),
+//  anything-with-no-VMs → deleting (teardown entry),
+//  deleting → gone (release), plus the error annotations.
+//  The guards ARE the design — most functions here exist to
+//  make one specific race impossible.
+//
+//  Used by:
+//    - attachment.ts, instances.route.ts / controller —
+//      allocation, promotion, planned-group cleanup
+//    - teardown.ts — deleting/release transitions
+//    - network.route.ts — the group listing
+// -----------------------------------------------------------
+
 import { QueryResult, QueryResultRow } from "pg";
 import { NetworkGroup } from "@/types/network-groups";
 import { pool } from "@/utils/db";
@@ -7,6 +26,24 @@ import { getNetworkPlan, ProjectedNetworkGroup } from "./desired-state";
 const NETWORK_ALLOCATION_ADVISORY_LOCK = 1447838018; // ASCII "VLAB" as a 32-bit key.
 
 export class NetworkAllocationError extends Error {}
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// findLowestAvailableVlan
+// -----------------------------------------------------------
+//
+// The pool scan; throws when 2000-2255 is exhausted.
+//
+// Used by:
+//   - allocateNetworkGroup (below)
+//   - test/network-allocator.test.ts
+// -----------------------------------------------------------
 
 export function findLowestAvailableVlan(
     occupiedVlans: Iterable<number>,
@@ -22,6 +59,9 @@ export function findLowestAvailableVlan(
     throw new NetworkAllocationError(`Network allocation pool ${first}-${last} is exhausted`);
 }
 
+
+// All-or-nothing, and canonical: a partial or non-slot-matching allocation
+// means the row and the projection disagree, and neither can be trusted.
 function validatePersistedAllocation(group: NetworkGroup): boolean {
     const fields = [group.vlan_tag, group.vnet_name, group.subnet_cidr];
     const populatedCount = fields.filter((field) => field !== null).length;
@@ -39,12 +79,11 @@ function validatePersistedAllocation(group: NetworkGroup): boolean {
     return true;
 }
 
-/**
- * Minimal surface `allocateNetworkGroup` needs, so the transaction can be
- * exercised without a live PostgreSQL. The advisory lock and `FOR UPDATE` are
- * the whole point of this function, and neither is testable through the
- * exported helpers alone.
- */
+
+// Minimal surface `allocateNetworkGroup` needs, so the transaction can be
+// exercised without a live PostgreSQL. The advisory lock and `FOR UPDATE` are
+// the whole point of this function, and neither is testable through the
+// exported helpers alone.
 export type NetworkAllocationPool = {
     connect(): Promise<{
         query<Row extends QueryResultRow = QueryResultRow>(
@@ -54,6 +93,28 @@ export type NetworkAllocationPool = {
         release(): void;
     }>;
 };
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// allocateNetworkGroup
+// -----------------------------------------------------------
+//
+// planned/error → creating with a claimed slot, in one
+// transaction under the allocation advisory lock + FOR
+// UPDATE. An already-allocated group short-circuits (with
+// the error-state resume documented inline); an unallocated
+// one claims the lowest free VLAN and records the new plan
+// revision as its desired_revision.
+//
+// Used by:
+//   - attachment.ts — resolveNetworkAttachment in active mode
+// -----------------------------------------------------------
 
 export async function allocateNetworkGroup(
     groupId: number,
@@ -149,6 +210,7 @@ export async function allocateNetworkGroup(
         return allocated.rows[0];
     } catch (error) {
         await client.query("ROLLBACK");
+        // 23505 = unique violation — another writer claimed the same slot.
         if ((error as { code?: string }).code === "23505") {
             throw new NetworkAllocationError("Network allocation conflicted with another writer");
         }
@@ -158,11 +220,30 @@ export async function allocateNetworkGroup(
     }
 }
 
+
 export type NetworkGroupSummary = NetworkGroup & {
     profile_name: string;
     instance_count: number;
     projection: ProjectedNetworkGroup;
 };
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// getOrCreatePlannedGroup
+// -----------------------------------------------------------
+//
+// One group per (owner, profile): the no-op DO UPDATE makes
+// the upsert return the existing row instead of failing.
+//
+// Used by:
+//   - instances.route.ts — POST /instances
+// -----------------------------------------------------------
 
 export async function getOrCreatePlannedGroup(
     ownerId: string,
@@ -179,13 +260,29 @@ export async function getOrCreatePlannedGroup(
     return result.rows[0];
 }
 
-/**
- * Records a failed provisioning attempt against an already-allocated group.
- *
- * The allocation is deliberately retained. Its VLAN and subnet must not return
- * to the pool until a teardown has verified that no Proxmox resource still
- * references them, because infrastructure may already have been created.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// markNetworkGroupError
+// -----------------------------------------------------------
+//
+// Records a failed provisioning attempt against an
+// already-allocated group.
+//
+// The allocation is deliberately retained. Its VLAN and
+// subnet must not return to the pool until a teardown has
+// verified that no Proxmox resource still references them,
+// because infrastructure may already have been created.
+//
+// Used by:
+//   - attachment.ts — compensateNetworkAttachment
+// -----------------------------------------------------------
+
 export async function markNetworkGroupError(
     groupId: number,
     lastError: string,
@@ -209,17 +306,34 @@ export async function markNetworkGroupError(
     );
 }
 
-/**
- * Promotes a group whose infrastructure is fully reconciled.
- *
- * Guarded on `creating`, so a concurrent teardown that already moved the group
- * to `deleting` is never dragged back into service by a provisioning request
- * that started earlier.
- *
- * `applied_revision` records the infrastructure revision every executor
- * converged on, which is what makes "active" mean something an operator can
- * check rather than a state somebody set.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// markNetworkGroupActive
+// -----------------------------------------------------------
+//
+// Promotes a group whose infrastructure is fully
+// reconciled.
+//
+// Guarded on `creating`, so a concurrent teardown that
+// already moved the group to `deleting` is never dragged
+// back into service by a provisioning request that started
+// earlier.
+//
+// `applied_revision` records the infrastructure revision
+// every executor converged on, which is what makes "active"
+// mean something an operator can check rather than a state
+// somebody set.
+//
+// Used by:
+//   - instances.route.ts — after the VM firewall applied
+// -----------------------------------------------------------
+
 export async function markNetworkGroupActive(
     groupId: number,
     appliedRevision: string,
@@ -237,18 +351,36 @@ export async function markNetworkGroupActive(
     return result.rows[0] ?? null;
 }
 
-/**
- * Moves a group out of the operational plan so teardown can proceed.
- *
- * The instance check is inside the same statement rather than a separate read:
- * a VM created between a check and an update would otherwise have its network
- * dismantled underneath it. `deleting` is not an operational state, so the
- * moment this commits every reconciler stops projecting the group's VLAN --
- * which is exactly what makes the later prune steps converge.
- *
- * Returns null when the group still has instances or is not in a state that may
- * be torn down, so a caller can tell "refused" from "done".
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// markNetworkGroupDeleting
+// -----------------------------------------------------------
+//
+// Moves a group out of the operational plan so teardown can
+// proceed.
+//
+// The instance check is inside the same statement rather
+// than a separate read: a VM created between a check and an
+// update would otherwise have its network dismantled
+// underneath it. `deleting` is not an operational state, so
+// the moment this commits every reconciler stops projecting
+// the group's VLAN — which is exactly what makes the later
+// prune steps converge.
+//
+// Returns null when the group still has instances or is not
+// in a state that may be torn down, so a caller can tell
+// "refused" from "done".
+//
+// Used by:
+//   - teardown.ts — the first teardown step
+// -----------------------------------------------------------
+
 export async function markNetworkGroupDeleting(groupId: number): Promise<NetworkGroup | null> {
     const result = await pool.query<NetworkGroup>(
         `UPDATE network_groups network_group
@@ -270,20 +402,37 @@ export async function markNetworkGroupDeleting(groupId: number): Promise<Network
     return result.rows[0] ?? null;
 }
 
-/**
- * Records why a teardown stopped, on the row it stopped on.
- *
- * Guarded on `deleting` so it can only ever annotate a group that teardown
- * actually owns; `markNetworkGroupError` refuses that state on purpose, because
- * demoting a mid-teardown group to `error` would drag it back into the
- * operational plan while its VNet was already gone.
- *
- * The state is deliberately left alone. This writes a reason, not a transition:
- * the group stays `deleting` and stays retryable, and the allocation stays
- * reserved. Without it a stranded group carried no diagnosis at all -- the only
- * record of why it stopped was a log line, and the operator looking at the row
- * saw `deleting` with a NULL `last_error` and nothing to act on.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// markNetworkGroupTeardownError
+// -----------------------------------------------------------
+//
+// Records why a teardown stopped, on the row it stopped on.
+//
+// Guarded on `deleting` so it can only ever annotate a
+// group that teardown actually owns; `markNetworkGroupError`
+// refuses that state on purpose, because demoting a
+// mid-teardown group to `error` would drag it back into the
+// operational plan while its VNet was already gone.
+//
+// The state is deliberately left alone. This writes a
+// reason, not a transition: the group stays `deleting` and
+// stays retryable, and the allocation stays reserved.
+// Without it a stranded group carried no diagnosis at all —
+// the only record of why it stopped was a log line, and the
+// operator looking at the row saw `deleting` with a NULL
+// `last_error` and nothing to act on.
+//
+// Used by:
+//   - teardown.ts — on a failed teardown step
+// -----------------------------------------------------------
+
 export async function markNetworkGroupTeardownError(
     groupId: number,
     lastError: string,
@@ -298,14 +447,31 @@ export async function markNetworkGroupTeardownError(
     );
 }
 
-/**
- * Releases a torn-down group's VLAN and subnet by removing the row.
- *
- * Both guards matter and neither is redundant: `deleting` proves the caller went
- * through teardown rather than deleting a live group, and the instance check
- * catches a VM attached during it. Releasing either way would hand a subnet to
- * another owner while Proxmox resources still referenced it.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// deleteNetworkGroupRecord
+// -----------------------------------------------------------
+//
+// Releases a torn-down group's VLAN and subnet by removing
+// the row.
+//
+// Both guards matter and neither is redundant: `deleting`
+// proves the caller went through teardown rather than
+// deleting a live group, and the instance check catches a
+// VM attached during it. Releasing either way would hand a
+// subnet to another owner while Proxmox resources still
+// referenced it.
+//
+// Used by:
+//   - teardown.ts — the final teardown step
+// -----------------------------------------------------------
+
 export async function deleteNetworkGroupRecord(groupId: number): Promise<boolean> {
     const result = await pool.query(
         `DELETE FROM network_groups network_group
@@ -319,6 +485,25 @@ export async function deleteNetworkGroupRecord(groupId: number): Promise<boolean
     return (result.rowCount ?? 0) > 0;
 }
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// deleteUnusedPlannedGroup
+// -----------------------------------------------------------
+//
+// Removes a still-`planned`, instance-free group — cleanup
+// after a failed or abandoned non-isolated provisioning.
+//
+// Used by:
+//   - instances.controller.ts — after instance deletion
+//   - attachment.ts — compensation for a planned group
+// -----------------------------------------------------------
+
 export async function deleteUnusedPlannedGroup(groupId: number): Promise<void> {
     await pool.query(
         `DELETE FROM network_groups network_group
@@ -330,6 +515,26 @@ export async function deleteUnusedPlannedGroup(groupId: number): Promise<void> {
         [groupId],
     );
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// getNetworkGroups
+// -----------------------------------------------------------
+//
+// The admin listing: every group with its profile name,
+// instance count, and its projection from the current plan
+// (an unprojectable group is an invariant violation worth
+// throwing on).
+//
+// Used by:
+//   - network.route.ts — GET /network/groups
+// -----------------------------------------------------------
 
 export async function getNetworkGroups(): Promise<NetworkGroupSummary[]> {
     const [result, plan] = await Promise.all([

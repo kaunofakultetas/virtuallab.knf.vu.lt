@@ -1,3 +1,14 @@
+// -----------------------------------------------------------
+//  [*] Tests — the rendered Access configuration
+//
+//  The networkd units, sysctl and nftables text
+//  renderAccessConfiguration emits, including the zero-group
+//  forward chain.
+//
+//  Covers src/network/access-render.ts. Run with `npm test`
+//  (the whole suite) inside the backend container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildAccessPlan } from "../src/network/access-desired-state";

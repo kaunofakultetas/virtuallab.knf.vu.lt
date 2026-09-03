@@ -1,3 +1,13 @@
+// -----------------------------------------------------------
+//  [*] Tests — the drift reconciler
+//
+//  Observe-first repair, the fixable-check filter, repair
+//  ordering, and the skip when the lock is held.
+//
+//  Covers src/network/drift-reconciler.ts. Run with `npm
+//  test` (the whole suite) inside the backend container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import {

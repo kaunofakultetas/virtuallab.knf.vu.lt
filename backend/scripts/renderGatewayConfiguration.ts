@@ -1,8 +1,21 @@
+// -----------------------------------------------------------
+//  [*] Scripts — render-gateway (operator CLI)
+//
+//  Renders Gateway configuration from a desired-state input
+//  file, either as JSON on stdout or — with --output-dir —
+//  as a rootfs/ bundle plus a manifest of sha256 digests,
+//  ready to compare against what the guest reports.
+//
+//  Usage:
+//    npm run render-gateway -- <input.json> [--output-dir <dir>]
+// -----------------------------------------------------------
+
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { buildGatewayPlan, GatewayDesiredStateInput } from "@/network/gateway-desired-state";
 import { renderGatewayConfiguration } from "@/network/gateway-render";
+
 
 async function writeBundle(
     outputDirectory: string,
@@ -36,6 +49,7 @@ async function writeBundle(
     );
 }
 
+
 async function main(): Promise<void> {
     const inputPath = process.argv[2];
     if (!inputPath) {
@@ -61,6 +75,7 @@ async function main(): Promise<void> {
         process.stdout.write(`${JSON.stringify(rendered, null, 2)}\n`);
     }
 }
+
 
 main().catch((error: unknown) => {
     console.error(error instanceof Error ? error.message : error);

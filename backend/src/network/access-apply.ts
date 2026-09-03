@@ -1,3 +1,31 @@
+// -----------------------------------------------------------
+//  [*] Network — the two-phase Access policy apply
+//
+//  Stage → prove → commit against LXC 200's guest applier —
+//  the Access twin of gateway-apply.ts. The guest arms a
+//  rollback timer before installing anything, so every
+//  failure path is safe to abandon: not committing is
+//  itself the recovery. The pre-commit proof runs over the
+//  read-only observer principal, never the session that
+//  made the change.
+//
+//  Split into (executor last):
+//
+//    ACCESS_ROLLBACK_SECONDS       — default timer window
+//    AccessApplyError              — staged failures
+//    response schemas              — the guest's answers
+//    RestrictedSshAccessApplyClient — the SSH channel
+//    buildAccessApplyPlan          — infra plan + observation
+//    renderedAccessFiles           — the path contract
+//    applyAccessPolicy             — the flow itself
+//    abandon                       — best-effort rollback
+//
+//  Used by:
+//    - access-apply-runner.ts — the audited entry point
+//    - access-clients.ts — constructs the SSH client
+//    - test/access-apply.test.ts
+// -----------------------------------------------------------
+
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { AccessPlan, buildOperationalAccessPlan } from "./access-desired-state";
@@ -10,16 +38,14 @@ import {
 import { RestrictedSshTransport } from "./adapters/restricted-ssh";
 import { InfrastructurePlan } from "./infrastructure-desired-state";
 
-/**
- * Default window between staging and committing. Long enough for an independent
- * observation over a fresh connection, short enough that a broken ruleset keeps
- * students out for minutes rather than until someone notices. The guest clamps
- * this to its own bounds.
- */
+// Default window between staging and committing. Long enough for an independent
+// observation over a fresh connection, short enough that a broken ruleset keeps
+// students out for minutes rather than until someone notices. The guest clamps
+// this to its own bounds.
 export const ACCESS_ROLLBACK_SECONDS = 300;
 
 export class AccessApplyError extends Error {
-    /** Whether the immediate rollback succeeded; undefined if none was attempted. */
+    // Whether the immediate rollback succeeded; undefined if none was attempted.
     rolledBack?: boolean;
 
     constructor(
@@ -86,6 +112,27 @@ export interface AccessApplyClient {
     rollback(transactionId: string): Promise<unknown>;
 }
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// RestrictedSshAccessApplyClient
+// -----------------------------------------------------------
+//
+// AccessApplyClient over the restricted-SSH transport. Every
+// answer is matched to the request that asked for it, the
+// same rule RestrictedSshAccessObservationClient applies —
+// without it a stale answer left in the channel could be
+// read as this transaction's result.
+//
+// Used by:
+//   - access-clients.ts — createAccessApplier
+// -----------------------------------------------------------
+
 export class RestrictedSshAccessApplyClient implements AccessApplyClient {
     constructor(private readonly transport: Pick<RestrictedSshTransport, "execute">) {}
 
@@ -125,11 +172,6 @@ export class RestrictedSshAccessApplyClient implements AccessApplyClient {
         });
     }
 
-    /**
-     * Matches every answer to the request that asked for it, the same rule
-     * `RestrictedSshAccessObservationClient` applies. Without it a stale answer
-     * left in the channel could be read as this transaction's result.
-     */
     private async execute<Output extends { request_id: string }>(
         schema: z.ZodType<Output>,
         request: (requestId: string) => Record<string, unknown>,
@@ -143,29 +185,43 @@ export class RestrictedSshAccessApplyClient implements AccessApplyClient {
     }
 }
 
-/**
- * The two documents an Access apply needs.
- *
- * They are separate because they are hashed separately: `infrastructure` is the
- * database-derived plan the observation channel checks against, `access` is the
- * guest policy whose revision the guest reports back.
- */
+
+// The two documents an Access apply needs. They are separate because they are
+// hashed separately: `infrastructure` is the database-derived plan the
+// observation channel checks against, `access` is the guest policy whose
+// revision the guest reports back.
 export type AccessApplyPlan = {
     infrastructure: InfrastructurePlan;
     access: AccessPlan;
 };
 
-/**
- * Derives the Access policy implied by an infrastructure plan and an
- * observation.
- *
- * Unlike the Gateway, Access desired state is not a function of the database
- * alone: the ruleset names the Docker bridge CIDRs the guest actually has, so
- * the revision depends on an observation too. This derivation deliberately
- * repeats `planAccess`'s — if the two disagreed, the applier would stage one
- * revision while the observation channel demanded another, and no apply could
- * ever converge.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// buildAccessApplyPlan
+// -----------------------------------------------------------
+//
+// Derives the Access policy implied by an infrastructure
+// plan and an observation.
+//
+// Unlike the Gateway, Access desired state is not a
+// function of the database alone: the ruleset names the
+// Docker bridge CIDRs the guest actually has, so the
+// revision depends on an observation too. This derivation
+// deliberately repeats `planAccess`'s — if the two
+// disagreed, the applier would stage one revision while the
+// observation channel demanded another, and no apply could
+// ever converge.
+//
+// Used by:
+//   - access-apply-runner.ts
+// -----------------------------------------------------------
+
 export function buildAccessApplyPlan(
     infrastructure: InfrastructurePlan,
     observation: AccessHostObservation,
@@ -184,13 +240,29 @@ export function buildAccessApplyPlan(
     };
 }
 
-/**
- * The rendered files, keyed by the absolute path they occupy on the guest.
- *
- * These paths are the contract with `infra/access/apply_access.py`, which
- * refuses to write anything outside its allowlist. Keep them aligned with
- * ALLOWED_EXACT and ALLOWED_PATTERNS there.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// renderedAccessFiles
+// -----------------------------------------------------------
+//
+// The rendered files, keyed by the absolute path they
+// occupy on the guest.
+//
+// These paths are the contract with
+// `infra/access/apply_access.py`, which refuses to write
+// anything outside its allowlist. Keep them aligned with
+// ALLOWED_EXACT and ALLOWED_PATTERNS there.
+//
+// Used by:
+//   - applyAccessPolicy (below)
+// -----------------------------------------------------------
+
 export function renderedAccessFiles(plan: AccessPlan): Record<string, string> {
     const rendered = renderAccessConfiguration(plan);
     return {
@@ -200,14 +272,13 @@ export function renderedAccessFiles(plan: AccessPlan): Record<string, string> {
     };
 }
 
+
 export type AccessApplyDependencies = {
     apply: AccessApplyClient;
-    /**
-     * Used for the pre-commit proof. This is deliberately a different client
-     * from `apply`: it opens its own connection through the read-only observer
-     * principal, so a commit is never authorised by the same session that made
-     * the change.
-     */
+    // Used for the pre-commit proof. This is deliberately a different client
+    // from `apply`: it opens its own connection through the read-only observer
+    // principal, so a commit is never authorised by the same session that made
+    // the change.
     observe: AccessObservationClient;
     rollbackSeconds?: number;
 };
@@ -222,16 +293,33 @@ export type AccessApplyResult = {
     committed: true;
 };
 
-/**
- * Applies rendered Access policy and commits it only once an independent
- * observation agrees that the guest converged.
- *
- * The guest arms a rollback timer before installing anything, so every failure
- * path below is safe to abandon: not committing is itself the recovery. An
- * explicit rollback is still attempted because it recovers in seconds rather
- * than minutes, but it is best-effort — the timer remains the guarantee, and the
- * guest cancels it only after the restore succeeds.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// applyAccessPolicy
+// -----------------------------------------------------------
+//
+// Applies rendered Access policy and commits it only once
+// an independent observation agrees that the guest
+// converged.
+//
+// The guest arms a rollback timer before installing
+// anything, so every failure path below is safe to abandon:
+// not committing is itself the recovery. An explicit
+// rollback is still attempted because it recovers in
+// seconds rather than minutes, but it is best-effort — the
+// timer remains the guarantee, and the guest cancels it
+// only after the restore succeeds.
+//
+// Used by:
+//   - access-apply-runner.ts
+// -----------------------------------------------------------
+
 export async function applyAccessPolicy(
     plan: AccessApplyPlan,
     dependencies: AccessApplyDependencies,
@@ -349,11 +437,26 @@ export async function applyAccessPolicy(
     };
 }
 
-/**
- * Best-effort immediate rollback. A failure here is recorded on the error rather
- * than replacing it: the original cause is what an operator needs, and the
- * guest's timer still restores the previous state either way.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// abandon
+// -----------------------------------------------------------
+//
+// Best-effort immediate rollback. A failure here is
+// recorded on the error rather than replacing it: the
+// original cause is what an operator needs, and the guest's
+// timer still restores the previous state either way.
+//
+// Used by:
+//   - applyAccessPolicy (above) — every failure path
+// -----------------------------------------------------------
+
 async function abandon(
     dependencies: AccessApplyDependencies,
     transactionId: string,

@@ -1,3 +1,17 @@
+// -----------------------------------------------------------
+//  [*] Network — writing one VM's firewall
+//
+//  The executor for per-VM policy: observe, skip when
+//  already converged, otherwise rewrite IPSet and rules
+//  wholesale, enable last, and prove the result by
+//  re-observing.
+//
+//  Used by:
+//    - provisioning-firewall.ts — at VM creation
+//    - drift-reconciler.ts — repairing drifted VMs
+//    - test/vm-firewall-apply.test.ts
+// -----------------------------------------------------------
+
 import { ProxmoxFirewallIpSetEntryInput, ProxmoxFirewallRuleInput } from "@/proxmox/types";
 import {
     observeVmFirewall,
@@ -6,6 +20,8 @@ import {
 } from "./adapters/proxmox-vm-firewall";
 import { VmFirewallPolicy, VM_FIREWALL_IPSET } from "./vm-firewall";
 
+// `stage` says which side failed: "apply" is a write that errored, "verify"
+// is a write that finished but did not converge.
 export class VmFirewallApplyError extends Error {
     constructor(message: string, readonly stage: "apply" | "verify") {
         super(message);
@@ -37,27 +53,44 @@ export type VmFirewallApplyResult = {
     changed: boolean;
 };
 
-/**
- * Rewrites one VM's firewall to match its desired policy, then proves the result
- * by re-observing.
- *
- * Rules are replaced wholesale rather than diffed. Proxmox evaluates them in
- * order and stops at the first match, so a partial edit can leave an ACCEPT
- * ahead of a DROP and silently reopen what the DROP existed to close. Replacing
- * the list is the only edit whose result does not depend on what was there
- * before.
- *
- * That is safe here in a way it would not be for a VNet: this VM was created by
- * this system for one student, and its firewall has no meaning outside the
- * policy rendered for it. Nothing else is touched — no cluster rules, no other
- * guest, no security group.
- *
- * The source filter is applied BEFORE the ingress rules. Both orders converge,
- * but only this one is safe if the process dies in between: a VM that can send
- * only from its own address while its ingress is still open is strictly better
- * than one whose ingress is locked down while it can still claim any address on
- * the segment.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// applyVmFirewall
+// -----------------------------------------------------------
+//
+// Rewrites one VM's firewall to match its desired policy,
+// then proves the result by re-observing.
+//
+// Rules are replaced wholesale rather than diffed. Proxmox
+// evaluates them in order and stops at the first match, so
+// a partial edit can leave an ACCEPT ahead of a DROP and
+// silently reopen what the DROP existed to close. Replacing
+// the list is the only edit whose result does not depend on
+// what was there before.
+//
+// That is safe here in a way it would not be for a VNet:
+// this VM was created by this system for one student, and
+// its firewall has no meaning outside the policy rendered
+// for it. Nothing else is touched — no cluster rules, no
+// other guest, no security group.
+//
+// The source filter is applied BEFORE the ingress rules.
+// Both orders converge, but only this one is safe if the
+// process dies in between: a VM that can send only from its
+// own address while its ingress is still open is strictly
+// better than one whose ingress is locked down while it can
+// still claim any address on the segment.
+//
+// Used by:
+//   - provisioning-firewall.ts, drift-reconciler.ts
+// -----------------------------------------------------------
+
 export async function applyVmFirewall(
     policy: VmFirewallPolicy,
     client: VmFirewallApplyClient,

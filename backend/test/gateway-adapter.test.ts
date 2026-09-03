@@ -1,3 +1,13 @@
+// -----------------------------------------------------------
+//  [*] Tests — planGateway's observation checks
+//
+//  Every Gateway check graded from host observations: trunk
+//  topology, routes, files, services, DNS binding, sysctls.
+//
+//  Covers src/network/adapters/gateway.ts. Run with `npm
+//  test` (the whole suite) inside the backend container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";

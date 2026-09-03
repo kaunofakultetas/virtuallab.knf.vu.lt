@@ -1,3 +1,14 @@
+// -----------------------------------------------------------
+//  [*] Tests — SDN VNet observe/plan/execute
+//
+//  The checks and create/update actions planned from an
+//  observation, and the unowned-VNet reporting.
+//
+//  Covers src/network/adapters/proxmox-vnet.ts. Run with
+//  `npm test` (the whole suite) inside the backend
+//  container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildInfrastructurePlan } from "../src/network/infrastructure-desired-state";

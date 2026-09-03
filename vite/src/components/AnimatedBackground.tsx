@@ -1,9 +1,25 @@
+// -----------------------------------------------------------
+//  [*] Components — the animated dot background
+//
+//  The parallax dot grid behind the login page: a
+//  radial-gradient dot pattern that eases toward the mouse
+//  (6% per frame, so it trails softly) under a center fade.
+//  Colors follow the color mode. Fixed, pointer-events:
+//  none, z-index 0 — content stacks above it.
+//
+//  Used by:
+//    - pages/Login.tsx
+// -----------------------------------------------------------
+
 import { useEffect, useRef } from "react";
 import { useColorMode } from "@/hooks/useColorMode";
+
 
 export function AnimatedBackground() {
     const { mode } = useColorMode();
     const layerRef = useRef<HTMLDivElement>(null);
+    // Animated via refs and a rAF loop, not state: a re-render per mousemove
+    // would thrash the whole tree for a purely visual effect.
     const target = useRef({ x: 0, y: 0 });
     const current = useRef({ x: 0, y: 0 });
     const raf = useRef<number>(0);
@@ -42,6 +58,8 @@ export function AnimatedBackground() {
 
     return (
         <div style={{ position: "fixed", inset: 0, overflow: "hidden", zIndex: 0, backgroundColor: bgColor, pointerEvents: "none" }}>
+            {/* The dot layer overshoots the viewport by 60px so the parallax
+                shift never exposes an edge. */}
             <div
                 ref={layerRef}
                 style={{

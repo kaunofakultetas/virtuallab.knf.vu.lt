@@ -1,3 +1,29 @@
+// -----------------------------------------------------------
+//  [*] Routes — instances: the student-facing VM lifecycle
+//
+//  Mounted at /instances. Access control is per-instance:
+//  owner or admin, checked through Instances.hasAccessTo on
+//  every ID route. The big ones are POST / (create with
+//  network provisioning around it) and GET /:id/session
+//  (start the VM, then build whichever connection the
+//  template calls for).
+//
+//    GET    /instances                    — own instances
+//    GET    /instances/all                — all (admin)
+//    GET    /instances/all/running        — Proxmox view (admin)
+//    ALL    /instances/proxy-auth         — Caddy forward-auth
+//    GET    /instances/:instanceId        — one instance
+//    POST   /instances                    — create
+//    DELETE /instances/:instanceId        — delete
+//    PATCH  /instances/:instanceId/expirable — admin toggle
+//    GET    /instances/:instanceId/start  — start VM
+//    GET    /instances/:instanceId/stop   — stop VM
+//    GET    /instances/:instanceId/reboot — reboot VM
+//    GET    /instances/:instanceId/session — connection URL
+//    GET    /instances/:instanceId/renew  — extend runtime
+//    GET    /instances/:instanceId/ip     — guest IPv4 list
+// -----------------------------------------------------------
+
 import { Instances } from "@/controllers/instances.controller";
 import { LabProfiles } from "@/controllers/lab-profiles.controller";
 import { Templates } from "@/controllers/templates.controller";
@@ -33,7 +59,24 @@ const router = Router();
 const webProxyIpCache = new Map<number, { ip: string; exp: number }>();
 const WEB_PROXY_IP_TTL_MS = 30_000;
 
-// Gets all instances for current user
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// GET /instances
+// -----------------------------------------------------------
+//
+// The current user's instances, with their network-group
+// and profile columns joined in.
+//
+// Used by:
+//   - Index.tsx, Instances.tsx — the student dashboard
+// -----------------------------------------------------------
+
 router.get("/", isAuthenticated, (req, res) => {
     if (!req.user) {
         return res.status(401).json({ message: "Unauthorized" });
@@ -50,7 +93,21 @@ router.get("/", isAuthenticated, (req, res) => {
         });
 });
 
-// Gets all instances for all users, admin only
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// GET /instances/all
+// -----------------------------------------------------------
+//
+// Used by:
+//   - admin/AdminInstances.tsx — the all-instances table
+// -----------------------------------------------------------
+
 router.get("/all", isAuthenticated, isAdmin, (req, res) => {
     Instances.getAll()
         .then((instances) => res.json(instances))
@@ -60,7 +117,24 @@ router.get("/all", isAuthenticated, isAdmin, (req, res) => {
         });
 });
 
-// Gets all currently running VM instances from Proxmox, admin only (view-only)
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// GET /instances/all/running
+// -----------------------------------------------------------
+//
+// The raw Proxmox view — every running VM, tracked by this
+// app or not. View-only.
+//
+// Used by:
+//   - admin/ProxmoxDashboard.tsx
+// -----------------------------------------------------------
+
 router.get("/all/running", isAuthenticated, isAdmin, async (_req, res) => {
     try {
         const vms = await proxmox.getVms();
@@ -72,11 +146,33 @@ router.get("/all/running", isAuthenticated, isAdmin, async (_req, res) => {
     }
 });
 
-// Forward-auth endpoint for the web-UI proxy (virtuallab.knf.vu.lt:8888).
-// Caddy calls this on every proxied request: we read the webTargetMachine cookie,
-// verify the caller owns that instance, resolve the VM's web-UI target, and return
-// it as headers. Any non-2xx response makes Caddy deny the request.
-// NOTE: must be registered before "/:instanceId" so it isn't swallowed by it.
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// ALL /instances/proxy-auth
+// -----------------------------------------------------------
+//
+// Forward-auth endpoint for the web-UI proxy
+// (virtuallab.knf.vu.lt:8888). Caddy calls this on every
+// proxied request: read the webTargetMachine cookie, verify
+// the caller owns that instance, resolve the VM's web-UI
+// target, and return it as X-Target-* headers. Any non-2xx
+// response makes Caddy deny the request. The resolved IP is
+// cached for 30 s because one page load fires this once per
+// asset.
+//
+// NOTE: must be registered before "/:instanceId" so it
+// isn't swallowed by it.
+//
+// Used by:
+//   - the Caddy endpoint container's forward_auth block
+// -----------------------------------------------------------
+
 router.all("/proxy-auth", isAuthenticated, async (req, res) => {
     if (!req.user?.vu_id) return res.status(401).end();
 
@@ -119,7 +215,21 @@ router.all("/proxy-auth", isAuthenticated, async (req, res) => {
     return res.status(200).end();
 });
 
-// Gets instance by ID, only if it belongs to current user or user is admin
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// GET /instances/:instanceId
+// -----------------------------------------------------------
+//
+// Used by:
+//   - Instances.tsx — the instance detail refresh
+// -----------------------------------------------------------
+
 router.get(
     "/:instanceId",
     isAuthenticated,
@@ -176,7 +286,29 @@ router.get(
     },
 );
 
-// Creates new instance, only for current user
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// POST /instances
+// -----------------------------------------------------------
+//
+// Create, with the network provisioning wrapped around the
+// clone. Order matters and each phase says why inline:
+// validate template/profile/limit, resolve the network
+// attachment, build shared infrastructure BEFORE cloning,
+// clone+start, then per-VM firewall AFTER — with the VM
+// destroyed if that last step fails, and the whole
+// attachment compensated on any error.
+//
+// Used by:
+//   - Index.tsx — the create-instance flow
+// -----------------------------------------------------------
+
 router.post(
     "/",
     isAuthenticated,
@@ -356,7 +488,21 @@ router.post(
     },
 );
 
-// Deletes instance by ID, only if it belongs to current user or user is admin
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// DELETE /instances/:instanceId
+// -----------------------------------------------------------
+//
+// Used by:
+//   - Instances.tsx, admin/AdminInstances.tsx
+// -----------------------------------------------------------
+
 router.delete(
     "/:instanceId",
     isAuthenticated,
@@ -396,7 +542,21 @@ router.delete(
     },
 );
 
-// Set whether an instance is expirable (admin only)
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// PATCH /instances/:instanceId/expirable
+// -----------------------------------------------------------
+//
+// Used by:
+//   - admin/AdminInstances.tsx — the expirable toggle
+// -----------------------------------------------------------
+
 router.patch(
     "/:instanceId/expirable",
     isAuthenticated,
@@ -438,7 +598,27 @@ router.patch(
     },
 );
 
-// Start instance by ID, only if it belongs to current user or user is admin
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// GET /instances/:instanceId/start
+// GET /instances/:instanceId/stop
+// GET /instances/:instanceId/reboot
+// -----------------------------------------------------------
+//
+// The three power buttons — same shape each time: access
+// check, delegate to the controller, answer { ok: true }
+// without waiting for the Proxmox task to finish.
+//
+// Used by:
+//   - Instances.tsx, admin/AdminInstances.tsx
+// -----------------------------------------------------------
+
 router.get(
     "/:instanceId/start",
     isAuthenticated,
@@ -462,7 +642,7 @@ router.get(
     },
 );
 
-// Stop instance by ID, only if it belongs to current user or user is admin
+
 router.get(
     "/:instanceId/stop",
     isAuthenticated,
@@ -486,7 +666,7 @@ router.get(
     },
 );
 
-// Reboot instance by ID, only if it belongs to current user or user is admin
+
 router.get(
     "/:instanceId/reboot",
     isAuthenticated,
@@ -510,7 +690,34 @@ router.get(
     },
 );
 
-// Get GUI connection URL for instance by ID, only if it belongs to current user or user is admin
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// GET /instances/:instanceId/session
+// -----------------------------------------------------------
+//
+// The connect button. Starts the VM, then branches on the
+// template's connection type:
+//   web       — answers immediately; the :8888 proxy
+//               resolves the IP itself via forward-auth
+//   ssh       — Guacamole SSH connection ("<id>-ssh")
+//   guacamole — RDP connection (name = instance id),
+//               IP-refreshed if the VM moved
+// For both Guacamole paths the student's Guacamole account
+// is created on demand (password = their vu_id) and granted
+// READ on the connection; the answer is a deep-link URL.
+// The "creatorId"/"userId" placeholders in a template's
+// connection credentials resolve to real IDs here.
+//
+// Used by:
+//   - Instances.tsx / utils/instances.ts — the connect flow
+// -----------------------------------------------------------
+
 router.get(
     "/:instanceId/session",
     isAuthenticated,
@@ -699,7 +906,23 @@ router.get(
     },
 );
 
-// Renew machine running hours
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// GET /instances/:instanceId/renew
+// -----------------------------------------------------------
+//
+// Resets run_until to now + defaultRuntimeHours.
+//
+// Used by:
+//   - Instances.tsx — the renew button
+// -----------------------------------------------------------
+
 router.get(
     "/:instanceId/renew",
     isAuthenticated,
@@ -733,7 +956,25 @@ router.get(
     },
 );
 
-// Get machines ip within the local network
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// GET /instances/:instanceId/ip
+// -----------------------------------------------------------
+//
+// The guest's IPv4 list straight from the agent, with the
+// two boot-time failure modes translated: VM not running →
+// 409, agent not up yet → 503 (try again).
+//
+// Used by:
+//   - Instances.tsx — the IP display
+// -----------------------------------------------------------
+
 router.get(
     "/:instanceId/ip",
     isAuthenticated,
@@ -780,5 +1021,12 @@ router.get(
         }
     },
 );
+
+
+
+
+
+
+
 
 export { router as instancesRouter };

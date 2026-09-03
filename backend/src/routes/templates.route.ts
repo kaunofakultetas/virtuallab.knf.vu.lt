@@ -1,3 +1,18 @@
+// -----------------------------------------------------------
+//  [*] Routes — templates
+//
+//  Mounted at /templates. Listing is role-aware; the rest is
+//  admin CRUD plus a validation probe that checks the
+//  backing Proxmox VM really is a template.
+//
+//    GET    /templates              — list (role-filtered)
+//    GET    /templates/:id          — one template (admin)
+//    POST   /templates              — create (admin)
+//    DELETE /templates/:id          — delete (admin)
+//    PATCH  /templates/:id          — update (admin)
+//    GET    /templates/:id/validate — Proxmox-side check
+// -----------------------------------------------------------
+
 import { Templates } from "@/controllers/templates.controller";
 import { isAdmin, isAuthenticated } from "@/middleware/auth.middleware";
 import { validateRequest } from "@/middleware/zod-validation.middleware";
@@ -16,7 +31,26 @@ import { Router } from "express";
 
 const router = Router();
 
-// Get all Templates the User has access to
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// GET /templates
+// -----------------------------------------------------------
+//
+// Admins get every template, students only the
+// visible_to_students ones.
+//
+// Used by:
+//   - Index.tsx — the student create flow
+//   - admin/Templates.tsx, admin/AdminInstances.tsx,
+//     admin/LabProfiles.tsx
+// -----------------------------------------------------------
+
 router.get("/", isAuthenticated, (req, res) => {
     if (req.user?.role === "admin") {
         Templates.getAll()
@@ -35,7 +69,21 @@ router.get("/", isAuthenticated, (req, res) => {
     }
 });
 
-// Get Template by ID
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// GET /templates/:id
+// -----------------------------------------------------------
+//
+// Used by:
+//   - admin/TemplateDetails.tsx
+// -----------------------------------------------------------
+
 router.get(
     "/:id",
     isAuthenticated,
@@ -61,15 +109,39 @@ router.get(
     },
 );
 
-// Create a new Template
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// POST /templates
+// -----------------------------------------------------------
+//
+// Rejects a duplicate proxmox_id up front. The optional
+// connection_type/connection_config pass straight through to
+// Templates.create, which defaults them to "guacamole" / {}.
+//
+// Used by:
+//   - admin/Templates.tsx — the create dialog
+// -----------------------------------------------------------
+
 router.post(
     "/",
     isAuthenticated,
     isAdmin,
     validateRequest({ body: createTemplateSchema }),
     async (req, res) => {
-        const { type, name, description, proxmox_id } =
-            req.body as CreateTemplateDTO;
+        const {
+            type,
+            name,
+            description,
+            proxmox_id,
+            connection_type,
+            connection_config,
+        } = req.body as CreateTemplateDTO;
 
         try {
             const existingTemplate = await Templates.getByProxmoxId(proxmox_id);
@@ -84,6 +156,8 @@ router.post(
                 name,
                 description,
                 proxmox_id,
+                connection_type,
+                connection_config,
             });
             return res.status(201).json(template);
         } catch (err) {
@@ -93,7 +167,21 @@ router.post(
     },
 );
 
-// Delete a Template by ID
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// DELETE /templates/:id
+// -----------------------------------------------------------
+//
+// Used by:
+//   - admin/Templates.tsx — the delete button
+// -----------------------------------------------------------
+
 router.delete(
     "/:id",
     isAuthenticated,
@@ -114,7 +202,21 @@ router.delete(
     },
 );
 
-// Update a Template by ID
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// PATCH /templates/:id
+// -----------------------------------------------------------
+//
+// Used by:
+//   - admin/Templates.tsx, admin/TemplateDetails.tsx
+// -----------------------------------------------------------
+
 router.patch(
     "/:id",
     isAuthenticated,
@@ -139,7 +241,28 @@ router.patch(
     },
 );
 
-// Validate template
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// GET /templates/:id/validate
+// -----------------------------------------------------------
+//
+// Checks the backing VM on the Proxmox side: it must exist
+// and be a real template (template flag set); the
+// template_image tag is only a warning. Proxmox errors are
+// unwrapped so the UI can distinguish "VM gone" (404,
+// PROXMOX_VM_NOT_FOUND) from "Proxmox broke" (502).
+//
+// Used by:
+//   - admin/Templates.tsx / TemplateDetails.tsx — the
+//     validate action
+// -----------------------------------------------------------
+
 router.get(
     "/:id/validate",
     isAuthenticated,
@@ -194,6 +317,8 @@ router.get(
                         : null;
                 const lowerMessage = proxmoxMessage?.toLowerCase() ?? "";
 
+                // Proxmox answers "does not exist" as a 500, not a 404 —
+                // translate it for the client.
                 if (
                     err.status === 500 &&
                     lowerMessage.includes("does not exist")
@@ -231,5 +356,12 @@ router.get(
         }
     },
 );
+
+
+
+
+
+
+
 
 export { router as templatesRouter };

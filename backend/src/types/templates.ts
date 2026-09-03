@@ -1,3 +1,18 @@
+// -----------------------------------------------------------
+//  [*] Types — templates
+//
+//  A template is a cloneable Proxmox VM plus the way a
+//  student connects to instances made from it. The
+//  connection_config shape depends on connection_type —
+//  the union below is honest about that, including the
+//  empty-object case.
+//
+//  Used by:
+//    - templates.controller.ts, templates.route.ts
+//    - instances.controller.ts — connection details on clone
+//    - lab-profiles (types + controller), network/vm-firewall
+// -----------------------------------------------------------
+
 export type TemplateType = "student_vm" | "lab_vm";
 
 export type ConnectionType = "guacamole" | "ssh" | "web";

@@ -1,19 +1,29 @@
 #!/usr/bin/env python3
+############################################################
+#  [*] Gateway observe — forced command on the Proxmox host
+#
+#  The read-only half of Gateway reconciliation. Runs under
+#  a dedicated authorized_keys entry, so the key the
+#  orchestrator holds can do exactly this and nothing else:
+#  read VM 202's persistent configuration through pvesh/qm,
+#  run the guest-side observer (observe_gateway.py) inside
+#  the VM, and return both as one document.
+#
+#  VM 202 has no QEMU guest agent, so unlike the Access
+#  observer this reaches the guest over SSH using the host's
+#  own key. That is the same trust relationship the
+#  hypervisor already has: host root controls the VM and its
+#  disk regardless, so this grants no privilege it lacked.
+#
+#  Mutates nothing. Returns digests of managed files rather
+#  than their content.
+#
+#  Used by:
+#    - backend gateway-clients.ts createGatewayObserver —
+#      the read-only SSH principal for reconciliation
+#      dry-runs
+############################################################
 
-"""Forced command for read-only Gateway observation.
-
-Runs on the Proxmox host under a dedicated authorized_keys entry, so the key the
-orchestrator holds can do exactly this and nothing else. It reads VM 202's
-persistent configuration through `qm`, then runs the guest-side observer inside
-the VM and returns both as one document.
-
-VM 202 has no QEMU guest agent, so unlike the Access observer this reaches the
-guest over SSH using the host's own key. That is the same trust relationship the
-hypervisor already has: host root controls the VM and its disk regardless, so
-this grants no privilege it lacked.
-
-Mutates nothing. Returns digests of managed files rather than their content.
-"""
 
 import datetime
 import json
@@ -33,6 +43,23 @@ MAX_REQUEST_BYTES = 4096
 PROXMOX_NODE_NAME = os.environ.get("PROXMOX_NODE_NAME", "")
 
 
+
+
+
+
+
+
+############################################################
+# run
+############################################################
+#
+# The shared subprocess wrapper: check=True, captured text
+# output, a 12 s default timeout.
+#
+# Used by:
+#   - observe_guest, main (below)
+############################################################
+
 def run(command: list[str], *, input_text: str | None = None, timeout: int = 12) -> str:
     result = subprocess.run(
         command,
@@ -44,6 +71,24 @@ def run(command: list[str], *, input_text: str | None = None, timeout: int = 12)
     )
     return result.stdout
 
+
+
+
+
+
+
+
+############################################################
+# parse_request
+############################################################
+#
+# Accepts exactly one request shape — the fixed observe call
+# with a strict UUID request ID — and rejects any extra or
+# missing field by name-set comparison.
+#
+# Used by:
+#   - main (below)
+############################################################
 
 def parse_request(raw: bytes) -> dict[str, Any]:
     if len(raw) > MAX_REQUEST_BYTES:
@@ -62,8 +107,26 @@ def parse_request(raw: bytes) -> dict[str, Any]:
     return request
 
 
+
+
+
+
+
+
+############################################################
+# parse_network_device
+############################################################
+#
+# Parses a QEMU netN value such as
+# 'virtio=BC:24:11:..,bridge=vmbr1,firewall=1' into the
+# fields reconciliation compares. A malformed or duplicate
+# field is an error, not a shrug.
+#
+# Used by:
+#   - main (below)
+############################################################
+
 def parse_network_device(value: str) -> dict[str, Any]:
-    """Parses a QEMU netN value such as 'virtio=BC:24:11:..,bridge=vmbr1,firewall=1'."""
     fields: dict[str, str] = {}
     for field in value.split(","):
         key, separator, field_value = field.partition("=")
@@ -83,6 +146,23 @@ def parse_network_device(value: str) -> dict[str, Any]:
         "trunks": sorted(trunks),
     }
 
+
+
+
+
+
+
+
+############################################################
+# observe_guest
+############################################################
+#
+# Pushes the checked-in guest observer over SSH stdin and
+# runs it in one call, so the guest never holds a copy.
+#
+# Used by:
+#   - main (below)
+############################################################
 
 def observe_guest() -> dict[str, Any]:
     source = GUEST_OBSERVER.read_text()
@@ -105,11 +185,36 @@ def observe_guest() -> dict[str, Any]:
     return json.loads(output)
 
 
+
+
+
+
+
+
+############################################################
+# main
+############################################################
+#
+# One observation round trip: config via pvesh (digest
+# mandatory), running check, the netN/ipconfigN views, then
+# the guest observer — any failure is fatal, because a
+# partial observation is not an observation.
+#
+# Used by:
+#   - the __main__ guard
+############################################################
+
 def main() -> None:
+    # STEP 1: validate the request and the pinned node name
+    # =====================================================
     request = parse_request(sys.stdin.buffer.read(MAX_REQUEST_BYTES + 1))
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]{0,62}", PROXMOX_NODE_NAME):
         raise ValueError("PROXMOX_NODE_NAME is missing or malformed")
 
+
+    # STEP 2: the Proxmox-owned half — config digest, running
+    # status, every netN and ipconfigN entry
+    # =======================================================
     config = json.loads(run([
         "pvesh", "get", f"/nodes/{PROXMOX_NODE_NAME}/qemu/{VMID}/config", "--output-format", "json",
     ]))
@@ -132,6 +237,9 @@ def main() -> None:
         if re.fullmatch(r"ipconfig\d+", key) and isinstance(value, str)
     }
 
+
+    # STEP 3: the guest half, then one combined JSON answer
+    # =====================================================
     response = {
         "version": 1,
         "request_id": request["request_id"],
@@ -149,6 +257,12 @@ def main() -> None:
         "errors": [],
     }
     print(json.dumps(response, sort_keys=True, separators=(",", ":")))
+
+
+
+
+
+
 
 
 if __name__ == "__main__":

@@ -1,3 +1,30 @@
+// -----------------------------------------------------------
+//  [*] Network — rendering Gateway configuration files
+//
+//  GatewayPlan → the literal file contents the Gateway
+//  applier installs: networkd units, sysctl, dnsmasq,
+//  squid.conf and the nftables ruleset. Every file opens
+//  with the plan's revision comment — the convergence
+//  signal drift checks look for. The inline comments carry
+//  the operational scars; the render-version history in
+//  gateway-desired-state.ts indexes them.
+//
+//  Split into (assembler last):
+//
+//    nftSet / quotedInterfaces — small format helpers
+//    renderNetworkd — trunk parent + VLAN units
+//    renderSysctl   — forwarding on, IPv6 off, rp_filter
+//    renderDnsmasq  — DHCP/DNS on lab VLANs only
+//    renderSquid    — Host/SNI allowlist filtering
+//    renderNftables — redirect, input, forward chains
+//    renderGatewayConfiguration — the full bundle
+//
+//  Used by:
+//    - adapters/gateway.ts — renderedGatewayFiles
+//    - scripts/renderGatewayConfiguration.ts — operator CLI
+//    - test/gateway-render.test.ts
+// -----------------------------------------------------------
+
 import { GatewayPlan, GatewayVlanInterface } from "./gateway-desired-state";
 
 export type RenderedGatewayConfiguration = {
@@ -11,6 +38,8 @@ export type RenderedGatewayConfiguration = {
     };
 };
 
+
+// nftables inline-set syntax: one value bare, several in braces.
 function nftSet(values: Array<string | number>): string {
     if (values.length === 0) {
         throw new Error("Cannot render an empty nftables set");
@@ -18,9 +47,43 @@ function nftSet(values: Array<string | number>): string {
     return values.length === 1 ? String(values[0]) : `{ ${values.join(", ")} }`;
 }
 
+
 function quotedInterfaces(interfaces: GatewayVlanInterface[]): string[] {
     return interfaces.map(({ interface_name }) => `"${interface_name}"`);
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// renderNetworkd
+// -----------------------------------------------------------
+//
+// One `.network` unit for the trunk parent plus a
+// .netdev/.network pair per VLAN interface.
+//
+// A whole `.network` unit for the parent, not a `.network.d`
+// drop-in. The drop-in this replaces was silently inert:
+// systemd-networkd only reads `<name>.network.d/` next to a
+// `<name>.network` that exists, and on this Gateway nothing
+// creates one — netplan configures the management and
+// uplink NICs only, leaving the trunk parent `unmanaged`
+// and down. Every VLAN netdev was therefore declared
+// against a link networkd was not configuring, so none was
+// ever created. It stayed invisible while no group was
+// allocated, because with no interfaces this function
+// returns nothing at all. Owning the parent unit outright
+// also removes the dependency on a base file somebody made
+// by hand — the kind of undeclared prerequisite that
+// survives right up until the guest is rebuilt.
+//
+// Used by:
+//   - renderGatewayConfiguration (below)
+// -----------------------------------------------------------
 
 function renderNetworkd(plan: GatewayPlan): Record<string, string> {
     const { interfaces, parent_interface } = plan.desired_state.transport;
@@ -28,20 +91,6 @@ function renderNetworkd(plan: GatewayPlan): Record<string, string> {
         return {};
     }
 
-    // A whole `.network` unit for the trunk parent, not a `.network.d` drop-in.
-    //
-    // The drop-in this replaces was silently inert: systemd-networkd only reads
-    // `<name>.network.d/` next to a `<name>.network` that exists, and on this
-    // Gateway nothing creates one -- netplan configures the management and
-    // uplink NICs only, leaving the trunk parent `unmanaged` and down. Every
-    // VLAN netdev was therefore declared against a link networkd was not
-    // configuring, so none was ever created. It stayed invisible while no group
-    // was allocated, because with no interfaces this function returns nothing at
-    // all.
-    //
-    // Owning the parent unit outright also removes the dependency on a base file
-    // somebody made by hand, which is the kind of undeclared prerequisite that
-    // survives right up until the guest is rebuilt.
     const files: Record<string, string> = {
         [`/etc/systemd/network/50-virtual-lab-${parent_interface}.network`]: [
             `# Gateway desired-state revision ${plan.revision}.`,
@@ -92,6 +141,25 @@ function renderNetworkd(plan: GatewayPlan): Record<string, string> {
     return files;
 }
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// renderSysctl
+// -----------------------------------------------------------
+//
+// Forwarding on, IPv6 off at every level, plus the
+// hardening knobs — and refuses to render for a plan that
+// claims IPv6.
+//
+// Used by:
+//   - renderGatewayConfiguration (below)
+// -----------------------------------------------------------
+
 function renderSysctl(plan: GatewayPlan): string {
     if (plan.desired_state.ipv6_enabled) {
         throw new Error("Gateway rendering requires IPv6 to remain disabled");
@@ -113,14 +181,29 @@ function renderSysctl(plan: GatewayPlan): string {
     ].join("\n");
 }
 
-/**
- * dnsmasq serves DHCP and DNS on lab VLANs only.
- *
- * The uplink shares a broadcast domain with other infrastructure, so binding
- * there would put a rogue DHCP server on someone else's network. `bind-interfaces`
- * with an explicit interface list, plus explicit exceptions, keeps that
- * impossible even when the lab VLAN list is empty.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// renderDnsmasq
+// -----------------------------------------------------------
+//
+// dnsmasq serves DHCP and DNS on lab VLANs only.
+//
+// The uplink shares a broadcast domain with other
+// infrastructure, so binding there would put a rogue DHCP
+// server on someone else's network. bind-dynamic with an
+// explicit interface list, plus explicit exceptions, keeps
+// that impossible even when the lab VLAN list is empty.
+//
+// Used by:
+//   - renderGatewayConfiguration (below)
+// -----------------------------------------------------------
+
 function renderDnsmasq(plan: GatewayPlan): string {
     const desired = plan.desired_state;
     const { interfaces } = desired.transport;
@@ -167,14 +250,30 @@ function renderDnsmasq(plan: GatewayPlan): string {
     return lines.join("\n");
 }
 
-/**
- * Squid filters HTTP by Host and HTTPS by SNI.
- *
- * `ssl_bump peek` then `splice` reads the handshake's server name without
- * decrypting application data, so no CA certificate is needed on lab VMs. A
- * connection whose destination is not visible, or not allowlisted for the source
- * subnet, is denied.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// renderSquid
+// -----------------------------------------------------------
+//
+// Squid filters HTTP by Host and HTTPS by SNI.
+//
+// `ssl_bump peek` then `splice` reads the handshake's
+// server name without decrypting application data, so no CA
+// certificate is needed on lab VMs. A connection whose
+// destination is not visible, or not allowlisted for the
+// source subnet, is denied. The rendered file's own
+// comments explain the rest — they ship to the guest.
+//
+// Used by:
+//   - renderGatewayConfiguration (below)
+// -----------------------------------------------------------
+
 function renderSquid(plan: GatewayPlan): string {
     const desired = plan.desired_state;
     const lines = [
@@ -305,6 +404,28 @@ function renderSquid(plan: GatewayPlan): string {
     );
     return lines.join("\n");
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// renderNftables
+// -----------------------------------------------------------
+//
+// The managed table: the interception redirects
+// (prerouting), the input chain scoped to each lab
+// interface's own Gateway address, and the forward chain
+// whose peering decision deliberately precedes the
+// conntrack accept. The rendered comments ship to the guest
+// and carry the reasoning at the rule they justify.
+//
+// Used by:
+//   - renderGatewayConfiguration (below)
+// -----------------------------------------------------------
 
 function renderNftables(plan: GatewayPlan): string {
     const desired = plan.desired_state;
@@ -492,6 +613,23 @@ function renderNftables(plan: GatewayPlan): string {
 
     return lines.join("\n");
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// renderGatewayConfiguration
+// -----------------------------------------------------------
+//
+// The full bundle for one plan.
+//
+// Used by:
+//   - adapters/gateway.ts, scripts/renderGatewayConfiguration.ts
+// -----------------------------------------------------------
 
 export function renderGatewayConfiguration(plan: GatewayPlan): RenderedGatewayConfiguration {
     return {

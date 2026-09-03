@@ -1,3 +1,31 @@
+// -----------------------------------------------------------
+//  [*] App — the route table
+//
+//  Every page, lazy-loaded, with auth layered in the router:
+//  /login and /privacy are public, everything under "/"
+//  requires a session (AuthProvider + RequireAuth around
+//  PageLayout), and the admin/* children add RequireAdmin.
+//  The two template routes load their data in router
+//  loaders, so a failed fetch renders ErrorPage instead of
+//  a half-empty admin page.
+//
+//    /                        — Index (role-aware home)
+//    /instances               — student instance list
+//    /settings                — user settings
+//    /home                    — About
+//    /admin/templates[/:id]   — template admin (loaders)
+//    /admin/users             — user admin
+//    /admin/instances         — all-instances admin
+//    /admin/guacamole         — Guacamole connections
+//    /admin/proxmox-dashboard — Proxmox live view
+//    /admin/lab-profiles      — lab profile admin
+//    /admin/network           — network admin
+//    /admin/settings          — settings admin
+//
+//  Used by:
+//    - main.tsx — RouterProvider
+// -----------------------------------------------------------
+
 import { lazy, Suspense } from "react";
 import { createBrowserRouter } from "react-router-dom";
 import axios from "axios";
@@ -22,10 +50,15 @@ const Settings = lazy(() => import("@/pages/Settings"));
 import { AuthProvider, RequireAuth, RequireAdmin } from "@/utils/AuthGuard";
 import { extractTemplate, extractTemplates } from "@/utils/templates";
 
+
+// Shorthand Suspense wrapper — every lazy page renders through it.
 const S = ({ children }: { children: React.ReactNode }) => (
     <Suspense fallback={null}>{children}</Suspense>
 );
 
+
+// Loader errors must be thrown as Response objects for the router to hand
+// them to ErrorPage with a status; axios errors are translated here.
 const toRouteError = (err: unknown, fallbackStatus = 500) => {
     if (err instanceof Response) {
         return err;
@@ -47,6 +80,8 @@ const toRouteError = (err: unknown, fallbackStatus = 500) => {
     return new Response("Unexpected error", { status: fallbackStatus });
 };
 
+
+// Router loader for /admin/templates — the page renders from this data.
 const templatesLoader = async () => {
     try {
         const response = await axios.get("/api/templates");
@@ -63,6 +98,8 @@ const templatesLoader = async () => {
     }
 };
 
+
+// Router loader for /admin/templates/:id.
 const templateDetailsLoader = async ({
     params,
 }: {
@@ -88,6 +125,7 @@ const templateDetailsLoader = async ({
         throw toRouteError(err);
     }
 };
+
 
 export const router = createBrowserRouter([
     {

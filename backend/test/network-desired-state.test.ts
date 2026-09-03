@@ -1,3 +1,13 @@
+// -----------------------------------------------------------
+//  [*] Tests — the network plan projection
+//
+//  Persisted allocations pinned, unallocated groups
+//  projected onto the lowest free VLANs, deterministically.
+//
+//  Covers src/network/desired-state.ts. Run with `npm test`
+//  (the whole suite) inside the backend container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildNetworkPlan } from "../src/network/desired-state";

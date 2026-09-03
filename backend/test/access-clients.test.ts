@@ -1,3 +1,13 @@
+// -----------------------------------------------------------
+//  [*] Tests — Access SSH channel construction
+//
+//  The three Access principals built from environment, and
+//  the refusals when configuration is missing.
+//
+//  Covers src/network/access-clients.ts. Run with `npm test`
+//  (the whole suite) inside the backend container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import {

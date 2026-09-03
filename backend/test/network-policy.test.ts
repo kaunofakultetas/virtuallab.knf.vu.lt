@@ -1,3 +1,12 @@
+// -----------------------------------------------------------
+//  [*] Tests — the policy tables
+//
+//  Strict domain validation and undirected peering ordering.
+//
+//  Covers src/network/policy.ts. Run with `npm test` (the
+//  whole suite) inside the backend container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import {

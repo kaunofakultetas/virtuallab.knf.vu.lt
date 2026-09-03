@@ -1,3 +1,13 @@
+// -----------------------------------------------------------
+//  [*] Tests — the Gateway apply runner
+//
+//  Revision pinning, fixable-check gating, and the
+//  compensated action states on failure.
+//
+//  Covers src/network/gateway-apply-runner.ts. Run with `npm
+//  test` (the whole suite) inside the backend container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";

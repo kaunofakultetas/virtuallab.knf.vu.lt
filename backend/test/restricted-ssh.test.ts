@@ -1,3 +1,14 @@
+// -----------------------------------------------------------
+//  [*] Tests — the restricted SSH transport
+//
+//  The locked-down argument set and the bounded-output/JSON
+//  answer contract.
+//
+//  Covers src/network/adapters/restricted-ssh.ts. Run with
+//  `npm test` (the whole suite) inside the backend
+//  container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import { RestrictedSshTransport } from "../src/network/adapters/restricted-ssh";

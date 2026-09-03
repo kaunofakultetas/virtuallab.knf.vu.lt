@@ -1,3 +1,22 @@
+// -----------------------------------------------------------
+//  [*] Network — assembling the Gateway plan from the DB
+//
+//  The database half of Gateway desired state: the recorded
+//  runtime settings (interface names, resolvers — facts the
+//  DB cannot derive, read fail-closed), the operational
+//  group rows with their domain lists, and the realisable
+//  peerings. buildGatewayPlan in gateway-desired-state.ts
+//  turns all of it into the hashed plan.
+//
+//  Used by:
+//    - gateway-apply-runner.ts, provisioning-network.ts,
+//      drift-reconciler.ts — the plan
+//    - readiness.ts — getGatewayRuntimeSettings
+//    - provisioning-firewall.ts — getPeerSubnetCidrs
+//    - scripts/renderGatewayConfiguration.ts,
+//      setGatewayRuntimeSettings.ts
+// -----------------------------------------------------------
+
 import { QueryResult, QueryResultRow } from "pg";
 import { pool } from "@/utils/db";
 import { metadata } from "@/utils/metadata";
@@ -11,14 +30,12 @@ import {
 
 export class GatewayConfigurationError extends Error {}
 
-/**
- * Runtime facts about the built Gateway VM that the database cannot derive.
- *
- * The guest's interface names depend on the image and NIC layout, so they are
- * recorded once the VM exists rather than guessed. Every key is empty by
- * default and reading them fails closed, because rendering policy against
- * invented interface names would produce plausible but wrong configuration.
- */
+// Runtime facts about the built Gateway VM that the database cannot derive.
+//
+// The guest's interface names depend on the image and NIC layout, so they are
+// recorded once the VM exists rather than guessed. Every key is empty by
+// default and reading them fails closed, because rendering policy against
+// invented interface names would produce plausible but wrong configuration.
 export const GATEWAY_SETTING_KEYS = {
     trunkInterface: "settings.network.gateway.trunkInterface",
     uplinkInterface: "settings.network.gateway.uplinkInterface",
@@ -52,6 +69,7 @@ export type GatewayPlanDependencies = {
     getSettings?: () => Promise<GatewayRuntimeSettings>;
 };
 
+
 function requireSetting(value: unknown, key: string): string {
     if (typeof value !== "string" || value.trim().length === 0) {
         throw new GatewayConfigurationError(
@@ -60,6 +78,25 @@ function requireSetting(value: unknown, key: string): string {
     }
     return value.trim();
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// getGatewayRuntimeSettings
+// -----------------------------------------------------------
+//
+// Reads the four gateway.* settings, refusing empty or
+// missing values — see the GATEWAY_SETTING_KEYS comment.
+//
+// Used by:
+//   - getGatewayPlan (below), readiness.ts,
+//     scripts/setGatewayRuntimeSettings.ts
+// -----------------------------------------------------------
 
 export async function getGatewayRuntimeSettings(): Promise<GatewayRuntimeSettings> {
     const [trunk, uplink, management, resolvers] = await Promise.all([
@@ -89,11 +126,10 @@ export async function getGatewayRuntimeSettings(): Promise<GatewayRuntimeSetting
     };
 }
 
-/**
- * Groups that may hold infrastructure, matching the infrastructure plan's own
- * definition: `creating` and `active`, plus `error` rows that still hold an
- * allocation so their resources remain represented until teardown.
- */
+
+// Groups that may hold infrastructure, matching the infrastructure plan's own
+// definition: `creating` and `active`, plus `error` rows that still hold an
+// allocation so their resources remain represented until teardown.
 const OPERATIONAL_GROUPS_SQL = `
     SELECT
         network_group.id,
@@ -118,13 +154,11 @@ const OPERATIONAL_GROUPS_SQL = `
     ORDER BY network_group.id
 `;
 
-/**
- * Only peerings where BOTH sides currently hold an allocation are realisable.
- *
- * A peering that references a still-`planned` group is a legitimate transient
- * state, not a misconfiguration, so it is omitted from desired state rather
- * than failing the whole plan.
- */
+// Only peerings where BOTH sides currently hold an allocation are realisable.
+//
+// A peering that references a still-`planned` group is a legitimate transient
+// state, not a misconfiguration, so it is omitted from desired state rather
+// than failing the whole plan.
 const OPERATIONAL_PEERINGS_SQL = `
     SELECT peering.group_a_id, peering.group_b_id
     FROM group_peerings peering
@@ -137,18 +171,16 @@ const OPERATIONAL_PEERINGS_SQL = `
     ORDER BY peering.group_a_id, peering.group_b_id
 `;
 
-/**
- * Subnets of the groups a given group is peered with.
- *
- * Undirected, so both columns are matched: a peering stored as (4, 7) has to be
- * visible from group 7 as well, or one side of an approved pair would be
- * admitted while the other was silently dropped.
- *
- * Only allocated, operational peers are returned, for the same reason
- * `OPERATIONAL_PEERINGS_SQL` filters them: a peer without a subnet has no
- * address range to admit, and rendering one would produce a rule matching
- * nothing or, worse, a malformed one.
- */
+// Subnets of the groups a given group is peered with.
+//
+// Undirected, so both columns are matched: a peering stored as (4, 7) has to be
+// visible from group 7 as well, or one side of an approved pair would be
+// admitted while the other was silently dropped.
+//
+// Only allocated, operational peers are returned, for the same reason
+// `OPERATIONAL_PEERINGS_SQL` filters them: a peer without a subnet has no
+// address range to admit, and rendering one would produce a rule matching
+// nothing or, worse, a malformed one.
 const PEER_SUBNETS_SQL = `
     SELECT peer.subnet_cidr::text AS subnet_cidr
     FROM group_peerings peering
@@ -163,6 +195,21 @@ const PEER_SUBNETS_SQL = `
     ORDER BY peer.subnet_cidr
 `;
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// getPeerSubnetCidrs
+// -----------------------------------------------------------
+//
+// Used by:
+//   - provisioning-firewall.ts — the VM policy's peer list
+// -----------------------------------------------------------
+
 export async function getPeerSubnetCidrs(
     groupId: number,
     queryable: GatewayPlanQuery = pool,
@@ -171,12 +218,46 @@ export async function getPeerSubnetCidrs(
     return result.rows.map(({ subnet_cidr }) => subnet_cidr);
 }
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// getGroupPeerings
+// -----------------------------------------------------------
+//
+// Used by:
+//   - getGatewayPlan (below)
+// -----------------------------------------------------------
+
 export async function getGroupPeerings(
     queryable: GatewayPlanQuery = pool,
 ): Promise<GatewayPeeringInput[]> {
     const result = await queryable.query<GatewayPeeringInput>(OPERATIONAL_PEERINGS_SQL);
     return result.rows;
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// getGatewayPlan
+// -----------------------------------------------------------
+//
+// Settings, groups and peerings in parallel, then the pure
+// plan builder.
+//
+// Used by:
+//   - gateway-apply-runner.ts, provisioning-network.ts,
+//     drift-reconciler.ts, scripts/renderGatewayConfiguration.ts
+// -----------------------------------------------------------
 
 export async function getGatewayPlan(
     dependencies: GatewayPlanDependencies = {},

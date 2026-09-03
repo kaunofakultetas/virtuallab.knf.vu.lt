@@ -1,3 +1,17 @@
+// -----------------------------------------------------------
+//  [*] Admin — the network control panel
+//
+//  The UI over /network/*: the readiness report, the group
+//  table (with the guarded release action), the peering
+//  list and dialog, the reconciliation dry-run, and the
+//  "reconcile now" drift sweep. Writes here only touch the
+//  database — every change becomes real at the next
+//  reconciliation, and the page says so in its own copy.
+//
+//  Used by:
+//    - router.tsx — route /admin/network
+// -----------------------------------------------------------
+
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import Alert from "@mui/material/Alert";
@@ -59,14 +73,12 @@ const groupStateColor: Record<
     error: "error",
 };
 
-/**
- * Why a group cannot be released, or null when it can be.
- *
- * These mirror the guards inside `releaseNetworkGroup` on the server, which is
- * where they are actually enforced. Restating them here only decides what the
- * button looks like, so a disabled control can say why instead of letting the
- * request travel to a 409.
- */
+// Why a group cannot be released, or null when it can be.
+//
+// These mirror the guards inside `releaseNetworkGroup` on the server, which is
+// where they are actually enforced. Restating them here only decides what the
+// button looks like, so a disabled control can say why instead of letting the
+// request travel to a 409.
 const releaseBlockedReason = (group: NetworkGroupSummary): string | null => {
     if (group.instance_count > 0) {
         return "The group still has VMs. Deleting the last one releases it automatically.";
@@ -169,13 +181,11 @@ export default function AdminNetwork() {
         }
     };
 
-    /**
-     * Runs the drift sweep now rather than waiting for the ten-minute timer.
-     *
-     * Slow by nature: it observes the Gateway, Access and every VM's firewall
-     * over SSH before it repairs anything. Synchronous anyway, like the dry run
-     * beside it -- the report only means something once the pass has finished.
-     */
+    // Runs the drift sweep now rather than waiting for the ten-minute timer.
+    //
+    // Slow by nature: it observes the Gateway, Access and every VM's firewall
+    // over SSH before it repairs anything. Synchronous anyway, like the dry run
+    // beside it -- the report only means something once the pass has finished.
     const reconcileNow = async () => {
         setReconciling(true);
         try {
@@ -257,18 +267,17 @@ export default function AdminNetwork() {
         }
     };
 
-    /**
-     * Resumes teardown for one group, returning its VLAN and subnet to the pool.
-     *
-     * Teardown runs several reconciliations against Proxmox and the appliances,
-     * so this request can be slow. It is deliberately synchronous, like the
-     * dry-run above: the outcome is only meaningful once every step has either
-     * converged or refused.
-     *
-     * The dialog stays open on failure. A teardown that stops part-way leaves
-     * the group in `deleting` with its allocation intact, and the identical
-     * request is the correct retry once the cause is fixed.
-     */
+    // Resumes teardown for one group, returning its VLAN and subnet to the
+    // pool.
+    //
+    // Teardown runs several reconciliations against Proxmox and the appliances,
+    // so this request can be slow. It is deliberately synchronous, like the
+    // dry-run above: the outcome is only meaningful once every step has either
+    // converged or refused.
+    //
+    // The dialog stays open on failure. A teardown that stops part-way leaves
+    // the group in `deleting` with its allocation intact, and the identical
+    // request is the correct retry once the cause is fixed.
     const releaseGroup = async (group: NetworkGroupSummary) => {
         setReleasing(group.id);
         try {

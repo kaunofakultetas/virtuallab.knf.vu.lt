@@ -1,3 +1,24 @@
+// -----------------------------------------------------------
+//  [*] Network — the two Gateway SSH channels
+//
+//  Construction of the Gateway observer and applier, kept in
+//  one place so the read-only and mutating principals cannot
+//  drift apart.
+//
+//  They are separate keys with separate forced commands on
+//  purpose: the observer cannot change anything, and the
+//  applier cannot be used to read state. An apply proves
+//  convergence through the observer channel precisely
+//  because it is a different key on a different connection.
+//
+//  Used by:
+//    - network.route.ts, readiness.ts, drift-reconciler.ts —
+//      the observer
+//    - provisioning-network.ts, teardown.ts,
+//      drift-reconciler.ts, scripts/applyGatewayPolicy.ts —
+//      the applier
+// -----------------------------------------------------------
+
 import { z } from "zod";
 import {
     GatewayObservationClient,
@@ -5,16 +26,6 @@ import {
 } from "./adapters/gateway";
 import { RestrictedSshTransport } from "./adapters/restricted-ssh";
 import { GatewayApplyClient, RestrictedSshGatewayApplyClient } from "./gateway-apply";
-
-/**
- * Construction of the two Gateway SSH channels, kept in one place so the
- * read-only and mutating principals cannot drift apart.
- *
- * They are separate keys with separate forced commands on purpose: the observer
- * cannot change anything, and the applier cannot be used to read state. An apply
- * proves convergence through the observer channel precisely because it is a
- * different key on a different connection.
- */
 
 const observerConfigSchema = z.object({
     GATEWAY_OBSERVER_HOST: z.string().min(1),
@@ -38,11 +49,26 @@ const applierConfigSchema = z.object({
 
 export class GatewayClientConfigurationError extends Error {}
 
-/**
- * The observer is optional: a stack without a provisioned principal still
- * produces a useful dry-run, it just reports no Gateway checks. Returns null
- * rather than throwing so the caller can degrade instead of failing.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// createGatewayObserver
+// -----------------------------------------------------------
+//
+// The observer is optional: a stack without a provisioned
+// principal still produces a useful dry-run, it just
+// reports no Gateway checks. Returns null rather than
+// throwing so the caller can degrade instead of failing.
+//
+// Used by:
+//   - network.route.ts, readiness.ts, drift-reconciler.ts
+// -----------------------------------------------------------
+
 export function createGatewayObserver(
     environment: NodeJS.ProcessEnv = process.env,
 ): GatewayObservationClient | null {
@@ -62,11 +88,27 @@ export function createGatewayObserver(
     }));
 }
 
-/**
- * The applier throws when unconfigured rather than returning null. Every caller
- * is an explicit mutation request, so silently doing nothing would be worse than
- * refusing.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// createGatewayApplier
+// -----------------------------------------------------------
+//
+// The applier throws when unconfigured rather than
+// returning null. Every caller is an explicit mutation
+// request, so silently doing nothing would be worse than
+// refusing.
+//
+// Used by:
+//   - provisioning-network.ts, teardown.ts,
+//     drift-reconciler.ts, scripts/applyGatewayPolicy.ts
+// -----------------------------------------------------------
+
 export function createGatewayApplier(
     environment: NodeJS.ProcessEnv = process.env,
 ): GatewayApplyClient {

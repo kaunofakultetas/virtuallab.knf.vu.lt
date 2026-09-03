@@ -1,3 +1,13 @@
+// -----------------------------------------------------------
+//  [*] Tests — the Access desired-state builder
+//
+//  Canonical subnet/VLAN validation, trunk allowlists, and
+//  the hashed plan revision.
+//
+//  Covers src/network/access-desired-state.ts. Run with `npm
+//  test` (the whole suite) inside the backend container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import {

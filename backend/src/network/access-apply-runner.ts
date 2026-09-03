@@ -1,3 +1,19 @@
+// -----------------------------------------------------------
+//  [*] Network — the Access policy apply runner
+//
+//  Wraps an Access guest-policy apply in the same audit
+//  machinery as every other apply: mode gate (active only —
+//  the rendered ruleset would strand legacy VMs), shared
+//  reconciliation lock, pinned infrastructure revision,
+//  observe-first planning, persisted attempt.
+//
+//  Used by:
+//    - provisioning-network.ts — the access-policy step
+//    - drift-reconciler.ts — Access drift repair
+//    - scripts/applyAccessPolicy.ts — the operator CLI
+//    - test/access-apply-runner.test.ts
+// -----------------------------------------------------------
+
 import {
     AccessApplyClient,
     AccessApplyError,
@@ -46,20 +62,18 @@ export class AccessApplyReadinessError extends Error {
     }
 }
 
-/**
- * Checks an apply is expected to resolve, so a drifted guest is not blocked from
- * being repaired by the very drift the apply exists to fix.
- *
- * Everything NOT listed here blocks, and that split is deliberate: these four
- * are the checks whose subject is the files the applier rewrites. The persistent
- * and live trunk checks describe hypervisor state, `access-guest-management-address`
- * and `access-guest-legacy-transport-address` describe container configuration,
- * `access-guest-docker-bridges` describes Docker's own networks, and the service
- * binding checks describe whether Guacamole is running. No amount of file
- * writing corrects any of those, so applying over them would only produce a
- * confusing partial success — and the guest itself refuses to commit while its
- * service ports are silent.
- */
+// Checks an apply is expected to resolve, so a drifted guest is not blocked from
+// being repaired by the very drift the apply exists to fix.
+//
+// Everything NOT listed here blocks, and that split is deliberate: these four
+// are the checks whose subject is the files the applier rewrites. The persistent
+// and live trunk checks describe hypervisor state, `access-guest-management-address`
+// and `access-guest-legacy-transport-address` describe container configuration,
+// `access-guest-docker-bridges` describes Docker's own networks, and the service
+// binding checks describe whether Guacamole is running. No amount of file
+// writing corrects any of those, so applying over them would only produce a
+// confusing partial success — and the guest itself refuses to commit while its
+// service ports are silent.
 export const ACCESS_APPLY_FIXABLE_CHECKS = new Set([
     "access-guest-vlan-interfaces",
     "access-guest-nftables-revision",
@@ -79,15 +93,14 @@ export type AccessApplyRunnerDependencies = {
 
 export type AccessApplyRunnerInput = {
     requestedBy: string;
-    /**
-     * The infrastructure revision, not the Access policy revision. The policy
-     * revision is a function of the guest's observed Docker bridges, so a caller
-     * cannot hold it as a precondition; the infrastructure revision is the one a
-     * dry-run publishes.
-     */
+    // The infrastructure revision, not the Access policy revision. The policy
+    // revision is a function of the guest's observed Docker bridges, so a caller
+    // cannot hold it as a precondition; the infrastructure revision is the one a
+    // dry-run publishes.
     expectedRevision: string;
     idempotencyKey?: string;
 };
+
 
 function policyAction(
     revision: string,
@@ -102,14 +115,31 @@ function policyAction(
     };
 }
 
-/**
- * Applies Access guest policy and records the attempt, so a mutation of LXC 200
- * leaves the same audit trail a VNet apply does.
- *
- * It takes the shared reconciliation advisory lock, which means an Access apply
- * can never run concurrently with a VNet or Gateway apply. That matters because
- * all three derive their desired state from the same group rows.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// AccessApplyRunner
+// -----------------------------------------------------------
+//
+// Applies Access guest policy and records the attempt, so a
+// mutation of LXC 200 leaves the same audit trail a VNet
+// apply does.
+//
+// It takes the shared reconciliation advisory lock, which
+// means an Access apply can never run concurrently with a
+// VNet or Gateway apply. That matters because all three
+// derive their desired state from the same group rows.
+//
+// Used by:
+//   - provisioning-network.ts, drift-reconciler.ts,
+//     scripts/applyAccessPolicy.ts
+// -----------------------------------------------------------
+
 export class AccessApplyRunner {
     constructor(private readonly dependencies: AccessApplyRunnerDependencies) {}
 

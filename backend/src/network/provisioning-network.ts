@@ -1,3 +1,39 @@
+// -----------------------------------------------------------
+//  [*] Network — the four-step infrastructure provisioning
+//
+//  Brings every piece of shared infrastructure in line with
+//  an allocated group's desired state, in the only order
+//  that leaves no intermediate state broken:
+//
+//    1. vnet           — the bridge the VM attaches to
+//    2. access-trunk   — VLAN membership on LXC 200's NIC
+//    3. access-policy  — VLAN subinterface, address, ruleset
+//    4. gateway-policy — subinterface, DHCP, DNS, egress
+//
+//  The trunk precedes the Access policy because the policy
+//  creates a VLAN subinterface on that trunk, and the
+//  resulting interface would exist while passing no frames.
+//  The Gateway goes last deliberately: a VM that boots
+//  before its DHCP scope exists simply retries and gets an
+//  address a moment later; an Access guest without trunk
+//  membership is silently broken with nothing to retry.
+//
+//  Each step reconciles the WHOLE desired state rather than
+//  this one group, so this converges drift left by earlier
+//  failures and is a no-op once everything matches. A
+//  failure part-way through is deliberately not unwound:
+//  every step is convergent and idempotent, the group is
+//  marked `error` by the caller — which keeps it in the
+//  operational plan, allocation intact — and the next apply
+//  finishes the job. Tearing down a VNet or a trunk entry
+//  here could strip infrastructure a concurrent group
+//  depends on.
+//
+//  Used by:
+//    - instances.route.ts — before cloning an isolated VM
+//    - test/provisioning-network.test.ts
+// -----------------------------------------------------------
+
 import { NetworkGroup } from "@/types/network-groups";
 import { pool } from "@/utils/db";
 import { AccessApplyRevisionError, AccessApplyRunner } from "./access-apply-runner";
@@ -27,17 +63,15 @@ export class NetworkProvisioningError extends Error {
     }
 }
 
-/**
- * How many times to re-read a plan when a concurrent allocation moves the
- * desired revision between our read and the reconciliation lock. Matches
- * `VNET_APPLY_REVISION_ATTEMPTS`, which solves the same race one layer down.
- */
+// How many times to re-read a plan when a concurrent allocation moves the
+// desired revision between our read and the reconciliation lock. Matches
+// `VNET_APPLY_REVISION_ATTEMPTS`, which solves the same race one layer down.
 export const PROVISIONING_REVISION_ATTEMPTS = 3;
 
 export type NetworkProvisioningStep = {
     name: NetworkProvisioningStepName;
     attempt_id: string;
-    /** Null when the step converged without changing anything. */
+    // Null when the step converged without changing anything.
     applied_revision: string | null;
 };
 
@@ -60,16 +94,31 @@ export type RevisionedApply = {
     expectedRevision: string;
 };
 
-/**
- * Runs one revision-guarded step, re-reading the revision when a concurrent
- * allocation invalidates it.
- *
- * Every runner demands an exact desired revision so that an operator can never
- * apply a plan they did not see. That guarantee is worth keeping, but it turns a
- * routine race — two students provisioning at once — into a failed request, so a
- * bounded retry re-reads instead of failing for a conflict that has already
- * resolved itself.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// runStep
+// -----------------------------------------------------------
+//
+// Runs one revision-guarded step, re-reading the revision
+// when a concurrent allocation invalidates it.
+//
+// Every runner demands an exact desired revision so that an
+// operator can never apply a plan they did not see. That
+// guarantee is worth keeping, but it turns a routine race —
+// two students provisioning at once — into a failed
+// request, so a bounded retry re-reads instead of failing
+// for a conflict that has already resolved itself.
+//
+// Used by:
+//   - ensureNetworkGroupInfrastructure (below) — steps 2-4
+// -----------------------------------------------------------
+
 async function runStep(
     name: NetworkProvisioningStepName,
     attempts: number,
@@ -112,6 +161,25 @@ async function runStep(
     );
 }
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// defaultAccessTrunkApply / defaultAccessPolicyApply /
+// defaultGatewayPolicyApply
+// -----------------------------------------------------------
+//
+// The production wiring of each runner — dependencies exist
+// so tests can substitute these.
+//
+// Used by:
+//   - ensureNetworkGroupInfrastructure (below)
+// -----------------------------------------------------------
+
 function defaultAccessTrunkApply(input: RevisionedApply): Promise<ReconciliationAttempt> {
     return new AccessTrunkApplyRunner({
         database: pool,
@@ -120,6 +188,7 @@ function defaultAccessTrunkApply(input: RevisionedApply): Promise<Reconciliation
     }).apply(input);
 }
 
+
 function defaultAccessPolicyApply(input: RevisionedApply): Promise<ReconciliationAttempt> {
     return new AccessApplyRunner({
         database: pool,
@@ -127,6 +196,7 @@ function defaultAccessPolicyApply(input: RevisionedApply): Promise<Reconciliatio
         observe: createAccessObserver(),
     }).apply(input);
 }
+
 
 function defaultGatewayPolicyApply(input: RevisionedApply): Promise<ReconciliationAttempt> {
     const observe = createGatewayObserver();
@@ -144,35 +214,29 @@ function defaultGatewayPolicyApply(input: RevisionedApply): Promise<Reconciliati
     }).apply(input);
 }
 
-/**
- * Brings every piece of shared infrastructure in line with an allocated group's
- * desired state, in the only order that leaves no intermediate state broken.
- *
- * 1. **VNet** — the bridge the VM attaches to. Nothing else can be true before
- *    it exists.
- * 2. **Access trunk** — VLAN membership on LXC 200's NIC. It has to precede the
- *    Access policy, because the policy creates a VLAN subinterface on that trunk
- *    and the resulting interface would exist while passing no frames. The Access
- *    policy runner refuses outright in that state, and rightly so.
- * 3. **Access policy** — the VLAN subinterface, its address, and the ruleset
- *    that lets Guacamole reach the new subnet.
- * 4. **Gateway policy** — the VLAN subinterface, DHCP scope, DNS and egress
- *    rules for the new subnet.
- *
- * The Gateway goes last deliberately. A VM that boots before its DHCP scope
- * exists simply retries and gets an address a moment later; an Access guest
- * without trunk membership is silently broken with nothing to retry.
- *
- * Each step reconciles the *whole* desired state rather than this one group, so
- * this converges drift left by earlier failures and is a no-op once everything
- * matches.
- *
- * A failure part-way through is deliberately not unwound. Every step is
- * convergent and idempotent, the group is marked `error` by the caller — which
- * keeps it in the operational plan, allocation intact — and the next apply
- * finishes the job. Tearing down a VNet or a trunk entry here could strip
- * infrastructure a concurrent group depends on.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// ensureNetworkGroupInfrastructure
+// -----------------------------------------------------------
+//
+// The orchestration itself — order and rationale in the
+// file header. The VNet step reads and retries its own
+// revision, because it existed before this orchestrator did
+// and other callers still rely on that. The Gateway's
+// desired state is a separate document with its own hash,
+// so its step reads the Gateway plan's revision rather than
+// the infrastructure one.
+//
+// Used by:
+//   - instances.route.ts — POST /instances
+// -----------------------------------------------------------
+
 export async function ensureNetworkGroupInfrastructure(
     group: NetworkGroup,
     requestedBy: string,
@@ -190,8 +254,6 @@ export async function ensureNetworkGroupInfrastructure(
 
     const steps: NetworkProvisioningStep[] = [];
 
-    // The VNet step reads and retries its own revision, because it existed
-    // before this orchestrator did and other callers still rely on that.
     let vnet: ReconciliationAttempt;
     try {
         vnet = await ensureVnet(group, requestedBy);
@@ -219,9 +281,6 @@ export async function ensureNetworkGroupInfrastructure(
         (error) => error instanceof AccessApplyRevisionError,
     ));
 
-    // The Gateway's desired state is a separate document with its own hash, so
-    // it is read from its own plan rather than derived from the infrastructure
-    // revision the two steps above used.
     steps.push(await runStep(
         "gateway-policy",
         attempts,

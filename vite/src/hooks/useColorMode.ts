@@ -1,3 +1,18 @@
+// -----------------------------------------------------------
+//  [*] Hooks — color mode (light/dark)
+//
+//  The app-wide light/dark switch: initial value from
+//  localStorage, falling back to the OS preference; every
+//  change is persisted and mirrored onto the <html> "dark"
+//  class so Tailwind's dark: variants follow MUI.
+//
+//    const { mode, toggle } = useColorMode()
+//
+//  Used by:
+//    - AppProviders.tsx — the provider wraps the app
+//    - ThemeToggle.tsx, AnimatedBackground.tsx — consumers
+// -----------------------------------------------------------
+
 import {
     createElement,
     createContext,
@@ -19,6 +34,24 @@ interface ColorModeContextValue {
 
 const ColorModeContext = createContext<ColorModeContextValue | null>(null);
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// ColorModeProvider
+// -----------------------------------------------------------
+//
+// createElement rather than JSX because this file is .ts —
+// renaming it .tsx would churn every import for one call.
+//
+// Used by:
+//   - AppProviders.tsx
+// -----------------------------------------------------------
+
 export function ColorModeProvider({ children }: { children: ReactNode }) {
     const [mode, setMode] = useState<Mode>(() => {
         if (typeof window === "undefined") return "light";
@@ -29,6 +62,7 @@ export function ColorModeProvider({ children }: { children: ReactNode }) {
             : "light";
     });
 
+    // Keep Tailwind (html.dark) and the saved preference in step with MUI.
     useEffect(() => {
         document.documentElement.classList.toggle("dark", mode === "dark");
         localStorage.setItem("color-mode", mode);
@@ -40,6 +74,22 @@ export function ColorModeProvider({ children }: { children: ReactNode }) {
         children,
     );
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// useColorMode
+// -----------------------------------------------------------
+//
+// Used by:
+//   - AppProviders.tsx, ThemeToggle.tsx,
+//     AnimatedBackground.tsx
+// -----------------------------------------------------------
 
 export function useColorMode() {
     const ctx = useContext(ColorModeContext);

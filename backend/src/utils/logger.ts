@@ -1,3 +1,18 @@
+// -----------------------------------------------------------
+//  [*] Utils — the shared pino logger
+//
+//  One logger for the whole backend. Transports are chosen
+//  by environment: pretty-print everywhere except
+//  production, plus a Loki push target whenever
+//  LOGGING_LOKI_URL is set (basic auth from LOGGING_LOKI_*,
+//  a custom push endpoint when the URL carries a path).
+//  Authorization headers and password fields are redacted
+//  before anything leaves the process.
+//
+//  Used by:
+//    - nearly every module in the backend
+// -----------------------------------------------------------
+
 import pino, { type LoggerOptions, type TransportTargetOptions } from "pino";
 
 const lokiBaseUrl = process.env.LOGGING_LOKI_URL?.trim();
@@ -28,6 +43,8 @@ if (lokiBaseUrl) {
         },
     };
 
+    // pino-loki defaults to /loki/api/v1/push on the host; a URL with a path
+    // (e.g. behind a reverse-proxy prefix) needs the endpoint spelled out.
     if (parsedLokiUrl.pathname && parsedLokiUrl.pathname !== "/") {
         lokiOptions.endpoint = `${parsedLokiUrl.pathname}/loki/api/v1/push`;
     }

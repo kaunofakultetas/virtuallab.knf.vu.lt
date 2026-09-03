@@ -1,3 +1,13 @@
+// -----------------------------------------------------------
+//  [*] Tests — the Proxmox prerequisite sweep
+//
+//  Bridge/zone/VNet/guest observations graded independently,
+//  including the Access untagged-address migration check.
+//
+//  Covers src/network/observations.ts. Run with `npm test`
+//  (the whole suite) inside the backend container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import {

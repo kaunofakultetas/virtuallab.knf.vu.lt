@@ -1,3 +1,13 @@
+// -----------------------------------------------------------
+//  [*] Tests — the Access trunk apply runner
+//
+//  The mode gate, revision pinning, the unobservable-veth
+//  refusal, and no-change attempts recorded as succeeded.
+//
+//  Covers src/network/access-trunk-runner.ts. Run with `npm
+//  test` (the whole suite) inside the backend container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import { QueryResult, QueryResultRow } from "pg";

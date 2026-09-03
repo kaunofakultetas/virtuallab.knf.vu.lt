@@ -1,3 +1,34 @@
+// -----------------------------------------------------------
+//  [*] Network — releasing a group: the teardown sequence
+//
+//  The exact inverse of provisioning, each step gated on
+//  the one before:
+//
+//    1. guard          — refuse while any instance remains
+//    2. mark deleting  — drops the group from every plan,
+//                        so the prune steps below converge
+//    3. delete VNet    — first, because it can still refuse
+//                        ("something references it") and a
+//                        refusal must come before anything
+//                        else is dismantled
+//    4. gateway-policy, access-policy, access-trunk — each
+//       appliance loses its VLAN interface before the trunk
+//       stops carrying the VLAN
+//    5. release        — delete the row, freeing VLAN+subnet
+//
+//  A failure part-way leaves the group in `deleting` with
+//  its allocation intact — deliberately: the VLAN stays out
+//  of the pool until a retry has verified every resource is
+//  gone. The failure reason is recorded on the row so the
+//  operator is not sent to the logs.
+//
+//  Used by:
+//    - network.route.ts — the release endpoint
+//    - provisioning-teardown.ts — after a last-VM delete
+//    - scripts/releaseNetworkGroup.ts — the operator CLI
+//    - test/teardown.test.ts
+// -----------------------------------------------------------
+
 import { ProxmoxClient } from "@/proxmox/api";
 import { NetworkGroup } from "@/types/network-groups";
 import { pool } from "@/utils/db";
@@ -40,30 +71,28 @@ export type NetworkTeardownStep =
     | "release";
 
 export type NetworkTeardownOutcome =
-    /** The group still has VMs, or is not in a state that may be torn down. */
+    // The group still has VMs, or is not in a state that may be torn down.
     | { released: false; reason: string }
     | { released: true; vlan_tag: number; vnet_name: string; steps: string[] };
 
 export const TEARDOWN_REVISION_ATTEMPTS = 3;
 
-/**
- * How long to wait before re-reading the revision after a conflict.
- *
- * Without this the three attempts were a tight loop with a bare `continue`, so
- * the whole budget was spent inside a millisecond. Both things it retries --
- * a held reconciliation lock and a moved revision -- are cleared by *another*
- * operation finishing, and those take appliance time, not CPU time. Retrying
- * instantly against a lock held for the length of a Gateway apply meant three
- * attempts were only ever worth one, and teardown failed at `gateway-policy`
- * whenever the ten-minute drift sweep happened to be mid-repair.
- */
+// How long to wait before re-reading the revision after a conflict.
+//
+// Without this the three attempts were a tight loop with a bare `continue`, so
+// the whole budget was spent inside a millisecond. Both things it retries --
+// a held reconciliation lock and a moved revision -- are cleared by *another*
+// operation finishing, and those take appliance time, not CPU time. Retrying
+// instantly against a lock held for the length of a Gateway apply meant three
+// attempts were only ever worth one, and teardown failed at `gateway-policy`
+// whenever the ten-minute drift sweep happened to be mid-repair.
 export const TEARDOWN_REVISION_RETRY_MS = 3_000;
 
 export type NetworkTeardownDependencies = {
     getMode?: () => Promise<NetworkMode>;
     markDeleting?: (groupId: number) => Promise<NetworkGroup | null>;
     deleteRecord?: (groupId: number) => Promise<boolean>;
-    /** Enumerates every guest NIC so a referenced VNet is never removed. */
+    // Enumerates every guest NIC so a referenced VNet is never removed.
     findVnetReferences?: (vnetName: string) => Promise<string[]>;
     deleteVnet?: (vnetName: string) => Promise<void>;
     reconcileGatewayPolicy?: (input: RevisionedApply) => Promise<ReconciliationAttempt>;
@@ -72,10 +101,10 @@ export type NetworkTeardownDependencies = {
     infrastructureRevision?: () => Promise<string>;
     gatewayRevision?: () => Promise<string>;
     revisionAttempts?: number;
-    /** Annotates the stranded row with the reason teardown stopped. */
+    // Annotates the stranded row with the reason teardown stopped.
     recordTeardownError?: (groupId: number, lastError: string) => Promise<void>;
     revisionRetryMs?: number;
-    /** Injected so the retry backoff costs tests nothing. */
+    // Injected so the retry backoff costs tests nothing.
     sleep?: (milliseconds: number) => Promise<void>;
 };
 
@@ -84,14 +113,30 @@ export type RevisionedApply = {
     expectedRevision: string;
 };
 
-/**
- * Every guest whose NIC still names the VNet.
- *
- * Read from Proxmox rather than inferred from the database, because the
- * database is authoritative for what *should* exist and this check exists
- * precisely to catch what does. A VM created outside the orchestrator, or one
- * whose instance row was lost, would be invisible to any query over `instances`.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// findVnetReferencesInProxmox
+// -----------------------------------------------------------
+//
+// Every guest whose NIC still names the VNet.
+//
+// Read from Proxmox rather than inferred from the database,
+// because the database is authoritative for what *should*
+// exist and this check exists precisely to catch what does.
+// A VM created outside the orchestrator, or one whose
+// instance row was lost, would be invisible to any query
+// over `instances`.
+//
+// Used by:
+//   - releaseNetworkGroup (below) — the guard step
+// -----------------------------------------------------------
+
 async function findVnetReferencesInProxmox(
     client: Pick<ProxmoxClient, "getVms" | "getVmConfig">,
     vnetName: string,
@@ -111,6 +156,31 @@ async function findVnetReferencesInProxmox(
     return referencing;
 }
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// reconcile
+// -----------------------------------------------------------
+//
+// One revision-guarded teardown step with a paced retry.
+//
+// A held reconciliation lock is retried alongside a
+// revision conflict, and for the same reason: both mean
+// "something else is converging this state right now", not
+// "this teardown is wrong". Treating it as fatal aborted
+// teardown AFTER the VNet was already deleted, leaving the
+// group in `deleting` with no automatic path back —
+// allocateNetworkGroup resumes `error`, never `deleting`.
+//
+// Used by:
+//   - releaseNetworkGroup (below) — steps 4a-4c
+// -----------------------------------------------------------
+
 async function reconcile(
     step: NetworkTeardownStep,
     attempts: number,
@@ -126,12 +196,6 @@ async function reconcile(
         try {
             attempt = await apply(await readRevision());
         } catch (error) {
-            // A held reconciliation lock is retried alongside a revision
-            // conflict, and for the same reason: both mean "something else is
-            // converging this state right now", not "this teardown is wrong".
-            // Treating it as fatal aborted teardown AFTER the VNet was already
-            // deleted, leaving the group in `deleting` with no automatic path
-            // back -- allocateNetworkGroup resumes `error`, never `deleting`.
             if (isRevisionConflict(error) || error instanceof ReconciliationLockedError) {
                 lastConflict = error;
                 // No wait after the final attempt: the caller is about to fail
@@ -160,6 +224,25 @@ async function reconcile(
     );
 }
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// deleteVnetWithMutator
+// -----------------------------------------------------------
+//
+// Deletes the VNet through the network mutator, idempotently
+// and verified — the two inline comments carry why both
+// halves matter for a resumable teardown.
+//
+// Used by:
+//   - releaseNetworkGroup (below) — the default deleteVnet
+// -----------------------------------------------------------
+
 async function deleteVnetWithMutator(vnetName: string): Promise<void> {
     const proxmox = createNetworkProxmoxMutator();
     try {
@@ -183,34 +266,28 @@ async function deleteVnetWithMutator(vnetName: string): Promise<void> {
     }
 }
 
-/**
- * Releases a network group whose last VM has gone, freeing its VLAN and subnet.
- *
- * The order is the exact inverse of provisioning, and each step is gated on the
- * one before:
- *
- * 1. **Guard** — refuse while any instance still references the group. A group
- *    is never released because one of several attached VMs was removed.
- * 2. **Mark `deleting`** — which drops the group out of the infrastructure plan.
- *    Doing this first is what makes the prune steps converge: every renderer
- *    then projects a desired state without the VLAN, and the executors remove
- *    what is no longer wanted. It also stops a concurrent VNet apply recreating
- *    what step 3 is about to delete.
- * 3. **Delete the VNet** — before dismantling anything else, because this is the
- *    step that can still refuse ("something references it"), and failing here
- *    must not leave a group whose Gateway and Access configuration has already
- *    been torn down.
- * 4. **Gateway policy**, then **Access policy**, then **Access trunk** — the
- *    reverse of the provisioning order. Each appliance loses its VLAN interface
- *    before the trunk stops carrying the VLAN, so no interface is ever left
- *    attached to a trunk that cannot reach it.
- * 5. **Delete the row**, releasing the VLAN and subnet.
- *
- * A failure part-way through leaves the group in `deleting` with its allocation
- * intact. That is deliberate: the VLAN stays out of the pool until a retry has
- * verified every resource is gone, which is the same reason a failed
- * provisioning keeps its allocation.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// releaseNetworkGroup
+// -----------------------------------------------------------
+//
+// The sequence in the file header. Refusals ({released:
+// false}) are answers, not errors: wrong mode, no
+// allocation, or instances still attached. Everything past
+// markDeleting runs under the try that records the failure
+// reason on the row.
+//
+// Used by:
+//   - network.route.ts, provisioning-teardown.ts,
+//     scripts/releaseNetworkGroup.ts
+// -----------------------------------------------------------
+
 export async function releaseNetworkGroup(
     group: NetworkGroup,
     requestedBy: string,
@@ -339,6 +416,24 @@ export async function releaseNetworkGroup(
     }
 }
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// defaultGatewayReconcile / defaultAccessPolicyReconcile /
+// defaultAccessTrunkReconcile
+// -----------------------------------------------------------
+//
+// The production wiring of the three prune runners.
+//
+// Used by:
+//   - releaseNetworkGroup (above) — the default appliers
+// -----------------------------------------------------------
+
 function defaultGatewayReconcile(input: RevisionedApply): Promise<ReconciliationAttempt> {
     const observe = createGatewayObserver();
     if (!observe) throw new Error("Gateway observation is not configured");
@@ -349,6 +444,7 @@ function defaultGatewayReconcile(input: RevisionedApply): Promise<Reconciliation
     }).apply(input);
 }
 
+
 function defaultAccessPolicyReconcile(input: RevisionedApply): Promise<ReconciliationAttempt> {
     return new AccessApplyRunner({
         database: pool,
@@ -356,6 +452,7 @@ function defaultAccessPolicyReconcile(input: RevisionedApply): Promise<Reconcili
         observe: createAccessObserver(),
     }).apply(input);
 }
+
 
 function defaultAccessTrunkReconcile(input: RevisionedApply): Promise<ReconciliationAttempt> {
     return new AccessTrunkApplyRunner({

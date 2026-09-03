@@ -1,3 +1,13 @@
+// -----------------------------------------------------------
+//  [*] Tests — the rendered per-VM policy
+//
+//  Session ports per template, the ordered rule list with
+//  its load-bearing DROPs, and the ipfilter IPSet.
+//
+//  Covers src/network/vm-firewall.ts. Run with `npm test`
+//  (the whole suite) inside the backend container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import {

@@ -1,3 +1,13 @@
+// -----------------------------------------------------------
+//  [*] Tests — the two-phase Gateway policy apply
+//
+//  Stage, prove through the independent observer, commit —
+//  and the rollback on every failure path in between.
+//
+//  Covers src/network/gateway-apply.ts. Run with `npm test`
+//  (the whole suite) inside the backend container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";

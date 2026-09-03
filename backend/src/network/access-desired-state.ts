@@ -1,3 +1,21 @@
+// -----------------------------------------------------------
+//  [*] Network — the Access desired-state plan
+//
+//  Builds the AccessPlan: LXC 200's management surface, its
+//  VLAN transport interfaces (one per group, strictly
+//  validated against the canonical projection), the trunk
+//  allowlist, and the Docker bridges the ruleset must admit.
+//  Two entry points: buildAccessPlan filters to `active`
+//  groups (readiness/drift views), buildOperationalAccessPlan
+//  takes the infrastructure plan's operational set (the
+//  apply path).
+//
+//  Used by:
+//    - adapters/access.ts, access-apply.ts,
+//      access-observation.ts (the AccessPlan type)
+//    - test/access-desired-state.test.ts
+// -----------------------------------------------------------
+
 import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 import { NetworkGroupState } from "@/types/network-groups";
@@ -37,19 +55,17 @@ export type AccessVlanInterface = {
     address_cidr: string;
 };
 
-/**
- * Bump whenever rendered Access policy changes meaning.
- *
- * The revision hashes this document, not the rendered text, so a renderer-only
- * change would otherwise produce an identical revision -- and the sole
- * convergence signal for Access is whether the live ruleset carries the revision
- * comment. A host still running the old output would report a match and pass its
- * drift check, exactly the failure GATEWAY_RENDER_VERSION was introduced for on
- * the Gateway side. Access has no per-file digest check to catch it either.
- *
- * 1: zero-group forward chain stated explicitly instead of silently omitting the
- *    lab accept rule.
- */
+// Bump whenever rendered Access policy changes meaning.
+//
+// The revision hashes this document, not the rendered text, so a renderer-only
+// change would otherwise produce an identical revision -- and the sole
+// convergence signal for Access is whether the live ruleset carries the revision
+// comment. A host still running the old output would report a match and pass its
+// drift check, exactly the failure GATEWAY_RENDER_VERSION was introduced for on
+// the Gateway side. Access has no per-file digest check to catch it either.
+//
+// 1: zero-group forward chain stated explicitly instead of silently omitting the
+//    lab accept rule.
 export const ACCESS_RENDER_VERSION = 2;
 
 export type AccessDesiredState = {
@@ -79,6 +95,7 @@ export type AccessPlan = {
     desired_state: AccessDesiredState;
 };
 
+
 function parseIpv4Cidr(cidr: string, label: string): { address: string; prefix: number } {
     const [address, prefixText, extra] = cidr.split("/");
     const prefix = Number(prefixText);
@@ -88,12 +105,33 @@ function parseIpv4Cidr(cidr: string, label: string): { address: string; prefix: 
     return { address, prefix };
 }
 
+
 function canonicalCidrs(cidrs: string[], label: string): string[] {
     return [...new Set(cidrs.map((cidr) => {
         parseIpv4Cidr(cidr, label);
         return cidr;
     }))].sort();
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// buildInterface
+// -----------------------------------------------------------
+//
+// One group → its eth1.<vlan> interface. The persisted
+// subnet must match the VLAN's canonical 10.200.<index>.0/24
+// exactly; the Access address is the fixed accessHost in
+// that subnet.
+//
+// Used by:
+//   - buildAccessPlan, buildOperationalAccessPlan (below)
+// -----------------------------------------------------------
 
 function buildInterface(
     group: Pick<AccessGroupInput, "group_id" | "vlan_tag" | "subnet_cidr">,
@@ -133,6 +171,25 @@ function buildInterface(
         address_cidr: `${octets[0]}.${octets[1]}.${octets[2]}.${config.ipv4.accessHost}/${prefix}`,
     };
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// buildPlan
+// -----------------------------------------------------------
+//
+// The shared assembly: duplicate-allocation checks, trunk
+// canonicalisation (the trunk must cover every interface),
+// then the hashed desired-state document.
+//
+// Used by:
+//   - buildAccessPlan, buildOperationalAccessPlan (below)
+// -----------------------------------------------------------
 
 function buildPlan(
     interfaces: AccessVlanInterface[],
@@ -191,6 +248,24 @@ function buildPlan(
     };
 }
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// buildAccessPlan
+// -----------------------------------------------------------
+//
+// The `active`-groups view: trunk = exactly the active
+// VLANs.
+//
+// Used by:
+//   - adapters/access.ts — drift comparison inputs
+// -----------------------------------------------------------
+
 export function buildAccessPlan(
     input: AccessDesiredStateInput,
     config: NetworkProjectionConfig = networkProjectionConfig,
@@ -208,6 +283,26 @@ export function buildAccessPlan(
         config,
     );
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// buildOperationalAccessPlan
+// -----------------------------------------------------------
+//
+// The apply-path view: groups and trunk come from the
+// infrastructure plan's operational set, so the trunk may
+// be wider than the interfaces (it always carries the
+// migration VLAN).
+//
+// Used by:
+//   - access-apply.ts — buildAccessApplyPlan
+// -----------------------------------------------------------
 
 export function buildOperationalAccessPlan(
     input: OperationalAccessDesiredStateInput,

@@ -1,3 +1,20 @@
+// -----------------------------------------------------------
+//  [*] Network — the network plan: groups → projected slots
+//
+//  Projects every network group onto its canonical slot. A
+//  group with a persisted allocation keeps it (after strict
+//  canonical-form checks); a group without one is projected
+//  onto the lowest free VLAN — a PROJECTION only, nothing is
+//  written back. The plan's revision is a sha256 over the
+//  whole desired state.
+//
+//  Used by:
+//    - network.route.ts — GET /network/plan
+//    - instances.route.ts — the dry-run projection log
+//    - infrastructure-desired-state.ts, groups.ts,
+//      readiness.ts
+// -----------------------------------------------------------
+
 import { createHash } from "node:crypto";
 import { QueryResult, QueryResultRow } from "pg";
 import { pool } from "@/utils/db";
@@ -58,6 +75,7 @@ export type NetworkPlanQuery = {
     ): Promise<QueryResult<Row>>;
 };
 
+
 function buildGroupProjection(
     row: DesiredStateInputRow,
     slot: NetworkSlot,
@@ -80,6 +98,10 @@ function buildGroupProjection(
     };
 }
 
+
+// A persisted allocation is all-or-nothing, and must match the VLAN's
+// canonical slot exactly — a partial or non-canonical row means the database
+// and the projection disagree, and planning from either would be a guess.
 function getPersistedSlot(
     row: DesiredStateInputRow,
     config: NetworkProjectionConfig,
@@ -99,6 +121,28 @@ function getPersistedSlot(
     }
     return slot;
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// buildNetworkPlan
+// -----------------------------------------------------------
+//
+// Pure: rows → the plan. Persisted allocations are pinned
+// first (duplicate VLANs are an error), then unallocated
+// groups are projected onto the lowest free VLANs in ID
+// order, so the projection is deterministic for a given set
+// of rows.
+//
+// Used by:
+//   - getNetworkPlan (below), infrastructure-desired-state
+//   - test/network-desired-state.test.ts
+// -----------------------------------------------------------
 
 export function buildNetworkPlan(
     rows: DesiredStateInputRow[],
@@ -150,6 +194,25 @@ export function buildNetworkPlan(
         desired_state: desiredState,
     };
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// getNetworkPlan
+// -----------------------------------------------------------
+//
+// Reads EVERY network group (unlike the infrastructure
+// plan's operational filter) with each profile's domains
+// aggregated in, and builds the projection.
+//
+// Used by:
+//   - network.route.ts, instances.route.ts, readiness.ts
+// -----------------------------------------------------------
 
 export async function getNetworkPlan(queryable: NetworkPlanQuery = pool): Promise<NetworkPlan> {
     const result = await queryable.query<DesiredStateInputRow>(`

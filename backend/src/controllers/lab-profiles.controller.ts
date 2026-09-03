@@ -1,3 +1,24 @@
+// -----------------------------------------------------------
+//  [*] Controllers — LabProfiles: the lab_profiles DAO
+//
+//  Profiles span three tables: lab_profiles itself,
+//  allowed_web_domains and lab_profile_templates. Writes
+//  replace the child sets wholesale inside one transaction;
+//  reads hydrate the children back in with two batched
+//  queries. The default profile cannot be deleted.
+//
+//  Split into (aggregate last):
+//
+//    replaceDomains   — child-table rewrite (domains)
+//    replaceTemplates — child-table rewrite (templates)
+//    hydrateProfiles  — rows → full LabProfile objects
+//    LabProfiles      — the exported DAO
+//
+//  Used by:
+//    - lab-profiles.route.ts — every endpoint
+//    - instances.route.ts — profile lookup on create
+// -----------------------------------------------------------
+
 import {
     AllowedWebDomain,
     CreateLabProfileDTO,
@@ -9,6 +30,24 @@ import { pool } from "@/utils/db";
 import { PoolClient } from "pg";
 
 type LabProfileRow = Omit<LabProfile, "domains" | "templates">;
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// replaceDomains
+// -----------------------------------------------------------
+//
+// Delete-then-insert on the caller's transaction client, so
+// the swap is atomic with the parent update.
+//
+// Used by:
+//   - LabProfiles.create / update (below)
+// -----------------------------------------------------------
 
 async function replaceDomains(
     client: PoolClient,
@@ -27,6 +66,25 @@ async function replaceDomains(
         );
     }
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// replaceTemplates
+// -----------------------------------------------------------
+//
+// Same swap as replaceDomains, but existence-checked first:
+// a dangling template ID fails the whole transaction instead
+// of silently shrinking the set.
+//
+// Used by:
+//   - LabProfiles.create / update (below)
+// -----------------------------------------------------------
 
 async function replaceTemplates(
     client: PoolClient,
@@ -55,6 +113,26 @@ async function replaceTemplates(
         );
     }
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// hydrateProfiles
+// -----------------------------------------------------------
+//
+// Attaches domains and templates to a batch of profile rows
+// with two ANY($1) queries instead of 2×N. With
+// studentVisibleOnly, hidden templates are filtered in SQL —
+// the profile still hydrates, just with fewer templates.
+//
+// Used by:
+//   - LabProfiles.getAll / getById (below)
+// -----------------------------------------------------------
 
 async function hydrateProfiles(
     rows: LabProfileRow[],
@@ -96,7 +174,24 @@ async function hydrateProfiles(
     }));
 }
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// LabProfiles (the exported DAO)
+// -----------------------------------------------------------
+//
+// Used by:
+//   - lab-profiles.route.ts, instances.route.ts
+// -----------------------------------------------------------
+
 export const LabProfiles = {
+    // For students, a profile with no visible templates disappears entirely —
+    // there is nothing they could create from it.
     getAll: async (studentVisibleOnly = false): Promise<LabProfile[]> => {
         const result = await pool.query<LabProfileRow>(
             `SELECT * FROM lab_profiles ORDER BY is_default DESC, name`,
@@ -143,6 +238,9 @@ export const LabProfiles = {
         }
     },
 
+    // FOR UPDATE pins the row for the transaction. The description CASE
+    // keeps "field omitted" (keep current) distinct from "field null/empty"
+    // (clear it) — COALESCE alone cannot express that.
     update: async (
         id: number,
         input: UpdateLabProfileDTO,
@@ -190,6 +288,8 @@ export const LabProfiles = {
         }
     },
 
+    // Three-way answer so the route can pick the right status code; the
+    // default profile is refused, not deleted.
     delete: async (id: number): Promise<"deleted" | "not_found" | "default"> => {
         const result = await pool.query<{ is_default: boolean }>(
             `SELECT is_default FROM lab_profiles WHERE id = $1`,

@@ -1,3 +1,20 @@
+// -----------------------------------------------------------
+//  [*] Network adapters — Access: the observation channel
+//
+//  The strict schema for what the Access forced observer
+//  returns (host + guest halves), the SSH client that
+//  fetches it, and planAccess — the grading of one
+//  observation against the infrastructure plan, producing
+//  the checks and actions the dry-run and apply runners
+//  consume.
+//
+//  Used by:
+//    - access-clients.ts — createAccessObserver
+//    - access-apply-runner.ts, access-apply.ts,
+//      infrastructure-reconciler.ts, drift-reconciler.ts
+//    - test/access-reconciliation.test.ts
+// -----------------------------------------------------------
+
 import z from "zod";
 import { randomUUID } from "node:crypto";
 import { buildOperationalAccessPlan } from "../access-desired-state";
@@ -38,6 +55,26 @@ export interface AccessObservationClient {
     observe(): Promise<AccessHostObservation>;
 }
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// RestrictedSshAccessObservationClient
+// -----------------------------------------------------------
+//
+// One observe call over the restricted transport, with the
+// answer matched to the request that asked for it — a stale
+// answer left in the channel must never be read as this
+// call's result.
+//
+// Used by:
+//   - access-clients.ts — createAccessObserver
+// -----------------------------------------------------------
+
 export class RestrictedSshAccessObservationClient implements AccessObservationClient {
     constructor(private readonly transport: Pick<RestrictedSshTransport, "execute">) {}
 
@@ -56,37 +93,61 @@ export class RestrictedSshAccessObservationClient implements AccessObservationCl
     }
 }
 
-/**
- * Whether the trunk carries every VLAN the plan wants, ignoring extras.
- *
- * Deliberately not set equality, and the asymmetry is the whole point.
- *
- * Teardown marks a group `deleting` before it touches any appliance, which drops
- * that group's VLAN out of `trunks.access_vlan_ids` while the Access appliance is
- * still physically carrying it. Under equality that makes both trunk checks fail,
- * and because they are `required` and absent from ACCESS_APPLY_FIXABLE_CHECKS
- * they block the Access policy apply outright -- which is the step teardown runs
- * *next*, and which runs BEFORE the trunk step that would have pruned the extra
- * VLAN. Teardown therefore manufactured the exact condition that blocked it, on
- * every allocated group, with no retry able to clear it.
- *
- * The two directions are not equally dangerous. A *missing* desired VLAN still
- * fails, and must: policy written for a VLAN the trunk cannot carry is policy
- * that silently never takes effect. An *extra* VLAN is inert -- once the group's
- * VNet and guest interface are gone nothing offers frames for it -- and it is
- * still reported and still pruned, because `access-trunk-persistent` and
- * `access-trunk-live` in access-trunk.ts compare by equality and are what the
- * trunk applier and the drift sweep actually act on.
- */
+
+// Whether the trunk carries every VLAN the plan wants, ignoring extras.
+//
+// Deliberately not set equality, and the asymmetry is the whole point.
+//
+// Teardown marks a group `deleting` before it touches any appliance, which drops
+// that group's VLAN out of `trunks.access_vlan_ids` while the Access appliance is
+// still physically carrying it. Under equality that makes both trunk checks fail,
+// and because they are `required` and absent from ACCESS_APPLY_FIXABLE_CHECKS
+// they block the Access policy apply outright -- which is the step teardown runs
+// *next*, and which runs BEFORE the trunk step that would have pruned the extra
+// VLAN. Teardown therefore manufactured the exact condition that blocked it, on
+// every allocated group, with no retry able to clear it.
+//
+// The two directions are not equally dangerous. A *missing* desired VLAN still
+// fails, and must: policy written for a VLAN the trunk cannot carry is policy
+// that silently never takes effect. An *extra* VLAN is inert -- once the group's
+// VNet and guest interface are gone nothing offers frames for it -- and it is
+// still reported and still pruned, because `access-trunk-persistent` and
+// `access-trunk-live` in access-trunk.ts compare by equality and are what the
+// trunk applier and the drift sweep actually act on.
 function sameVlans(left: number[], right: number[]): boolean {
     const canonical = (values: number[]) => [...new Set(values)].sort((a, b) => a - b);
     return JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
 }
 
+
 function carriesEveryVlan(observed: number[], desired: number[]): boolean {
     const present = new Set(observed);
     return desired.every((vlan) => present.has(vlan));
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// planAccess
+// -----------------------------------------------------------
+//
+// Grades an Access observation against the infrastructure
+// plan: observer errors, persistent topology, both trunk
+// halves (carried vs exact — see sameVlans above), the
+// migration VLAN, the veth, and every guest check from
+// compareAccessObservation (source checks demoted to
+// non-required — nobody being connected is not evidence).
+// Actions are planned for whatever drifted.
+//
+// Used by:
+//   - access-apply-runner.ts, access-apply.ts,
+//     infrastructure-reconciler.ts, drift-reconciler.ts
+// -----------------------------------------------------------
 
 export function planAccess(
     infrastructurePlan: InfrastructurePlan,

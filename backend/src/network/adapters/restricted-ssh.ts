@@ -1,3 +1,19 @@
+// -----------------------------------------------------------
+//  [*] Network adapters — the restricted SSH transport
+//
+//  One JSON request in, one JSON answer out, over an ssh
+//  child process locked down as far as OpenSSH allows:
+//  batch mode, pinned identity and known-hosts files,
+//  strict host-key checking, no agent, no forwarding, no
+//  local command. Timeouts and an output cap bound every
+//  call; the far side is always a forced command.
+//
+//  Used by:
+//    - access-clients.ts, gateway-clients.ts — every SSH
+//      principal is one of these
+//    - test/restricted-ssh.test.ts
+// -----------------------------------------------------------
+
 import { spawn } from "node:child_process";
 
 export type RestrictedSshConfig = {
@@ -24,6 +40,29 @@ export class RestrictedSshError extends Error {
         this.name = "RestrictedSshError";
     }
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// RestrictedSshTransport
+// -----------------------------------------------------------
+//
+// execute(request): spawn ssh, write the request to stdin,
+// collect bounded output, parse the answer as JSON. The
+// `finish` latch makes exactly one outcome win — close,
+// error, timeout, output limit or stdin failure — whichever
+// fires first.
+//
+// Used by:
+//   - the Restricted* clients in access-apply.ts,
+//     access-trunk-apply.ts, gateway-apply.ts and
+//     adapters/access.ts / adapters/gateway.ts
+// -----------------------------------------------------------
 
 export class RestrictedSshTransport {
     constructor(private readonly config: RestrictedSshConfig) {}

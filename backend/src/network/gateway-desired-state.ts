@@ -1,3 +1,19 @@
+// -----------------------------------------------------------
+//  [*] Network — the Gateway desired-state plan
+//
+//  Builds the GatewayPlan: management surface, uplink,
+//  proxy and DNS ports, the VLAN transport interfaces (one
+//  per group, strictly validated against the canonical
+//  projection, each with its domain allowlist), and the
+//  peering edges. Pure — the DB half lives in
+//  gateway-plan.ts, the renderers in gateway-render.ts.
+//
+//  Used by:
+//    - gateway-plan.ts — buildGatewayPlan
+//    - gateway-render.ts, adapters/gateway.ts — the types
+//    - test/gateway-desired-state.test.ts
+// -----------------------------------------------------------
+
 import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 import {
@@ -6,50 +22,46 @@ import {
     validateNetworkProjectionConfig,
 } from "./config";
 
-/**
- * Version of the rendered configuration's semantics.
- *
- * The revision hashes the desired-state document, so a change to the renderers
- * alone would otherwise produce an identical revision and a host still running
- * the previous output would look converged. Bump this whenever rendered policy
- * changes meaning, so drift detection re-applies.
- *
- * 2: dstdomain -n, host_verify_strict, complete squid.conf with lab-prefixed
- *    ACLs, dnsmasq bind-dynamic, and the non_routable proxy exemption.
- * 3: loopback-only forward-proxy port, without which Squid parses but refuses
- *    to start.
- * 4: the trunk parent gets its own `.network` unit instead of a drop-in beside
- *    a file that never existed, and HTTPS is filtered on the peeked SNI at
- *    ssl_bump rather than on a dstdomain the intercepted CONNECT cannot carry.
- *    Both were inert rather than wrong-looking: the first created no VLAN
- *    interface at all, the second denied every HTTPS request including
- *    allowlisted ones.
- * 5: the input chain is scoped to each lab interface's own Gateway address via a
- *    concatenated set, so a VM can no longer reach -- and enumerate -- the
- *    Gateway on other groups' VLAN addresses.
- * 6: broadcast DHCP is admitted again. Version 5 scoped the udp/67 accept to the
- *    interface's own address, which no DHCPDISCOVER carries, so no new VM could
- *    take a lease; existing VMs were unaffected because renewal is unicast.
- */
+// Version of the rendered configuration's semantics.
+//
+// The revision hashes the desired-state document, so a change to the renderers
+// alone would otherwise produce an identical revision and a host still running
+// the previous output would look converged. Bump this whenever rendered policy
+// changes meaning, so drift detection re-applies.
+//
+// 2: dstdomain -n, host_verify_strict, complete squid.conf with lab-prefixed
+//    ACLs, dnsmasq bind-dynamic, and the non_routable proxy exemption.
+// 3: loopback-only forward-proxy port, without which Squid parses but refuses
+//    to start.
+// 4: the trunk parent gets its own `.network` unit instead of a drop-in beside
+//    a file that never existed, and HTTPS is filtered on the peeked SNI at
+//    ssl_bump rather than on a dstdomain the intercepted CONNECT cannot carry.
+//    Both were inert rather than wrong-looking: the first created no VLAN
+//    interface at all, the second denied every HTTPS request including
+//    allowlisted ones.
+// 5: the input chain is scoped to each lab interface's own Gateway address via a
+//    concatenated set, so a VM can no longer reach -- and enumerate -- the
+//    Gateway on other groups' VLAN addresses.
+// 6: broadcast DHCP is admitted again. Version 5 scoped the udp/67 accept to the
+//    interface's own address, which no DHCPDISCOVER carries, so no new VM could
+//    take a lease; existing VMs were unaffected because renewal is unicast.
 export const GATEWAY_RENDER_VERSION = 6;
 
-/**
- * Loopback-only forward-proxy port.
- *
- * Squid refuses to start with only intercepting ports: it needs a forward-proxy
- * port to build its internal URLs, and otherwise dies on
- * "cannot parse internal URL: http://<host>:0/...". Binding it to 127.0.0.1
- * satisfies that without offering lab VMs a proxy that would bypass the
- * per-subnet interception policy. Requests arriving here still fall through to
- * `http_access deny all`, because loopback is in no lab subnet.
- */
+// Loopback-only forward-proxy port.
+//
+// Squid refuses to start with only intercepting ports: it needs a forward-proxy
+// port to build its internal URLs, and otherwise dies on
+// "cannot parse internal URL: http://<host>:0/...". Binding it to 127.0.0.1
+// satisfies that without offering lab VMs a proxy that would bypass the
+// per-subnet interception policy. Requests arriving here still fall through to
+// `http_access deny all`, because loopback is in no lab subnet.
 export const GATEWAY_INTERNAL_PROXY_PORT = 3130;
 
-/** Squid's intercepting HTTP port. Lab TCP 80 is redirected here. */
+// Squid's intercepting HTTP port. Lab TCP 80 is redirected here.
 export const GATEWAY_HTTP_PROXY_PORT = 3128;
-/** Squid's intercepting HTTPS port. Lab TCP 443 is redirected here. */
+// Squid's intercepting HTTPS port. Lab TCP 443 is redirected here.
 export const GATEWAY_HTTPS_PROXY_PORT = 3129;
-/** The only resolver lab VMs may reach. */
+// The only resolver lab VMs may reach.
 export const GATEWAY_DNS_PORT = 53;
 
 export type GatewayAllowedDomain = {
@@ -72,15 +84,15 @@ export type GatewayPeeringInput = {
 export type GatewayDesiredStateInput = {
     groups: GatewayGroupInput[];
     peerings: GatewayPeeringInput[];
-    /** Parent NIC attached to the VLAN-aware lab bridge. */
+    // Parent NIC attached to the VLAN-aware lab bridge.
     trunk_interface: string;
-    /** NIC used for approved egress. Never the lab trunk. */
+    // NIC used for approved egress. Never the lab trunk.
     uplink_interface: string;
-    /** NIC the orchestrator manages the Gateway through. */
+    // NIC the orchestrator manages the Gateway through.
     management_interface: string;
-    /** Resolvers the Gateway itself may query through the uplink. */
+    // Resolvers the Gateway itself may query through the uplink.
     upstream_resolvers: string[];
-    /** Sources permitted to reach Gateway management services. */
+    // Sources permitted to reach Gateway management services.
     management_source_cidrs: string[];
 };
 
@@ -97,12 +109,10 @@ export type GatewayVlanInterface = {
     allowed_web_domains: GatewayAllowedDomain[];
 };
 
-/**
- * One direction of an undirected peering.
- *
- * `ct state established,related` only readmits reply traffic, so a peering that
- * both sides may initiate requires an explicit entry per direction.
- */
+// One direction of an undirected peering.
+//
+// `ct state established,related` only readmits reply traffic, so a peering that
+// both sides may initiate requires an explicit entry per direction.
 export type GatewayPeeringEdge = {
     from_vlan_tag: number;
     to_vlan_tag: number;
@@ -152,6 +162,7 @@ export type GatewayPlan = {
 const INTERFACE_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,14}$/;
 const DOMAIN_LABEL_PATTERN = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
+
 function parseIpv4Cidr(cidr: string, label: string): { address: string; prefix: number } {
     const [address, prefixText, extra] = cidr.split("/");
     const prefix = Number(prefixText);
@@ -167,10 +178,12 @@ function parseIpv4Cidr(cidr: string, label: string): { address: string; prefix: 
     return { address, prefix };
 }
 
+
 function netmaskFromPrefix(prefix: number): string {
     const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
     return [24, 16, 8, 0].map((shift) => (mask >>> shift) & 0xff).join(".");
 }
+
 
 function validateInterfaceName(name: string, label: string): string {
     if (!INTERFACE_NAME_PATTERN.test(name)) {
@@ -178,6 +191,7 @@ function validateInterfaceName(name: string, label: string): string {
     }
     return name;
 }
+
 
 function canonicalCidrs(cidrs: string[], label: string): string[] {
     if (cidrs.length === 0) {
@@ -188,6 +202,7 @@ function canonicalCidrs(cidrs: string[], label: string): string[] {
         return cidr;
     }))].sort();
 }
+
 
 function canonicalResolvers(resolvers: string[]): string[] {
     if (resolvers.length === 0) {
@@ -201,13 +216,30 @@ function canonicalResolvers(resolvers: string[]): string[] {
     return [...new Set(resolvers)].sort();
 }
 
-/**
- * Normalises an allowlist entry to a bare lower-case domain.
- *
- * Schemes, ports, paths, wildcards, and trailing dots are rejected rather than
- * stripped: silently reinterpreting an operator's entry could widen a policy
- * they believed was narrow.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// normaliseAllowedDomain
+// -----------------------------------------------------------
+//
+// Normalises an allowlist entry to a bare lower-case
+// domain.
+//
+// Schemes, ports, paths, wildcards, and trailing dots are
+// rejected rather than stripped: silently reinterpreting an
+// operator's entry could widen a policy they believed was
+// narrow.
+//
+// Used by:
+//   - canonicalDomains (below)
+//   - test/gateway-desired-state.test.ts
+// -----------------------------------------------------------
+
 export function normaliseAllowedDomain(domain: string): string {
     const normalised = domain.trim().toLowerCase();
     if (normalised.length === 0 || normalised.length > 253) {
@@ -236,6 +268,9 @@ export function normaliseAllowedDomain(domain: string): string {
     return normalised;
 }
 
+
+// Deduplicates and sorts a group's allowlist; the same domain listed with two
+// different include_subdomains values is a conflict, not a preference.
 function canonicalDomains(
     domains: GatewayAllowedDomain[],
     groupId: number,
@@ -255,6 +290,26 @@ function canonicalDomains(
         .map(([domain, include_subdomains]) => ({ domain, include_subdomains }))
         .sort((left, right) => left.domain.localeCompare(right.domain));
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// buildInterface
+// -----------------------------------------------------------
+//
+// One group → its <trunk>.<vlan> interface: subnet checked
+// against the VLAN's canonical 10.200.<index>.0/24, then
+// the Gateway address, netmask, DHCP window and canonical
+// allowlist derived from it.
+//
+// Used by:
+//   - buildGatewayPlan (below)
+// -----------------------------------------------------------
 
 function buildInterface(
     group: GatewayGroupInput,
@@ -300,6 +355,25 @@ function buildInterface(
     };
 }
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// buildPeeringEdges
+// -----------------------------------------------------------
+//
+// Undirected peerings → both directed edges (see the
+// GatewayPeeringEdge comment), deduplicated, refusing a
+// peering to a group without an active VLAN interface.
+//
+// Used by:
+//   - buildGatewayPlan (below)
+// -----------------------------------------------------------
+
 function buildPeeringEdges(
     peerings: GatewayPeeringInput[],
     interfacesByGroup: Map<number, GatewayVlanInterface>,
@@ -344,6 +418,27 @@ function buildPeeringEdges(
         left.from_vlan_tag - right.from_vlan_tag || left.to_vlan_tag - right.to_vlan_tag
     ));
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// buildGatewayPlan
+// -----------------------------------------------------------
+//
+// The assembly: three distinct validated interfaces,
+// per-group interfaces with duplicate checks on VLANs,
+// subnets and group IDs, the peering edges, then the hashed
+// document.
+//
+// Used by:
+//   - gateway-plan.ts — getGatewayPlan
+//   - test/gateway-desired-state.test.ts
+// -----------------------------------------------------------
 
 export function buildGatewayPlan(
     input: GatewayDesiredStateInput,

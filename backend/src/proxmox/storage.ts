@@ -1,3 +1,31 @@
+// -----------------------------------------------------------
+//  [*] Proxmox — storage capacity guards for cloning
+//
+//  Two pure helpers that stop an instance clone before it
+//  fills a datastore: find which storage the template's boot
+//  disk lives on, then require a configured reserve of free
+//  space there.
+//
+//  Used by:
+//    - instances.controller.ts — before every clone
+//    - test/instance-storage.test.ts
+// -----------------------------------------------------------
+
+
+// -----------------------------------------------------------
+// getBootDiskStorage
+// -----------------------------------------------------------
+//
+// Reads the template config's boot order (falling back to
+// scsi0) and returns the storage half of that disk's volume
+// ID ("local-lvm:vm-100-disk-0" → "local-lvm"). Throws when
+// the boot disk cannot be resolved — a clone must never
+// guess where it will land.
+//
+// Used by:
+//   - instances.controller.ts (with assertStorageCapacity)
+// -----------------------------------------------------------
+
 export function getBootDiskStorage(config: Record<string, unknown>): string {
     const bootOrder = typeof config.boot === "string"
         ? config.boot.match(/(?:^|;)order=([^;]+)/)?.[1]
@@ -13,6 +41,25 @@ export function getBootDiskStorage(config: Record<string, unknown>): string {
     }
     return storage;
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// assertStorageCapacity
+// -----------------------------------------------------------
+//
+// Throws unless the storage is active, enabled and holds at
+// least reserveBytes of free space. The error message quotes
+// GiB figures because it travels to the UI as-is.
+//
+// Used by:
+//   - instances.controller.ts (after getBootDiskStorage)
+// -----------------------------------------------------------
 
 export function assertStorageCapacity(
     storage: string,

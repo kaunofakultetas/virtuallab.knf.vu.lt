@@ -1,5 +1,19 @@
+// -----------------------------------------------------------
+//  [*] Validators — lab profile request schemas
+//
+//  The domain rule is the strict one: hostnames only — no
+//  scheme, path, port or trailing dot — lowercased and
+//  deduplicated, because these lines end up verbatim in the
+//  Gateway's Squid allowlist.
+//
+//  Used by:
+//    - lab-profiles.route.ts
+// -----------------------------------------------------------
+
 import z from "zod";
 
+// RFC-ish hostname: dot-separated labels, 253 chars max, last label
+// starts with a letter (rejects bare IPs).
 const domainNamePattern = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 export const allowedWebDomainSchema = z.object({
@@ -13,6 +27,7 @@ export const allowedWebDomainSchema = z.object({
     include_subdomains: z.boolean().default(true),
 });
 
+// Shared between create and update so the two can never drift apart.
 const profileFields = {
     name: z.string().trim().min(1).max(255),
     description: z.string().trim().max(5000).optional(),
@@ -38,8 +53,10 @@ const profileFields = {
         .default([]),
 };
 
+// POST /lab-profiles
 export const createLabProfileSchema = z.object(profileFields);
 
+// PATCH /lab-profiles/:id — everything optional, but not all absent
 export const updateLabProfileSchema = z
     .object({
         name: profileFields.name.optional(),
@@ -52,6 +69,7 @@ export const updateLabProfileSchema = z
         message: "At least one field must be provided for update",
     });
 
+// :id route param
 export const labProfileParamsSchema = z.object({
     id: z.string().regex(/^\d+$/, "id must be a positive integer"),
 });

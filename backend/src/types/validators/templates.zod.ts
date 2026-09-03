@@ -1,5 +1,18 @@
+// -----------------------------------------------------------
+//  [*] Validators — template request schemas
+//
+//  connection_config is deliberately loose (any string-keyed
+//  record): its real shape depends on connection_type, and
+//  the union lives in types/templates.ts — the route only
+//  guarantees "an object".
+//
+//  Used by:
+//    - templates.route.ts
+// -----------------------------------------------------------
+
 import z from "zod";
 
+// Template IDs travel as digit strings (route params).
 export const templateIdSchema = z
     .string()
     .min(1, "template_id is required")
@@ -15,6 +28,7 @@ export const templateParamsSchema = z.object({
 
 const connectionConfigSchema = z.record(z.string(), z.unknown()).optional();
 
+// POST /templates
 export const createTemplateSchema = z.object({
     type: templateTypeSchema,
     name: z.string().min(1, "name is required"),
@@ -24,6 +38,7 @@ export const createTemplateSchema = z.object({
     connection_config: connectionConfigSchema,
 });
 
+// PATCH /templates/:id — everything optional, but not all absent
 export const updateTemplateSchema = z
     .object({
         type: templateTypeSchema.optional(),

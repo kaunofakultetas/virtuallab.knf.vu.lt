@@ -1,3 +1,29 @@
+// -----------------------------------------------------------
+//  [*] Network — the two-phase Gateway policy apply
+//
+//  Stage → prove → commit against VM 202's guest applier.
+//  The guest arms a rollback timer before installing
+//  anything, so every failure path is safe to abandon: not
+//  committing is itself the recovery. The pre-commit proof
+//  runs over a DIFFERENT SSH principal (the read-only
+//  observer), so a commit is never authorised by the same
+//  session that made the change.
+//
+//  Split into (executor last):
+//
+//    GATEWAY_ROLLBACK_SECONDS        — default timer window
+//    GatewayApplyError               — staged failures
+//    response schemas                — the guest's answers
+//    GatewayApplyClient / Restricted — the SSH channel
+//    applyGatewayPolicy              — the flow itself
+//    abandon                         — best-effort rollback
+//
+//  Used by:
+//    - gateway-apply-runner.ts — the audited entry point
+//    - gateway-clients.ts — constructs the SSH client
+//    - test/gateway-apply.test.ts
+// -----------------------------------------------------------
+
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
@@ -8,15 +34,13 @@ import {
 import { RestrictedSshTransport } from "./adapters/restricted-ssh";
 import { GatewayPlan } from "./gateway-desired-state";
 
-/**
- * Default window between staging and committing. Long enough for an independent
- * observation over a fresh connection, short enough that a lockout is measured
- * in minutes. The guest clamps this to its own bounds.
- */
+// Default window between staging and committing. Long enough for an independent
+// observation over a fresh connection, short enough that a lockout is measured
+// in minutes. The guest clamps this to its own bounds.
 export const GATEWAY_ROLLBACK_SECONDS = 300;
 
 export class GatewayApplyError extends Error {
-    /** Whether the immediate rollback succeeded; undefined if none was attempted. */
+    // Whether the immediate rollback succeeded; undefined if none was attempted.
     rolledBack?: boolean;
 
     constructor(
@@ -79,6 +103,24 @@ export interface GatewayApplyClient {
     rollback(transactionId: string): Promise<unknown>;
 }
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// RestrictedSshGatewayApplyClient
+// -----------------------------------------------------------
+//
+// GatewayApplyClient over the restricted-SSH transport: one
+// JSON request per operation, each answer schema-checked.
+//
+// Used by:
+//   - gateway-clients.ts — createGatewayApplier
+// -----------------------------------------------------------
+
 export class RestrictedSshGatewayApplyClient implements GatewayApplyClient {
     constructor(private readonly transport: Pick<RestrictedSshTransport, "execute">) {}
 
@@ -119,14 +161,13 @@ export class RestrictedSshGatewayApplyClient implements GatewayApplyClient {
     }
 }
 
+
 export type GatewayApplyDependencies = {
     apply: GatewayApplyClient;
-    /**
-     * Used for the pre-commit proof. This is deliberately a different client
-     * from `apply`: it opens its own SSH connection through the read-only
-     * observer principal, so a commit is never authorised by the same session
-     * that made the change.
-     */
+    // Used for the pre-commit proof. This is deliberately a different client
+    // from `apply`: it opens its own SSH connection through the read-only
+    // observer principal, so a commit is never authorised by the same session
+    // that made the change.
     observe: GatewayObservationClient;
     rollbackSeconds?: number;
 };
@@ -140,16 +181,33 @@ export type GatewayApplyResult = {
     committed: true;
 };
 
-/**
- * Applies rendered Gateway policy and commits it only once an independent
- * observation agrees that the guest converged.
- *
- * The guest arms a rollback timer before installing anything, so every failure
- * path below is safe to abandon: not committing is itself the recovery. An
- * explicit rollback is still attempted because it recovers in seconds rather
- * than minutes, but it is best-effort — the timer remains the guarantee, and the
- * guest cancels it only after the restore succeeds.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// applyGatewayPolicy
+// -----------------------------------------------------------
+//
+// Applies rendered Gateway policy and commits it only once
+// an independent observation agrees that the guest
+// converged.
+//
+// The guest arms a rollback timer before installing
+// anything, so every failure path below is safe to abandon:
+// not committing is itself the recovery. An explicit
+// rollback is still attempted because it recovers in
+// seconds rather than minutes, but it is best-effort — the
+// timer remains the guarantee, and the guest cancels it
+// only after the restore succeeds.
+//
+// Used by:
+//   - gateway-apply-runner.ts
+// -----------------------------------------------------------
+
 export async function applyGatewayPolicy(
     plan: GatewayPlan,
     dependencies: GatewayApplyDependencies,
@@ -257,11 +315,26 @@ export async function applyGatewayPolicy(
     };
 }
 
-/**
- * Best-effort immediate rollback. A failure here is recorded on the error rather
- * than replacing it: the original cause is what an operator needs, and the
- * guest's timer still restores the previous state either way.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// abandon
+// -----------------------------------------------------------
+//
+// Best-effort immediate rollback. A failure here is
+// recorded on the error rather than replacing it: the
+// original cause is what an operator needs, and the guest's
+// timer still restores the previous state either way.
+//
+// Used by:
+//   - applyGatewayPolicy (above) — every failure path
+// -----------------------------------------------------------
+
 async function abandon(
     dependencies: GatewayApplyDependencies,
     transactionId: string,

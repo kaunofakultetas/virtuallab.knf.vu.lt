@@ -1,3 +1,18 @@
+// -----------------------------------------------------------
+//  [*] Network — the Access trunk apply runner
+//
+//  Wraps an Access trunk reconciliation in the same audit
+//  machinery as every other apply: mode gate (active only),
+//  shared reconciliation lock, pinned infrastructure
+//  revision, observe-first planning, persisted attempt.
+//
+//  Used by:
+//    - provisioning-network.ts — the trunk step
+//    - drift-reconciler.ts — trunk drift repair
+//    - scripts/applyAccessTrunk.ts — the operator CLI
+//    - test/access-trunk-runner.test.ts
+// -----------------------------------------------------------
+
 import { accessTrunkChecks, AccessTrunkPlan, planAccessTrunk } from "./access-trunk";
 import {
     applyAccessTrunk,
@@ -61,6 +76,7 @@ export type AccessTrunkRunnerInput = {
     idempotencyKey?: string;
 };
 
+
 function trunkAction(
     vlanIds: number[],
     executionState: ReconciliationAction["execution_state"],
@@ -74,12 +90,28 @@ function trunkAction(
     };
 }
 
-/**
- * Builds the trunk plan from an Access host observation.
- *
- * Exported because it is the only place the observation's shape is mapped onto
- * the planner's, and both the runner and its tests need to agree on it.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// buildAccessTrunkPlan
+// -----------------------------------------------------------
+//
+// Builds the trunk plan from an Access host observation.
+//
+// Exported because it is the only place the observation's
+// shape is mapped onto the planner's, and both the runner
+// and its tests need to agree on it.
+//
+// Used by:
+//   - AccessTrunkApplyRunner (below), drift-reconciler.ts
+//   - test/access-trunk-runner.test.ts
+// -----------------------------------------------------------
+
 export function buildAccessTrunkPlan(
     infrastructure: InfrastructurePlan,
     observation: AccessHostObservation,
@@ -94,14 +126,32 @@ export function buildAccessTrunkPlan(
     });
 }
 
-/**
- * Reconciles the Access LXC's VLAN trunk and records the attempt, so a mutation
- * of hypervisor NIC configuration leaves the same audit trail a VNet apply does.
- *
- * It takes the shared reconciliation advisory lock, which means a trunk change
- * can never run concurrently with a VNet, Gateway or Access policy apply. That
- * matters because all four derive their desired state from the same group rows.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// AccessTrunkApplyRunner
+// -----------------------------------------------------------
+//
+// Reconciles the Access LXC's VLAN trunk and records the
+// attempt, so a mutation of hypervisor NIC configuration
+// leaves the same audit trail a VNet apply does.
+//
+// It takes the shared reconciliation advisory lock, which
+// means a trunk change can never run concurrently with a
+// VNet, Gateway or Access policy apply. That matters
+// because all four derive their desired state from the same
+// group rows.
+//
+// Used by:
+//   - provisioning-network.ts, drift-reconciler.ts,
+//     scripts/applyAccessTrunk.ts
+// -----------------------------------------------------------
+
 export class AccessTrunkApplyRunner {
     constructor(private readonly dependencies: AccessTrunkRunnerDependencies) {}
 

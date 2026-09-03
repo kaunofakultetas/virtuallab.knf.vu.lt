@@ -1,3 +1,22 @@
+// -----------------------------------------------------------
+//  [*] Controllers — Instances: the instance lifecycle
+//
+//  Everything an instance goes through: the joined reads
+//  (instance + network group + profile), the Proxmox
+//  lifecycle calls (create = capacity check → clone →
+//  cloud-init config → start → DB insert), the guest-IP
+//  wait loop, deletion (Proxmox VM, both Guacamole
+//  connections, DB row, then the planned-group cleanup),
+//  and the two jobs index.ts schedules: status sync and the
+//  expiry sweep. Lifecycle metrics are recorded per op.
+//
+//  Used by:
+//    - instances.route.ts — every endpoint
+//    - users.controller.ts — deleting a user's instances
+//    - index.ts — fetchAndUpdateStatuses and
+//      removeExpiredInstances on their intervals
+// -----------------------------------------------------------
+
 import { proxmox } from "@/proxmox";
 import { guacamole } from "@/guacamole";
 import { Instance } from "@/types/instances";
@@ -20,6 +39,7 @@ import {
     vlabInstanceLifecycleTotal,
     vlabInstancesExpiredRemovedTotal,
 } from "@/utils/metrics";
+
 
 export const Instances = {
     getAllForUser: async (userId: string): Promise<Instance[]> => {
@@ -72,6 +92,7 @@ export const Instances = {
         return res.rows[0] as Instance | null;
     },
 
+    // Every non-loopback IPv4 the guest agent reports, across all interfaces.
     getIPv4: async (proxmoxId: string): Promise<string[] | null> => {
         const ifaceData = await proxmox.getVmNetIfaces(proxmoxId);
 
@@ -85,6 +106,10 @@ export const Instances = {
             .map((a) => a["ip-address"]);
     },
 
+    // Polls the guest agent until an address inside the instance's network
+    // appears (its group's subnet, or the legacy prefix when no allocation
+    // exists). "Agent not running" and "VM not running" are transient — the
+    // VM is still booting; anything else aborts the wait.
     getInsideNetIPv4: async (proxmoxId: string): Promise<string | null> => {
         const [timeoutMs, intervalMs, ipPrefix, allocation] = await Promise.all([
             metadata.get<number>("settings.instances.ipWaitTimeoutMs"),
@@ -200,6 +225,9 @@ export const Instances = {
         }
     },
 
+    // The whole birth of an instance, timed end to end: storage capacity
+    // check, clone, cloud-init config (user = "user", password = the
+    // student's vu_id), start, then the DB row with its expiry.
     createInstance: async (
         userId: string,
         template: Template,
@@ -332,6 +360,7 @@ export const Instances = {
         }
     },
 
+    // null = run forever (non-expirable).
     updateRuntimeHours: async (
         instanceId: number,
         hoursFromNow: number | null,
@@ -349,6 +378,8 @@ export const Instances = {
         }
     },
 
+    // Re-enabling expiry keeps an existing deadline (COALESCE) rather than
+    // resetting the clock.
     setExpirable: async (instanceId: number, expirable: boolean) => {
         if (expirable) {
             const defaultRuntimeHours =
@@ -417,6 +448,8 @@ export const Instances = {
         return deletedCount;
     },
 
+    // One bulk UPDATE ... FROM (VALUES ...) carries every VM's status and
+    // trimmed data blob to the DB — the 15 s status sync job.
     fetchAndUpdateStatuses: async () => {
         const minVmId =
             (await metadata.get<number>("settings.proxmox.minVmId")) ?? 10_000;

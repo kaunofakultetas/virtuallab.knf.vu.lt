@@ -1,3 +1,16 @@
+// -----------------------------------------------------------
+//  [*] Guacamole — API types
+//
+//  Shapes of what the Guacamole REST API sends and accepts.
+//  Hyphenated keys are verbatim API field names. The big
+//  GuacamoleRdpParameters sheet mirrors what the client's
+//  create/update payloads send — every field present, empty
+//  string meaning "unset".
+//
+//  Used by:
+//    - guacamole/api.ts and everything that calls it
+// -----------------------------------------------------------
+
 export type GuacamoleHTTPMethod = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
 
 export interface GuacamoleClientConfig {

@@ -1,3 +1,13 @@
+// -----------------------------------------------------------
+//  [*] Tests — instance address selection
+//
+//  Subnet-membership selection, the legacy-prefix fallback,
+//  and every unverifiable input refused rather than guessed.
+//
+//  Covers src/network/address-selection.ts. Run with `npm
+//  test` (the whole suite) inside the backend container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import {

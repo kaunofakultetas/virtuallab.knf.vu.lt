@@ -1,17 +1,28 @@
+// -----------------------------------------------------------
+//  [*] Scripts — set-gateway-settings (operator CLI)
+//
+//  Records the Gateway guest's real interface names and
+//  upstream resolvers into the metadata store.
+//
+//  These cannot be derived from the database, and the names
+//  are not predictable: cloud-init renames only the NICs it
+//  has configuration for, so a guest can end up with a mix
+//  such as eth0/ens19/eth2. Read them from the running VM
+//  and pass them in rather than assuming a pattern.
+//
+//  Usage (env vars):
+//    GATEWAY_MANAGEMENT_INTERFACE, GATEWAY_TRUNK_INTERFACE,
+//    GATEWAY_UPLINK_INTERFACE, GATEWAY_UPSTREAM_RESOLVERS
+//    npm run set-gateway-settings
+// -----------------------------------------------------------
+
 import { isIP } from "node:net";
 import { GATEWAY_SETTING_KEYS } from "@/network/gateway-plan";
 import { metadata } from "@/utils/metadata";
 import { pool } from "@/utils/db";
 
-/**
- * Records the Gateway guest's real interface names and upstream resolvers.
- *
- * These cannot be derived from the database, and the names are not predictable:
- * cloud-init renames only the NICs it has configuration for, so a guest can end
- * up with a mix such as eth0/ens19/eth2. Read them from the running VM and pass
- * them in rather than assuming a pattern.
- */
 const INTERFACE_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,14}$/;
+
 
 function requiredInterface(variable: string): string {
     const value = process.env[variable]?.trim();
@@ -20,6 +31,7 @@ function requiredInterface(variable: string): string {
     }
     return value;
 }
+
 
 function requiredResolvers(variable: string): string[] {
     const raw = process.env[variable]?.trim();
@@ -33,6 +45,7 @@ function requiredResolvers(variable: string): string[] {
     }
     return [...new Set(resolvers)];
 }
+
 
 async function main(): Promise<void> {
     const management = requiredInterface("GATEWAY_MANAGEMENT_INTERFACE");
@@ -59,6 +72,7 @@ async function main(): Promise<void> {
         await pool.end();
     }
 }
+
 
 main().catch((error: unknown) => {
     console.error(error instanceof Error ? error.message : "Failed to record Gateway settings");

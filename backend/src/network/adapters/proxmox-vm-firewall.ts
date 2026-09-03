@@ -1,3 +1,17 @@
+// -----------------------------------------------------------
+//  [*] Network adapters — observing and grading VM firewalls
+//
+//  The read half of per-VM firewall reconciliation: fetch
+//  one guest's options, rules and ipfilter set, then grade
+//  them against the rendered policy. The write half lives
+//  in vm-firewall-apply.ts.
+//
+//  Used by:
+//    - vm-firewall-apply.ts — before and after writing
+//    - drift-reconciler.ts — the firewall sweep
+//    - test/vm-firewall.test.ts
+// -----------------------------------------------------------
+
 import {
     ProxmoxFirewallIpSetEntry,
     ProxmoxFirewallOptions,
@@ -11,8 +25,8 @@ export type VmFirewallObservation = {
     vmid: string;
     options: ProxmoxFirewallOptions;
     rules: ProxmoxFirewallRule[];
-    /** Null when the guest holds no ipfilter set at all, which is not the same
-     *  as holding an empty one: an empty set drops every packet the VM sends. */
+    // Null when the guest holds no ipfilter set at all, which is not the same
+    // as holding an empty one: an empty set drops every packet the VM sends.
     ipset: ProxmoxFirewallIpSetEntry[] | null;
 };
 
@@ -22,6 +36,24 @@ export interface VmFirewallObservationClient {
     getVmFirewallIpSets(vmid: string): Promise<{ name: string }[]>;
     getVmFirewallIpSetEntries(vmid: string, name: string): Promise<ProxmoxFirewallIpSetEntry[]>;
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// observeVmFirewall
+// -----------------------------------------------------------
+//
+// One guest's firewall state in a single snapshot; the
+// ipset entries are fetched only when the set exists.
+//
+// Used by:
+//   - vm-firewall-apply.ts, drift-reconciler.ts
+// -----------------------------------------------------------
 
 export async function observeVmFirewall(
     client: VmFirewallObservationClient,
@@ -41,15 +73,15 @@ export async function observeVmFirewall(
     };
 }
 
-/**
- * Proxmox reports booleans as 0/1 and omits a field entirely when it has never
- * been set, so an absent value is compared as "not what we asked for" rather
- * than defaulted. Defaulting would let a VM that was never configured read as
- * configured.
- */
+
+// Proxmox reports booleans as 0/1 and omits a field entirely when it has never
+// been set, so an absent value is compared as "not what we asked for" rather
+// than defaulted. Defaulting would let a VM that was never configured read as
+// configured.
 function sameFlag(observed: number | undefined, desired: boolean): boolean {
     return observed !== undefined && (observed === 1) === desired;
 }
+
 
 function optionDrift(policy: VmFirewallPolicy, observed: ProxmoxFirewallOptions): string[] {
     const drift: string[] = [];
@@ -74,10 +106,11 @@ function optionDrift(policy: VmFirewallPolicy, observed: ProxmoxFirewallOptions)
     return drift;
 }
 
+
+// Compared field by field rather than by a marker comment: a rule that
+// matches ours in every field IS ours, and one that does not is drift no
+// matter what its comment claims.
 function normalizeRule(rule: ProxmoxFirewallRule | ProxmoxFirewallRuleInput): string {
-    // Compared field by field rather than by a marker comment: a rule that
-    // matches ours in every field IS ours, and one that does not is drift no
-    // matter what its comment claims.
     const enable = "enable" in rule ? rule.enable : undefined;
     return JSON.stringify({
         type: rule.type,
@@ -92,6 +125,7 @@ function normalizeRule(rule: ProxmoxFirewallRule | ProxmoxFirewallRuleInput): st
     });
 }
 
+
 function normalizeIpSetEntry(
     entry: ProxmoxFirewallIpSetEntry | VmFirewallIpSetEntry,
 ): string {
@@ -105,19 +139,35 @@ function normalizeIpSetEntry(
     });
 }
 
+
 export type VmFirewallPlan = ReconciliationDryRun & {
-    /** True when nothing needs writing, so an apply can return without mutating. */
+    // True when nothing needs writing, so an apply can return without mutating.
     no_change_required: boolean;
 };
 
-/**
- * Grades a VM's live firewall against its desired policy.
- *
- * Rule *order* is compared, not just membership: Proxmox evaluates top-down and
- * stops at the first match, so the same rules in a different order can mean
- * something entirely different — an ACCEPT ahead of a DROP silently reopens what
- * the DROP was there to close.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// planVmFirewall
+// -----------------------------------------------------------
+//
+// Grades a VM's live firewall against its desired policy.
+//
+// Rule *order* is compared, not just membership: Proxmox
+// evaluates top-down and stops at the first match, so the
+// same rules in a different order can mean something
+// entirely different — an ACCEPT ahead of a DROP silently
+// reopens what the DROP was there to close.
+//
+// Used by:
+//   - vm-firewall-apply.ts, drift-reconciler.ts
+// -----------------------------------------------------------
+
 export function planVmFirewall(
     policy: VmFirewallPolicy,
     observation: VmFirewallObservation,

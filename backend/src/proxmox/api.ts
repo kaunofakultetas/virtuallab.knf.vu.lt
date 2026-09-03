@@ -1,3 +1,29 @@
+// -----------------------------------------------------------
+//  [*] Proxmox — the HTTP API client
+//
+//  One class wrapping the Proxmox VE REST API (api2/json):
+//  token/cookie auth in whatever form the env provides,
+//  bounded retries on GETs, form-encoded writes, and a
+//  failure counter (proxmox_api_errors_total) with the
+//  numeric IDs normalised out of the path label.
+//
+//  Split into (root last):
+//
+//    normaliseVmName — DNS-label cleanup for VM names
+//    encodeForm      — object → Proxmox form fields
+//    ProxmoxClient   — the client class, in sections:
+//                      plumbing, VM inventory, SDN,
+//                      cluster/node firewall, per-VM
+//                      firewall, guest config & agent,
+//                      tasks, VM lifecycle, cluster helpers
+//
+//  Used by:
+//    - proxmox/index.ts — the app-wide singleton
+//    - network/proxmox-clients.ts — a second, dedicated
+//      client for network reconciliation tokens
+//    - controllers, routes and network modules through both
+// -----------------------------------------------------------
+
 import { Agent, fetch } from "undici";
 import {
     ProxmoxApiError,
@@ -37,6 +63,25 @@ import {
 import { logger } from "@/utils/logger";
 import { proxmoxApiErrorsTotal } from "@/utils/metrics";
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// normaliseVmName
+// -----------------------------------------------------------
+//
+// Cleans an arbitrary string into dot-joined DNS labels
+// (lowercase alphanumerics and hyphens, 63 chars per label)
+// — the only names Proxmox accepts for a VM.
+//
+// Used by:
+//   - ProxmoxClient.cloneVM (below)
+// -----------------------------------------------------------
+
 export function normaliseVmName(input: string, fallback = "vm"): string {
     const MAX_LABEL = 63;
 
@@ -59,6 +104,25 @@ export function normaliseVmName(input: string, fallback = "vm"): string {
     return labels.join(".");
 }
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// encodeForm
+// -----------------------------------------------------------
+//
+// Object → the string map Proxmox form posts want: undefined
+// fields dropped, booleans as "1"/"0", everything else
+// stringified.
+//
+// Used by:
+//   - every writing method in ProxmoxClient (below)
+// -----------------------------------------------------------
+
 function encodeForm(
     values: object,
 ): Record<string, string> {
@@ -73,6 +137,23 @@ function encodeForm(
             ]),
     );
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// ProxmoxClient
+// -----------------------------------------------------------
+//
+// The client itself. Node-scoped paths use the configured
+// nodeName; cluster paths (SDN, cluster firewall) do not.
+// Only GETs retry — a retried write against Proxmox could
+// double-apply.
+// -----------------------------------------------------------
 
 export class ProxmoxClient {
     private readonly baseUrl: string;
@@ -98,6 +179,9 @@ export class ProxmoxClient {
         await this.httpAgent.close();
     }
 
+    // Accepts the token in any of the four forms operators paste: a ready
+    // PVEAPIToken/PVEAuthCookie header value, a bare `user@realm!name=uuid`
+    // API token, or a bare ticket (becomes a cookie).
     private buildAuthHeaders(authToken: string): Record<string, string> {
         const token = authToken.trim();
 
@@ -127,6 +211,9 @@ export class ProxmoxClient {
         return err instanceof TypeError || err.name === "AbortError";
     }
 
+    // The single transport every method funnels through: query/form
+    // encoding, timeout via AbortController, GET retries with linear
+    // backoff, and the error counter on the final failure.
     private async request<T>(
         method: ProxmoxHTTPMethod,
         path: string,
@@ -203,6 +290,11 @@ export class ProxmoxClient {
         throw new Error("unreachable");
     }
 
+
+    // -------------------------------------------------------
+    // VM inventory & status
+    // -------------------------------------------------------
+
     async getVms(): Promise<ProxmoxNodeVM[]> {
         const resp = await this.request<Record<string, any>[]>(
             "GET",
@@ -241,6 +333,11 @@ export class ProxmoxClient {
             `/nodes/${this.nodeName}/network`,
         );
     }
+
+
+    // -------------------------------------------------------
+    // SDN — zones, VNets, subnets, and the cluster-wide apply
+    // -------------------------------------------------------
 
     async getSdnZones(): Promise<ProxmoxSdnZone[]> {
         return this.request<ProxmoxSdnZone[]>("GET", "/cluster/sdn/zones");
@@ -319,18 +416,24 @@ export class ProxmoxClient {
         );
     }
 
+    // SDN edits are staged until this runs — nothing reaches the hosts
+    // without an explicit apply.
     async applySdnConfiguration(): Promise<string | null> {
         return this.request<string | null>("PUT", "/cluster/sdn");
     }
 
-    /**
-     * Cluster and node firewall state, read-only.
-     *
-     * Worth reading even though nothing here writes it: the cluster `enable`
-     * flag is the master switch for every per-VM rule, so with it off the
-     * rendered guest policy is inert and student-to-student isolation silently
-     * does not exist.
-     */
+
+    // -------------------------------------------------------
+    // Cluster & node firewall — options, security groups,
+    // cluster IPSets
+    //
+    // The cluster `enable` flag is the master switch for
+    // every per-VM rule: with it off, rendered guest policy
+    // is inert and student-to-student isolation silently
+    // does not exist. That is why the read-only options
+    // getters exist at all.
+    // -------------------------------------------------------
+
     async getClusterFirewallOptions(): Promise<ProxmoxFirewallOptions> {
         return this.request<ProxmoxFirewallOptions>("GET", "/cluster/firewall/options");
     }
@@ -489,6 +592,11 @@ export class ProxmoxClient {
         );
     }
 
+
+    // -------------------------------------------------------
+    // Per-VM firewall — rules and options
+    // -------------------------------------------------------
+
     async getVmFirewallRules(vmid: string): Promise<ProxmoxFirewallRule[]> {
         return this.request<ProxmoxFirewallRule[]>(
             "GET",
@@ -549,13 +657,16 @@ export class ProxmoxClient {
         );
     }
 
-    /**
-     * Guest-scoped IPSets, which are a different namespace from the cluster ones
-     * above. `ipfilter-net<n>` is the one that matters here: Proxmox reads it as
-     * the set of source addresses the guest may send from, so it is the only
-     * control that stops a lab VM spoofing its neighbour's address on a segment
-     * the Gateway never sees.
-     */
+
+    // -------------------------------------------------------
+    // Guest-scoped IPSets — a different namespace from the
+    // cluster ones above. `ipfilter-net<n>` is the one that
+    // matters here: Proxmox reads it as the set of source
+    // addresses the guest may send from, so it is the only
+    // control that stops a lab VM spoofing its neighbour's
+    // address on a segment the Gateway never sees.
+    // -------------------------------------------------------
+
     private vmFirewallPath(vmid: string, suffix = ""): string {
         return `/nodes/${encodeURIComponent(this.nodeName)}`
             + `/qemu/${encodeURIComponent(vmid)}/firewall${suffix}`;
@@ -620,6 +731,11 @@ export class ProxmoxClient {
         );
     }
 
+
+    // -------------------------------------------------------
+    // Guest config & agent
+    // -------------------------------------------------------
+
     async getVmConfig(vmid: string): Promise<ProxmoxGuestConfig> {
         return this.request<ProxmoxGuestConfig>(
             "GET",
@@ -641,6 +757,8 @@ export class ProxmoxClient {
         );
     }
 
+    // Requires the QEMU guest agent to be running in the VM — the source of
+    // truth for the instance IP wait loop.
     async getVmNetIfaces(
         vmid: string,
     ): Promise<Record<string, ProxmoxNodeVMNetIface>> {
@@ -659,6 +777,11 @@ export class ProxmoxClient {
         }
         return ifaces;
     }
+
+
+    // -------------------------------------------------------
+    // Tasks — Proxmox writes return a UPID; these wait on it
+    // -------------------------------------------------------
 
     async pollTask(upid: string): Promise<ProxmoxNodeTaskStatus> {
         return this.request<ProxmoxNodeTaskStatus>(
@@ -687,6 +810,8 @@ export class ProxmoxClient {
         throw new ProxmoxTaskTimeoutError(upid, timeoutMs);
     }
 
+    // The boolean variant for callers that only branch on success and want
+    // the failure logged rather than thrown.
     async waitForTaskCompletion(upid: string): Promise<boolean> {
         try {
             await this.waitForTask(upid);
@@ -699,6 +824,11 @@ export class ProxmoxClient {
             return false;
         }
     }
+
+
+    // -------------------------------------------------------
+    // VM lifecycle — clone, configure, start/stop, delete
+    // -------------------------------------------------------
 
     async cloneVM(
         from_id: string,
@@ -776,12 +906,20 @@ export class ProxmoxClient {
         );
     }
 
+
+    // -------------------------------------------------------
+    // Cluster helpers
+    // -------------------------------------------------------
+
     async getClusterResources(
         type: "vm" | "storage" | "node" | "sdn",
     ): Promise<any> {
         return this.request<any>("GET", `/cluster/resources?type=${type}`);
     }
 
+    // Lowest free VMID at or above minId. Race-prone by nature — two
+    // concurrent creates can pick the same ID; the clone call is what
+    // actually claims it.
     async getNextAvailableId(minId: number = 10000): Promise<string> {
         const resources: any[] = await this.getClusterResources("vm");
         const used = new Set<number>(resources.map((r) => r.vmid));

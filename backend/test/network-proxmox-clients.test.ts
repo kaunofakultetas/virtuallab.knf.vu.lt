@@ -1,3 +1,13 @@
+// -----------------------------------------------------------
+//  [*] Tests — dedicated Proxmox client construction
+//
+//  The observer/mutator factories and their refusals when
+//  tokens are missing.
+//
+//  Covers src/network/proxmox-clients.ts. Run with `npm
+//  test` (the whole suite) inside the backend container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import {

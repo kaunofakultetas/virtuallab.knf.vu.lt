@@ -1,3 +1,36 @@
+// -----------------------------------------------------------
+//  [*] Network — the scheduled drift reconciler
+//
+//  Observes first, repairs only what actually drifted.
+//
+//  This runs on a timer, which makes "apply unconditionally"
+//  the wrong shape: a Gateway apply restarts Squid and
+//  dnsmasq and arms a rollback timer each time, so an
+//  unconditional pass would interrupt every student's
+//  session on a schedule in order to write files that were
+//  already correct. Observation is cheap and read-only;
+//  repair is not.
+//
+//  Only *fixable* drift triggers a repair — the same sets
+//  the apply runners use to decide what blocks. A failing
+//  `gateway-uplink-connected` or absent veth describes
+//  hypervisor state no amount of file writing corrects, so
+//  re-applying against it would fail on a loop and fill the
+//  attempt log with noise that hides the real problem.
+//
+//  Every repair goes through the normal runner, so it takes
+//  the shared advisory lock and records an attempt. A
+//  provisioning or teardown request already holding that
+//  lock makes this pass skip rather than queue, which is
+//  correct: whatever holds the lock is converging the same
+//  desired state anyway.
+//
+//  Used by:
+//    - index.ts — every 10 minutes
+//    - network.route.ts — POST /drift-reconciliations
+//    - test/drift-reconciler.test.ts
+// -----------------------------------------------------------
+
 import { NetworkGroup } from "@/types/network-groups";
 import { pool } from "@/utils/db";
 import { logger } from "@/utils/logger";
@@ -28,7 +61,7 @@ export type DriftComponent = "gateway-policy" | "access-policy" | "access-trunk"
 export type DriftReconciliationReport = {
     ran: boolean;
     reason?: string;
-    /** Components observed to have drifted, whether or not repair succeeded. */
+    // Components observed to have drifted, whether or not repair succeeded.
     drifted: DriftComponent[];
     repaired: DriftComponent[];
     failed: { component: DriftComponent; detail: string }[];
@@ -38,32 +71,34 @@ export type DriftReconcilerDependencies = {
     getMode?: () => Promise<NetworkMode>;
     observeGateway?: () => Promise<{ drifted: boolean; detail: string }>;
     observeAccess?: () => Promise<{ policyDrifted: boolean; trunkDrifted: boolean; detail: string }>;
-    /** Instances whose per-VM firewall no longer matches its rendered policy. */
+    // Instances whose per-VM firewall no longer matches its rendered policy.
     observeVmFirewalls?: () => Promise<{ drifted: string[]; detail: string }>;
     repair?: Partial<Record<DriftComponent, () => Promise<ReconciliationAttempt>>>;
     repairVmFirewalls?: (vmids: string[]) => Promise<{ repaired: string[]; failed: string[] }>;
 };
 
-/**
- * Observes first, repairs only what actually drifted.
- *
- * This runs on a timer, which makes "apply unconditionally" the wrong shape: a
- * Gateway apply restarts Squid and dnsmasq and a rollback timer is armed each
- * time, so an unconditional pass would interrupt every student's session on a
- * schedule in order to write files that were already correct. Observation is
- * cheap and read-only; repair is not.
- *
- * Only *fixable* drift triggers a repair — the same sets the two apply runners
- * use to decide what blocks. A failing `gateway-uplink-connected` or
- * `access-live-veth` describes hypervisor state no amount of file writing
- * corrects, so re-applying against it would fail on a loop and fill the attempt
- * log with noise that hides the real problem.
- *
- * Every repair goes through the normal runner, so it takes the shared advisory
- * lock and records an attempt. A provisioning or teardown request already
- * holding that lock makes this pass skip rather than queue, which is correct:
- * whatever holds the lock is converging the same desired state anyway.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// reconcileNetworkDrift
+// -----------------------------------------------------------
+//
+// One pass of the sweep: observe all four components, then
+// repair in provisioning order — trunk first, then the
+// guest policies, then the per-VM firewalls (an Access VLAN
+// interface on a trunk that does not carry its VLAN passes
+// no frames, so repairing the policy first would converge
+// onto something that still does not work).
+//
+// Used by:
+//   - index.ts, network.route.ts
+// -----------------------------------------------------------
+
 export async function reconcileNetworkDrift(
     requestedBy: string,
     dependencies: DriftReconcilerDependencies = {},
@@ -106,10 +141,6 @@ export async function reconcileNetworkDrift(
         "Network drift detected; repairing",
     );
 
-    // Trunk first, then the guest policies, matching provisioning order: an
-    // Access VLAN interface on a trunk that does not carry its VLAN passes no
-    // frames, so repairing the policy while the trunk is still wrong would
-    // converge onto something that still does not work.
     const order: DriftComponent[] = [
         "access-trunk",
         "access-policy",
@@ -165,14 +196,13 @@ export async function reconcileNetworkDrift(
     return { ran: true, drifted, repaired, failed };
 }
 
-/**
- * The shared Proxmox client, resolved on first use rather than at import.
- *
- * Constructing it reads Proxmox environment variables, and this module is
- * imported by unit tests that inject every dependency and never reach Proxmox
- * at all. A module-scope import would make those tests fail on configuration
- * they have no reason to carry.
- */
+
+// The shared Proxmox client, resolved on first use rather than at import.
+//
+// Constructing it reads Proxmox environment variables, and this module is
+// imported by unit tests that inject every dependency and never reach Proxmox
+// at all. A module-scope import would make those tests fail on configuration
+// they have no reason to carry.
 let cachedFirewallClient: VmFirewallApplyClient | null = null;
 
 async function firewallClient(): Promise<VmFirewallApplyClient> {
@@ -183,6 +213,7 @@ async function firewallClient(): Promise<VmFirewallApplyClient> {
     return cachedFirewallClient;
 }
 
+
 type FirewallTarget = {
     proxmox_id: string;
     group_id: number;
@@ -191,14 +222,12 @@ type FirewallTarget = {
     connection_config: unknown;
 };
 
-/**
- * Every running instance on an allocated group, with the template facts its
- * policy is rendered from.
- *
- * Joined rather than fetched per instance so the whole sweep is one query: this
- * runs on a timer against every VM in the lab, and N round trips would make the
- * observation cost grow with the class size.
- */
+// Every running instance on an allocated group, with the template facts its
+// policy is rendered from.
+//
+// Joined rather than fetched per instance so the whole sweep is one query: this
+// runs on a timer against every VM in the lab, and N round trips would make the
+// observation cost grow with the class size.
 const FIREWALL_TARGETS_SQL = `
     SELECT instance.proxmox_id,
            network_group.id AS group_id,
@@ -219,9 +248,30 @@ const FIREWALL_TARGETS_SQL = `
     ORDER BY instance.proxmox_id
 `;
 
+
 async function firewallTargets(): Promise<FirewallTarget[]> {
     return (await pool.query<FirewallTarget>(FIREWALL_TARGETS_SQL)).rows;
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// observeVmFirewallDrift
+// -----------------------------------------------------------
+//
+// Plans every target VM's firewall and reports the drifted
+// VMIDs. An unreadable guest is NOT drift: reporting it as
+// such would make the reconciler rewrite a firewall it
+// could not compare, on a timer.
+//
+// Used by:
+//   - reconcileNetworkDrift (above) — the default observer
+// -----------------------------------------------------------
 
 async function observeVmFirewallDrift(): Promise<{ drifted: string[]; detail: string }> {
     const drifted: string[] = [];
@@ -231,8 +281,6 @@ async function observeVmFirewallDrift(): Promise<{ drifted: string[]; detail: st
             const plan = await planInstanceFirewall(target);
             if (!plan.no_change_required) drifted.push(target.proxmox_id);
         } catch {
-            // An unreadable guest is not drift: reporting it as such would make
-            // the reconciler rewrite a firewall it could not compare, on a timer.
             unreadable.push(target.proxmox_id);
         }
     }
@@ -245,6 +293,9 @@ async function observeVmFirewallDrift(): Promise<{ drifted: string[]; detail: st
     };
 }
 
+
+// Renders one VM's desired policy from the DB facts and compares it against
+// the observed firewall.
 async function planInstanceFirewall(target: FirewallTarget) {
     const group = (await pool.query<NetworkGroup>(
         "SELECT * FROM network_groups WHERE id = $1",
@@ -266,6 +317,24 @@ async function planInstanceFirewall(target: FirewallTarget) {
     const client = await firewallClient();
     return { ...planVmFirewall(policy, await observeVmFirewall(client, target.proxmox_id)), policy };
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// repairVmFirewalls
+// -----------------------------------------------------------
+//
+// Re-applies each drifted VM's policy independently — one
+// unreachable guest fails alone.
+//
+// Used by:
+//   - reconcileNetworkDrift (above) — the default repairer
+// -----------------------------------------------------------
 
 async function repairVmFirewalls(
     vmids: string[],
@@ -291,6 +360,27 @@ async function repairVmFirewalls(
     return { repaired, failed };
 }
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// observeGatewayDrift / observeAccessDrift
+// -----------------------------------------------------------
+//
+// The read-only halves: grade the current observation and
+// report only FIXABLE failing checks as drift. The Access
+// trunk is graded from the same observation as the policy,
+// so the two can never be judged against two different
+// moments.
+//
+// Used by:
+//   - reconcileNetworkDrift (above) — the default observers
+// -----------------------------------------------------------
+
 async function observeGatewayDrift(): Promise<{ drifted: boolean; detail: string }> {
     const observe = createGatewayObserver();
     if (!observe) return { drifted: false, detail: "Gateway observation is not configured" };
@@ -303,6 +393,7 @@ async function observeGatewayDrift(): Promise<{ drifted: boolean; detail: string
         detail: failing.map((check) => check.key).join(", ") || "converged",
     };
 }
+
 
 async function observeAccessDrift(): Promise<{
     policyDrifted: boolean;
@@ -326,6 +417,7 @@ async function observeAccessDrift(): Promise<{
         ].join("; "),
     };
 }
+
 
 // `vm-firewall` is absent by design: it is not a single reconciliation attempt
 // and is dispatched separately above.

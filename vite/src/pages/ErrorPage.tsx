@@ -1,3 +1,15 @@
+// -----------------------------------------------------------
+//  [*] Pages — the router error page
+//
+//  Renders whatever the router throws — loader Responses
+//  get status-specific copy (404/401/403), plain Errors
+//  show their message — over the animated background, with
+//  back/dashboard buttons.
+//
+//  Used by:
+//    - router.tsx — errorElement on /login and the "/" tree
+// -----------------------------------------------------------
+
 import { useRouteError, isRouteErrorResponse, useNavigate } from "react-router-dom";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
@@ -5,6 +17,7 @@ import Button from "@mui/material/Button";
 import ArrowBackOutlinedIcon from "@mui/icons-material/ArrowBackOutlined";
 import HomeOutlinedIcon from "@mui/icons-material/HomeOutlined";
 import { AnimatedBackground } from "@/components/AnimatedBackground";
+
 
 export default function ErrorPage() {
     const error    = useRouteError();
@@ -46,6 +59,7 @@ export default function ErrorPage() {
             }}
         >
             <AnimatedBackground />
+
             {/* Big status number */}
             <Typography
                 sx={{

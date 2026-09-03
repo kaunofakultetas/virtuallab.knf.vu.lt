@@ -1,3 +1,15 @@
+// -----------------------------------------------------------
+//  [*] Utils — instance helpers shared by the three lists
+//
+//  The copy-IP action and the network label, used by the
+//  student dashboard, the instances page and the admin
+//  instances page so all three say the same thing.
+//
+//  Used by:
+//    - pages/Index.tsx, pages/Instances.tsx,
+//      pages/admin/AdminInstances.tsx
+// -----------------------------------------------------------
+
 import axios from "axios";
 import { getErrorMessage } from "@/utils/errors";
 import type { Instance } from "@/types/instances";
@@ -16,6 +28,25 @@ type CopyIpResult =
 // sees, unfiltered, so this predicate is the only thing narrowing it.
 const INTERNAL_IPV4 = /^10\./;
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// copyInstanceIp
+// -----------------------------------------------------------
+//
+// Fetches the guest's addresses, picks the internal one and
+// puts it on the clipboard; every failure comes back as a
+// message rather than a throw so callers just show it.
+//
+// Used by:
+//   - the copy-IP buttons on all three instance lists
+// -----------------------------------------------------------
+
 export async function copyInstanceIp(instanceId: number): Promise<CopyIpResult> {
     try {
         const res = await axios.get<string[]>(`/api/instances/${instanceId}/ip`);
@@ -33,14 +64,30 @@ export async function copyInstanceIp(instanceId: number): Promise<CopyIpResult> 
     }
 }
 
-/**
- * The network an instance sits on, as a heading and a detail line.
- *
- * An instance provisioned in `legacy` or `dry-run` mode, or one created before
- * per-group VLANs existed, holds no allocation of its own and shares the lab
- * bridge with everything else. That is worth saying plainly rather than
- * rendering an empty cell the reader has to interpret.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// networkLabel
+// -----------------------------------------------------------
+//
+// The network an instance sits on, as a heading and a
+// detail line.
+//
+// An instance provisioned in `legacy` or `dry-run` mode, or
+// one created before per-group VLANs existed, holds no
+// allocation of its own and shares the lab bridge with
+// everything else. That is worth saying plainly rather than
+// rendering an empty cell the reader has to interpret.
+//
+// Used by:
+//   - the network column on all three instance lists
+// -----------------------------------------------------------
+
 export const networkLabel = (instance: Instance): { primary: string; detail: string } => {
     if (instance.network_group_subnet_cidr === null) {
         return {

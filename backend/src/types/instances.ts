@@ -1,5 +1,18 @@
+// -----------------------------------------------------------
+//  [*] Types — instances
+//
+//  The instance row as the API serves it: the DB columns
+//  plus the network-group columns the instance queries join
+//  in. `proxmox_id` is a string here even though Proxmox
+//  VMIDs are numeric — it comes straight from the DB column.
+//
+//  Used by:
+//    - instances.controller.ts, instances.route.ts
+// -----------------------------------------------------------
+
 export type ProxmoxStatus = "running" | "stopped" | "suspended";
 
+// The JSONB `data` column; the guest IP lands here once observed.
 export interface InstanceData {
     ip_address: string;
 }

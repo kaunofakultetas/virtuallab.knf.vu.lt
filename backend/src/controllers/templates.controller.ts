@@ -1,3 +1,18 @@
+// -----------------------------------------------------------
+//  [*] Controllers — Templates: the templates table DAO
+//
+//  Plain SQL access to `templates`. The one behavior worth
+//  knowing: create() also links the new template to every
+//  DEFAULT lab profile in the same transaction, so a fresh
+//  template is usable without an admin touching profiles.
+//
+//  Used by:
+//    - templates.route.ts — every endpoint
+//    - instances.route.ts / instances.controller.ts —
+//      template lookups before cloning
+//    - lab-profiles.controller.ts
+// -----------------------------------------------------------
+
 import { UserRole } from "@/types/auth";
 import {
     CreateTemplateDTO,
@@ -5,6 +20,7 @@ import {
     UpdateTemplateDTO,
 } from "@/types/templates";
 import { pool } from "@/utils/db";
+
 
 export const Templates = {
     getAll: async (): Promise<Template[]> => {
@@ -42,6 +58,8 @@ export const Templates = {
         }
     },
 
+    // Admins see everything; students only what is flagged visible. An
+    // unknown template ID answers false, not an error.
     hasAccess: async (role: UserRole, templateId: number): Promise<boolean> => {
         if (role === "admin") {
             return true;
@@ -59,6 +77,8 @@ export const Templates = {
         return res.rows[0].visible_to_students;
     },
 
+    // Insert + default-profile linking in one transaction: either the
+    // template exists and is offered by the default profiles, or neither.
     create: async (template: CreateTemplateDTO): Promise<Template> => {
         const client = await pool.connect();
         try {
@@ -97,6 +117,8 @@ export const Templates = {
         await pool.query(`DELETE FROM templates WHERE id = $1`, [id]);
     },
 
+    // Dynamic SET list from whatever fields the DTO carries; the zod layer
+    // upstream is what keeps the keys trustworthy enough to interpolate.
     update: async (
         id: number,
         updates: UpdateTemplateDTO,

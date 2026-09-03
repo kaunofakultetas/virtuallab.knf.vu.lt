@@ -1,3 +1,14 @@
+// -----------------------------------------------------------
+//  [*] Tests — the two-phase Access trunk apply
+//
+//  Observe, apply with the net1 precondition, prove through
+//  the observer, commit — and the abandons on every failure
+//  path.
+//
+//  Covers src/network/access-trunk-apply.ts. Run with `npm
+//  test` (the whole suite) inside the backend container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import {

@@ -1,3 +1,13 @@
+// -----------------------------------------------------------
+//  [*] Tests — VLAN allocation and group transitions
+//
+//  findLowestAvailableVlan, the allocation transaction, and
+//  the guarded state-machine moves in groups.ts.
+//
+//  Covers src/network/groups.ts. Run with `npm test` (the
+//  whole suite) inside the backend container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import { getNetworkSlot } from "../src/network/config";

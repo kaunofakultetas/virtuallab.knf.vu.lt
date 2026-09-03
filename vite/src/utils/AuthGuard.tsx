@@ -1,3 +1,26 @@
+// -----------------------------------------------------------
+//  [*] Utils — session context and route guards
+//
+//  The session is fetched ONCE (GET /api/auth) by
+//  AuthProvider and shared through context; a failed fetch
+//  hard-navigates to /login, so no guarded page ever
+//  renders unauthenticated. RequireAuth renders nothing
+//  until the session arrives; RequireAdmin additionally
+//  shows an access-restricted panel to non-admins instead
+//  of the page.
+//
+//  Split into (guards last):
+//
+//    useAuth       — the context reader
+//    AuthProvider  — fetches and provides the session
+//    RequireAuth   — session gate
+//    RequireAdmin  — role gate
+//
+//  Used by:
+//    - router.tsx — wraps the "/" tree and admin routes
+//    - Navbar.tsx, Sidebar.tsx, pages — useAuth
+// -----------------------------------------------------------
+
 /* eslint-disable react-refresh/only-export-components */
 
 import { useNavigate } from "react-router-dom";
@@ -16,6 +39,7 @@ export interface AuthDataPayload {
     has_password?: boolean;
 }
 
+
 export function useAuth() {
     return useContext(AuthContext);
 }
@@ -23,6 +47,25 @@ export function useAuth() {
 interface AuthProviderProps {
     children: React.ReactNode;
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// AuthProvider
+// -----------------------------------------------------------
+//
+// window.location, not navigate: this can fire outside a
+// router context, and a hard navigation also drops any
+// stale in-memory state along with the dead session.
+//
+// Used by:
+//   - router.tsx — around PageLayout
+// -----------------------------------------------------------
 
 export const AuthProvider = ({ children }: AuthProviderProps) => {
     const [authData, setAuthData] = React.useState<AuthDataPayload | null>(
@@ -49,6 +92,24 @@ interface RequireAuthProps {
     children: React.ReactNode;
 }
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// RequireAuth
+// -----------------------------------------------------------
+//
+// Nothing renders while the session is still loading — the
+// provider's catch handles the failure case.
+//
+// Used by:
+//   - router.tsx — around PageLayout
+// -----------------------------------------------------------
+
 export const RequireAuth = ({ children }: RequireAuthProps) => {
     const authData = useAuth();
 
@@ -62,6 +123,25 @@ export const RequireAuth = ({ children }: RequireAuthProps) => {
 interface RequireAdminProps {
     children: React.ReactNode;
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// RequireAdmin
+// -----------------------------------------------------------
+//
+// Cosmetic only — every admin API rechecks the role
+// server-side; this just spares non-admins a page of
+// failing requests.
+//
+// Used by:
+//   - router.tsx — around every admin/* route
+// -----------------------------------------------------------
 
 export const RequireAdmin = ({ children }: RequireAdminProps) => {
     const authData = useAuth();

@@ -1,3 +1,24 @@
+// -----------------------------------------------------------
+//  [*] Pages — the role-aware home dashboard
+//
+//  "/" renders a different dashboard per role: admins get
+//  the stat cards and a recent-instances table, students
+//  get their own instance cards with lifecycle actions.
+//  Both poll in the background without spinners.
+//
+//  Split into (root component last):
+//
+//    statusColor/Border — shared status → color maps
+//    formatRunUntil     — expiry countdown text
+//    StatCard           — one admin stat tile
+//    AdminDashboard     — the admin home
+//    StudentDashboard   — the student home
+//    Index              — role switch (default export)
+//
+//  Used by:
+//    - router.tsx — the index route under "/"
+// -----------------------------------------------------------
+
 import { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
@@ -32,7 +53,9 @@ import { getErrorMessage } from "@/utils/errors";
 import type { Instance, ProxmoxStatus } from "@/types/instances";
 import type { User } from "@/types/users";
 
-// ─── Shared helpers ───────────────────────────────────────────────────────────
+// -----------------------------------------------------------
+// Shared helpers — status colors and the expiry countdown
+// -----------------------------------------------------------
 
 const statusColor: Record<string, "success" | "warning" | "error" | "default"> =
     {
@@ -64,7 +87,15 @@ function formatRunUntil(runUntil: string | null): {
     };
 }
 
-// ─── StatCard (admin) ─────────────────────────────────────────────────────────
+// -----------------------------------------------------------
+// StatCard
+// -----------------------------------------------------------
+//
+// One admin stat tile; clickable when it carries an href.
+//
+// Used by:
+//   - AdminDashboard (below)
+// -----------------------------------------------------------
 
 interface StatCardProps {
     icon: React.ReactNode;
@@ -117,7 +148,16 @@ function StatCard({ icon, label, value, color, href }: StatCardProps) {
     );
 }
 
-// ─── Admin dashboard ──────────────────────────────────────────────────────────
+// -----------------------------------------------------------
+// AdminDashboard
+// -----------------------------------------------------------
+//
+// Stat cards over users/instances/templates plus a recent
+// instances table, refreshed in the background.
+//
+// Used by:
+//   - Index (below) — when the session role is admin
+// -----------------------------------------------------------
 
 function AdminDashboard() {
     const navigate = useNavigate();
@@ -362,7 +402,16 @@ function AdminDashboard() {
     );
 }
 
-// ─── Student dashboard ────────────────────────────────────────────────────────
+// -----------------------------------------------------------
+// StudentDashboard
+// -----------------------------------------------------------
+//
+// The student's home: instance cards with the same
+// lifecycle actions as the Instances page.
+//
+// Used by:
+//   - Index (below) — when the session role is student
+// -----------------------------------------------------------
 
 function StudentDashboard() {
     const navigate = useNavigate();
@@ -785,7 +834,13 @@ function StudentDashboard() {
     );
 }
 
-// ─── Entry point ──────────────────────────────────────────────────────────────
+// -----------------------------------------------------------
+// Index (default export)
+// -----------------------------------------------------------
+//
+// Used by:
+//   - router.tsx — the index route under "/"
+// -----------------------------------------------------------
 
 export default function Index() {
     const auth = useAuth();

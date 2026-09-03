@@ -1,3 +1,23 @@
+// -----------------------------------------------------------
+//  [*] Pages — the privacy policy
+//
+//  Public static page (linked from the login card and from
+//  the SAML SP metadata's PrivacyStatementURL). The content
+//  lives inline; the small helpers below keep its typography
+//  consistent.
+//
+//  Split into (root component last):
+//
+//    Section    — heading + body block
+//    P          — one body paragraph
+//    InfoRow    — label/value line (the controller block)
+//    BulletList — bold-term bullet items
+//    Privacy    — the page (default export)
+//
+//  Used by:
+//    - router.tsx — route /privacy
+// -----------------------------------------------------------
+
 import Box from "@mui/material/Box";
 import Container from "@mui/material/Container";
 import Divider from "@mui/material/Divider";
@@ -5,6 +25,7 @@ import Link from "@mui/material/Link";
 import Paper from "@mui/material/Paper";
 import Typography from "@mui/material/Typography";
 import { Link as RouterLink } from "react-router-dom";
+
 
 function Section({
     title,
@@ -23,6 +44,7 @@ function Section({
     );
 }
 
+
 function P({ children }: { children: React.ReactNode }) {
     return (
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
@@ -30,6 +52,7 @@ function P({ children }: { children: React.ReactNode }) {
         </Typography>
     );
 }
+
 
 function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
     return (
@@ -48,6 +71,7 @@ function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
     );
 }
 
+
 function BulletList({
     items,
 }: {
@@ -65,6 +89,13 @@ function BulletList({
         </Box>
     );
 }
+
+
+
+
+
+
+
 
 export default function Privacy() {
     return (

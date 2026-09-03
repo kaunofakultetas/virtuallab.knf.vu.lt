@@ -1,3 +1,15 @@
+// -----------------------------------------------------------
+//  [*] Types — instances (API shapes)
+//
+//  Mirrors GET /instances rows, network-group columns
+//  included. The local Template here is the narrow shape
+//  the instance pages need, distinct from types/templates.
+//
+//  Used by:
+//    - pages/Index.tsx, pages/Instances.tsx,
+//      pages/admin/AdminInstances.tsx, utils/instances.ts
+// -----------------------------------------------------------
+
 export type ProxmoxStatus = "running" | "stopped" | "suspended" | "unknown";
 
 export interface Instance {

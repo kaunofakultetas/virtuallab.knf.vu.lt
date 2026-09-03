@@ -1,17 +1,27 @@
 #!/usr/bin/env python3
+############################################################
+#  [*] Gateway apply — forced command on the Proxmox host
+#
+#  Forwards a Gateway apply request into VM 202. Runs under
+#  its own authorized_keys entry, separate from the
+#  read-only observer principal, so the mutating capability
+#  is a distinct key that can be revoked on its own.
+#
+#  The applier itself (apply_gateway.py) is pushed to the
+#  guest on every call from the copy held here, so the host
+#  stays the single source of truth and the guest can never
+#  drift onto a stale applier. It lands in /run — tmpfs —
+#  so it does not persist.
+#
+#  Reads the request as JSON on stdin and returns the
+#  guest's JSON answer verbatim.
+#
+#  Used by:
+#    - backend gateway-clients.ts createGatewayApplier — the
+#      SSH principal the backend dials for stage/commit/
+#      rollback/status calls
+############################################################
 
-"""Forced command that forwards a Gateway apply request into VM 202.
-
-Runs on the Proxmox host under its own authorized_keys entry, separate from the
-read-only observer principal, so the mutating capability is a distinct key that
-can be revoked on its own.
-
-The applier itself is pushed to the guest on every call from the copy held here,
-so the host stays the single source of truth and the guest can never drift onto
-a stale applier. It lands in /run, which is tmpfs, so it does not persist.
-
-Reads the request as JSON on stdin and returns the guest's JSON answer verbatim.
-"""
 
 import json
 import os
@@ -35,6 +45,24 @@ SSH_ARGS = [
 ]
 
 
+
+
+
+
+
+
+############################################################
+# guest
+############################################################
+#
+# One SSH command on the Gateway guest, with the given stdin
+# and a hard timeout. BatchMode and strict host-key checking
+# are non-negotiable: this key can mutate the Gateway.
+#
+# Used by:
+#   - main (below) — once to install, once to run
+############################################################
+
 def guest(command: str, *, input_text: str, timeout: int) -> str:
     result = subprocess.run(
         [*SSH_ARGS, f"{GUEST_USER}@{GUEST_ADDRESS}", command],
@@ -47,7 +75,28 @@ def guest(command: str, *, input_text: str, timeout: int) -> str:
     return result.stdout
 
 
+
+
+
+
+
+
+############################################################
+# main
+############################################################
+#
+# Validates the request just enough to refuse garbage early
+# (the guest applier re-validates everything), pushes the
+# applier, then runs it with the request on stdin.
+#
+# Used by:
+#   - the __main__ guard
+############################################################
+
 def main() -> None:
+    # STEP 1: bounded read and shape checks — version, target,
+    # operation, strict UUID request ID
+    # ========================================================
     raw = sys.stdin.buffer.read(MAX_REQUEST_BYTES + 1)
     if len(raw) > MAX_REQUEST_BYTES:
         raise ValueError("request exceeds the maximum size")
@@ -63,6 +112,9 @@ def main() -> None:
     ):
         raise ValueError("invalid request ID")
 
+
+    # STEP 2: push this host's copy of the applier, then run it
+    # =========================================================
     guest(
         f"sudo -n install -D -m 0700 /dev/stdin {REMOTE_APPLIER}",
         input_text=APPLIER.read_text(),
@@ -77,6 +129,14 @@ def main() -> None:
     sys.stdout.write(answer)
 
 
+
+
+
+
+
+
+# Known failure types become one stderr line and exit 1 — that line is what
+# the backend's SSH client reports on a failed apply call.
 if __name__ == "__main__":
     try:
         main()

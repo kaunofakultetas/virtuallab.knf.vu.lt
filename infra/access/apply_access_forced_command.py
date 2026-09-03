@@ -1,16 +1,27 @@
 #!/usr/bin/env python3
+############################################################
+#  [*] Access apply — forced command on the Proxmox host
+#
+#  Forwards an Access apply request into LXC 200. Runs under
+#  its own authorized_keys entry, separate from every
+#  read-only principal, so the mutating capability can be
+#  revoked on its own.
+#
+#  Unlike the Gateway, the guest is reached with `pct exec`
+#  rather than SSH, so the applier (apply_access.py) is
+#  piped in on stdin along with the request in a single
+#  call: the guest needs no persistent copy and cannot run a
+#  stale one.
+#
+#  Reads JSON on stdin, returns the guest's JSON answer
+#  verbatim.
+#
+#  Used by:
+#    - backend access-clients.ts createAccessApplier — the
+#      SSH principal the backend dials for stage/commit/
+#      rollback/status calls
+############################################################
 
-"""Forced command that forwards an Access apply request into LXC 200.
-
-Runs on the Proxmox host under its own authorized_keys entry, separate from
-every read-only principal, so the mutating capability can be revoked on its own.
-
-Unlike the Gateway, the guest is reached with `pct exec` rather than SSH, so the
-applier is piped in on stdin along with the request in a single call: the guest
-needs no persistent copy and cannot run a stale one.
-
-Reads JSON on stdin, returns the guest's JSON answer verbatim.
-"""
 
 import json
 import re
@@ -23,7 +34,29 @@ APPLIER = Path("/usr/local/libexec/virtual-lab/apply_access.py")
 MAX_REQUEST_BYTES = 512 * 1024
 
 
+
+
+
+
+
+
+############################################################
+# main
+############################################################
+#
+# Validates the request just enough to refuse garbage early
+# (the guest applier re-validates everything), checks the
+# LXC is running, then splices the applier and the request
+# into one stdin payload for a single `pct exec` round trip.
+#
+# Used by:
+#   - the __main__ guard
+############################################################
+
 def main() -> None:
+    # STEP 1: bounded read and shape checks — version, target,
+    # operation, strict UUID request ID
+    # ========================================================
     raw = sys.stdin.buffer.read(MAX_REQUEST_BYTES + 1)
     if len(raw) > MAX_REQUEST_BYTES:
         raise ValueError("request exceeds the maximum size")
@@ -39,10 +72,18 @@ def main() -> None:
     ):
         raise ValueError("invalid request ID")
 
+
+    # STEP 2: refuse to talk to a stopped guest
+    # =========================================
     status = subprocess.run(["pct", "status", str(VMID)], check=True, capture_output=True, text=True)
     if status.stdout.strip() != "status: running":
         raise ValueError("Access LXC is not running")
 
+
+    # STEP 3: one `pct exec` carries everything — the awk in the
+    # guest splits the payload at the marker line, writes the
+    # applier and the request to /run, and runs the applier
+    # ==========================================================
     # The applier is written to the guest and executed in one shell, so the copy
     # it runs is always the one held here. /run is tmpfs, so it does not persist.
     remote = "/run/virtual-lab-access-applier.py"
@@ -63,6 +104,14 @@ def main() -> None:
     sys.stdout.write(result.stdout)
 
 
+
+
+
+
+
+
+# Known failure types become one stderr line and exit 1 — that line is what
+# the backend's SSH client reports on a failed apply call.
 if __name__ == "__main__":
     try:
         main()

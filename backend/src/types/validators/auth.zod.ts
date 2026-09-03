@@ -1,29 +1,40 @@
+// -----------------------------------------------------------
+//  [*] Validators — auth request schemas
+//
+//  Everything auth.route.ts feeds through validateRequest.
+//  vu_id is digits only — VU student numbers — and doubles
+//  as the username field on login.
+//
+//  Used by:
+//    - auth.route.ts — one schema per endpoint, named below
+// -----------------------------------------------------------
+
 import z from "zod";
 
-// Schema for vu_id - must be a non-empty string, digits only
+// vu_id — non-empty, digits only.
 export const vuIdSchema = z
     .string()
     .min(1, "vu_id is required")
     .regex(/^\d+$/, "vu_id must be digits only");
 
-// Schema for password - must be a non-empty string, at least 6 characters long
+// Passwords — at least 6 characters, everywhere a password appears.
 export const passwordSchema = z
     .string()
     .min(6, "password must be at least 6 characters long");
 
-// Schema for /auth/login endpoint
+// POST /auth/login
 export const loginSchema = z.object({
     username: vuIdSchema,
     password: passwordSchema,
 });
 
-// Schema for /auth/change-password endpoint
+// POST /auth/change-password
 export const changePasswordSchema = z.object({
     currentPassword: passwordSchema,
     newPassword: passwordSchema,
 });
 
-// Schema for POST /auth/users endpoint (user creation)
+// POST /auth/users — bulk user creation, capped at 100 per call
 export const createUsersSchema = z.object({
     users: z
         .array(
@@ -36,12 +47,12 @@ export const createUsersSchema = z.object({
         .max(100, "Cannot create more than 100 users at once"),
 });
 
-// Schema for /auth/users/:vu_id endpoint (route params)
+// /auth/users/:vu_id — route params
 export const userParamsSchema = z.object({
     vu_id: vuIdSchema,
 });
 
-// Schema for PATCH /auth/users/:vu_id endpoint (admin update)
+// PATCH /auth/users/:vu_id — admin update
 export const updateUserSchema = z.object({
     password: passwordSchema.optional(),
     role: z.enum(["admin", "student"]).optional(),

@@ -1,3 +1,14 @@
+// -----------------------------------------------------------
+//  [*] Tests — the Access policy apply runner
+//
+//  The mode gate (active only), infrastructure-revision
+//  pinning, fixable-check gating, and the attempt record
+//  every apply leaves behind.
+//
+//  Covers src/network/access-apply-runner.ts. Run with `npm
+//  test` (the whole suite) inside the backend container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import { QueryResult, QueryResultRow } from "pg";

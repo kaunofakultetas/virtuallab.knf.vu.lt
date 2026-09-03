@@ -1,3 +1,14 @@
+// -----------------------------------------------------------
+//  [*] Tests — the dry-run reconciler
+//
+//  Settled per-component observation, failing checks instead
+//  of lost evidence, and sanitised persisted errors.
+//
+//  Covers src/network/infrastructure-reconciler.ts. Run with
+//  `npm test` (the whole suite) inside the backend
+//  container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import { QueryResult, QueryResultRow } from "pg";

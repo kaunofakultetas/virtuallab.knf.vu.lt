@@ -1,3 +1,13 @@
+// -----------------------------------------------------------
+//  [*] Tests — clone-time storage guards
+//
+//  Boot-disk storage resolution from a template config and
+//  the free-space reserve assertion.
+//
+//  Covers src/proxmox/storage.ts. Run with `npm test` (the
+//  whole suite) inside the backend container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import {

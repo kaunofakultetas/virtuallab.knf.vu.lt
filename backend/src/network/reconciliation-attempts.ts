@@ -1,8 +1,24 @@
+// -----------------------------------------------------------
+//  [*] Network — the reconciliation attempt log and lock
+//
+//  Two things every apply shares: the persisted attempt
+//  record (network_reconciliation_attempts — the audit
+//  trail of checks, actions, phases and outcomes) and the
+//  advisory lock that keeps VNet, Access, trunk and Gateway
+//  applies from ever running concurrently.
+//
+//  Used by:
+//    - every apply runner and the drift reconciler
+//    - network.route.ts — reading attempts back
+// -----------------------------------------------------------
+
 import { randomUUID } from "node:crypto";
 import { QueryResult, QueryResultRow } from "pg";
 import { pool } from "@/utils/db";
 import type { ReconciliationAction, ReconciliationCheck } from "./reconciliation-types";
 
+// Arbitrary but fixed: every process that takes the reconciliation lock must
+// agree on this number.
 export const NETWORK_RECONCILIATION_ADVISORY_LOCK = 1447838019;
 
 export type ReconciliationMode = "dry-run" | "apply";
@@ -85,6 +101,28 @@ export class ReconciliationLockedError extends Error {
         this.name = "ReconciliationLockedError";
     }
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// ReconciliationAttemptRepository
+// -----------------------------------------------------------
+//
+// CRUD over the attempt table. checkpoint() and finish()
+// only touch rows still `running`, so a finished attempt
+// can never be rewritten; abandonRunning() sweeps up
+// attempts a dead process left behind before a new one
+// starts.
+//
+// Used by:
+//   - every apply runner, infrastructure-reconciler.ts
+//   - network.route.ts — getById
+// -----------------------------------------------------------
 
 export class ReconciliationAttemptRepository {
     constructor(private readonly database: ReconciliationQueryClient = pool) {}
@@ -185,6 +223,27 @@ export class ReconciliationAttemptRepository {
         return result.rows[0];
     }
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// withReconciliationLock
+// -----------------------------------------------------------
+//
+// try-lock, not wait: a second reconciliation is refused
+// with ReconciliationLockedError rather than queued, so
+// callers surface "already running" instead of piling up.
+// The lock lives on the dedicated client's session and is
+// released before the client goes back to the pool.
+//
+// Used by:
+//   - every apply runner
+// -----------------------------------------------------------
 
 export async function withReconciliationLock<T>(
     callback: (client: ReconciliationLockClient) => Promise<T>,

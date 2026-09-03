@@ -1,4 +1,15 @@
+// -----------------------------------------------------------
+//  [*] Pages — About
+//
+//  Placeholder page behind /home; just a heading and a link
+//  back to the dashboard.
+//
+//  Used by:
+//    - router.tsx — route /home
+// -----------------------------------------------------------
+
 import { Link } from "react-router-dom";
+
 
 export default function About() {
     return (

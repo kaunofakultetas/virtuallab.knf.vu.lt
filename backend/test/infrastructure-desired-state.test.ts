@@ -1,3 +1,14 @@
+// -----------------------------------------------------------
+//  [*] Tests — the infrastructure plan builder
+//
+//  The operational-group filter, the trunk VLAN sets, and
+//  the forced migration VLAN.
+//
+//  Covers src/network/infrastructure-desired-state.ts. Run
+//  with `npm test` (the whole suite) inside the backend
+//  container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import {

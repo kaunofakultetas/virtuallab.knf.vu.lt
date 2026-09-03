@@ -1,3 +1,20 @@
+// -----------------------------------------------------------
+//  [*] Admin — the templates table
+//
+//  Seeded from the router loader, then kept locally: create
+//  prepends, edit merges in place, delete filters out —
+//  refreshTemplates() refetches only when a response cannot
+//  be parsed. Create and edit share TemplateFormDialog;
+//  buildConnectionConfig / openEditDialog translate between
+//  the flat form values and the API's connection_config
+//  (same scheme as TemplateDetails — the "creatorId"/
+//  "userId" credential modes are resolved by the backend at
+//  session time). Validate calls the Proxmox-side probe.
+//
+//  Used by:
+//    - router.tsx — route /admin/templates (templatesLoader)
+// -----------------------------------------------------------
+
 import { useMemo, useState } from "react";
 import { useLoaderData, useNavigate } from "react-router-dom";
 import axios from "axios";
@@ -34,6 +51,7 @@ import {
 
 const templateTypeOptions = ["student_vm", "lab_vm"];
 
+// The dialogs' blank slate; openEditDialog overwrites it from a template.
 const emptyFormValues: TemplateFormValues = {
     name: "",
     type: "",
@@ -130,6 +148,9 @@ export default function Templates() {
         setEditingTemplate(null);
     };
 
+
+    // Form values → the connection_config the API stores; only the active
+    // connection type's fields are emitted.
     const buildConnectionConfig = (values: TemplateFormValues) => {
         const cfg: Record<string, unknown> = {};
         const resolveCredential = (mode: string, custom: string) =>
@@ -271,6 +292,8 @@ export default function Templates() {
         }
     };
 
+    // API config → form values. A stored credential that is neither
+    // placeholder reads back as "custom" with the literal value.
     const openEditDialog = (template: Template) => {
         setEditingTemplate(template);
         const cfg = template.connection_config ?? {};

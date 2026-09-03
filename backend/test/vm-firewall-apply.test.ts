@@ -1,3 +1,13 @@
+// -----------------------------------------------------------
+//  [*] Tests — writing one VM's firewall
+//
+//  Wholesale rule replacement, IPSet-before-rules ordering,
+//  enable-last options, and the post-write proof.
+//
+//  Covers src/network/vm-firewall-apply.ts. Run with `npm
+//  test` (the whole suite) inside the backend container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import {

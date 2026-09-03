@@ -1,3 +1,20 @@
+// -----------------------------------------------------------
+//  [*] Network — observing the Proxmox-side prerequisites
+//
+//  One settled-promise sweep over everything active
+//  networking assumes about the hypervisor: the VLAN-aware
+//  transport bridge, the SDN zone and VNets, and both
+//  appliances' configs (management addresses, transport
+//  NICs, the Access LXC's untagged-address migration
+//  state). Each probe fails independently — a broken zone
+//  read does not hide the bridge result.
+//
+//  Used by:
+//    - readiness.ts — these observations become readiness
+//      checks
+//    - test/network-observations.test.ts
+// -----------------------------------------------------------
+
 import { ProxmoxClient } from "@/proxmox/api";
 import {
     ProxmoxApiError,
@@ -27,6 +44,9 @@ export interface NetworkObservationClient {
     getContainerConfig(vmid: string): Promise<ProxmoxGuestConfig>;
 }
 
+
+// Human-readable failure text, with auth/404 called out by status so an
+// operator can tell a permission problem from an absent resource.
 function failureDetail(error: unknown): string {
     if (error instanceof ProxmoxApiError) {
         if (error.status === 401 || error.status === 403) {
@@ -40,6 +60,7 @@ function failureDetail(error: unknown): string {
     if (error instanceof Error) return error.message;
     return String(error);
 }
+
 
 function guestObservation(
     key: "gateway" | "access",
@@ -65,25 +86,25 @@ function guestObservation(
     };
 }
 
+
 function hasNetworkDevice(config: ProxmoxGuestConfig, expected: string): boolean {
     return Object.entries(config).some(
         ([key, value]) => /^net\d+$/.test(key) && String(value).includes(expected),
     );
 }
 
-/**
- * Finds an address on a QEMU guest.
- *
- * An LXC carries its address on `netN`, but a QEMU `netN` only describes the
- * virtual NIC; the address is supplied by cloud-init on `ipconfigN`. Searching
- * `netN` for an address therefore never matches on a VM.
- */
+
+// Finds an address on a QEMU guest. An LXC carries its address on `netN`,
+// but a QEMU `netN` only describes the virtual NIC; the address is supplied
+// by cloud-init on `ipconfigN`. Searching `netN` for an address therefore
+// never matches on a VM.
 function hasCloudInitAddress(config: ProxmoxGuestConfig, cidr: string): boolean {
     return Object.entries(config).some(
         ([key, value]) => /^ipconfig\d+$/.test(key)
             && String(value).split(",").includes(`ip=${cidr}`),
     );
 }
+
 
 function findNetworkDevice(
     config: ProxmoxGuestConfig,
@@ -94,6 +115,27 @@ function findNetworkDevice(
     );
     return entry ? String(entry[1]) : undefined;
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// getNetworkObservations
+// -----------------------------------------------------------
+//
+// The sweep itself — five parallel settled reads, each
+// graded into observations. Notable gradings: the Gateway's
+// management address is checked through cloud-init (see
+// hasCloudInitAddress); the Access transport NIC must carry
+// NO untagged address before active mode.
+//
+// Used by:
+//   - readiness.ts
+// -----------------------------------------------------------
 
 export async function getNetworkObservations(
     client?: NetworkObservationClient,

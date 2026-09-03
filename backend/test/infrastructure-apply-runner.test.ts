@@ -1,3 +1,14 @@
+// -----------------------------------------------------------
+//  [*] Tests — the VNet apply runner
+//
+//  Revision pinning under the reconciliation lock and the
+//  readiness gating around planned actions.
+//
+//  Covers src/network/infrastructure-apply-runner.ts. Run
+//  with `npm test` (the whole suite) inside the backend
+//  container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import { QueryResult, QueryResultRow } from "pg";

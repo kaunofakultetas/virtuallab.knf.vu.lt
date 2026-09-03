@@ -1,3 +1,14 @@
+// -----------------------------------------------------------
+//  [*] Tests — the four-step provisioning orchestration
+//
+//  VNet, trunk, Access policy, Gateway policy — in order,
+//  with bounded revision retries and no unwinding on
+//  failure.
+//
+//  Covers src/network/provisioning-network.ts. Run with `npm
+//  test` (the whole suite) inside the backend container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import { NetworkGroup } from "../src/types/network-groups";

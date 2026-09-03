@@ -1,3 +1,16 @@
+// -----------------------------------------------------------
+//  [*] Navbar — the burgundy top bar
+//
+//  Shown on every signed-in page: the VU logo + title block
+//  (clicking it goes home), and on the right the session
+//  chip (initials, vu_id, role), the theme toggle in its
+//  on-dark variant, and the logout button. The logout
+//  handler comes from PageLayout so the Sidebar shares it.
+//
+//  Used by:
+//    - PageLayout.tsx — every signed-in page
+// -----------------------------------------------------------
+
 import Box from "@mui/material/Box";
 import Divider from "@mui/material/Divider";
 import Typography from "@mui/material/Typography";
@@ -12,6 +25,7 @@ import vuLogo from "@/assets/vuLogo.svg";
 interface NavbarProps {
     onLogout: () => void;
 }
+
 
 export function Navbar({ onLogout }: NavbarProps) {
     const auth = useAuth();
@@ -31,6 +45,7 @@ export function Navbar({ onLogout }: NavbarProps) {
                 zIndex: 10,
             }}
         >
+            {/* Logo + title, one click target back to "/" */}
             <Box
                 onClick={() => navigate("/")}
                 sx={{
@@ -61,6 +76,7 @@ export function Navbar({ onLogout }: NavbarProps) {
                 </Typography>
             </Box>
 
+            {/* Session chip, theme toggle, logout */}
             <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
                 {auth && (
                     <Box

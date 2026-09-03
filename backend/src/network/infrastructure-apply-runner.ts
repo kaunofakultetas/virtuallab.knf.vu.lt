@@ -1,3 +1,20 @@
+// -----------------------------------------------------------
+//  [*] Network — the VNet apply runner
+//
+//  Executes a Proxmox VNet reconciliation end to end under
+//  the global reconciliation lock: abandon stale running
+//  attempts, re-read the plan and pin its revision, observe,
+//  plan, refuse when required checks fail for resources the
+//  plan will not touch, then persist the attempt and hand it
+//  to the apply executor.
+//
+//  Used by:
+//    - provisioning-vnet.ts — per-provisioning VNet step
+//    - the access/gateway/trunk runners, which reuse its
+//      error types and attempt-store shape
+//    - scripts/applyNetworkVnets.ts — the operator CLI
+// -----------------------------------------------------------
+
 import { InfrastructurePlan, getInfrastructurePlan } from "./infrastructure-desired-state";
 import { applyProxmoxVnetActions, InfrastructureApplyDependencies } from "./infrastructure-apply";
 import { observeProxmoxVnets, planProxmoxVnets, ProxmoxVnetObservationClient } from "./adapters/proxmox-vnet";
@@ -15,6 +32,8 @@ export type InfrastructureApplyInput = {
     idempotencyKey?: string;
 };
 
+// The plan's revision moved between the caller's read and the lock — the
+// caller re-reads and retries rather than applying a stale plan.
 export class InfrastructureApplyRevisionError extends Error {
     constructor(
         readonly expectedRevision: string,
@@ -32,6 +51,8 @@ export class InfrastructureApplyReadinessError extends Error {
     }
 }
 
+// The slice of the attempt repository the runner needs — narrowed so tests
+// can substitute a store without a database.
 export interface InfrastructureApplyAttemptStore {
     abandonRunning(): Promise<number>;
     create(input: {
@@ -57,6 +78,26 @@ export type InfrastructureApplyRunnerDependencies = {
     createAttempts?: (client: ReconciliationLockClient) => InfrastructureApplyAttemptStore;
     convergence?: InfrastructureApplyDependencies["convergence"];
 };
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// InfrastructureApplyRunner
+// -----------------------------------------------------------
+//
+// One method, applyVnets — the sequence in the header. A
+// required check that fails is only blocking when the plan
+// holds no action for that resource: a failing check the
+// apply is about to fix must not veto the fix.
+//
+// Used by:
+//   - provisioning-vnet.ts, scripts/applyNetworkVnets.ts
+// -----------------------------------------------------------
 
 export class InfrastructureApplyRunner {
     constructor(private readonly dependencies: InfrastructureApplyRunnerDependencies) {}

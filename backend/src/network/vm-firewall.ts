@@ -1,60 +1,75 @@
+// -----------------------------------------------------------
+//  [*] Network — rendering one student VM's firewall policy
+//
+//  This is the only place same-segment policy can be
+//  enforced. Traffic between VMs on one VLAN is switched at
+//  layer 2 and never reaches the Gateway, so the Gateway's
+//  ruleset — where every other network control lives —
+//  cannot see it at all. Student-to-student isolation,
+//  rogue-DHCP suppression and source-address spoofing are
+//  enforced here or nowhere.
+//
+//  Pure rendering: no Proxmox calls. The policy's revision
+//  hashes the rendered document (plus a render version, so
+//  a semantics change can force re-application).
+//
+//  Used by:
+//    - provisioning-firewall.ts — at VM creation
+//    - drift-reconciler.ts — the firewall sweep
+//    - test/vm-firewall.test.ts
+// -----------------------------------------------------------
+
 import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 import { ConnectionType, ConnectionConfig } from "@/types/templates";
 import { ProxmoxFirewallOptionsUpdate, ProxmoxFirewallRuleInput } from "@/proxmox/types";
 
-/**
- * Version of the rendered firewall's semantics. The revision hashes the desired
- * document, so a change to this renderer alone would otherwise produce an
- * identical revision and a VM still carrying the previous rules would look
- * converged. Bump whenever the meaning of the rendered policy changes.
- */
+// Version of the rendered firewall's semantics. The revision hashes the desired
+// document, so a change to this renderer alone would otherwise produce an
+// identical revision and a VM still carrying the previous rules would look
+// converged. Bump whenever the meaning of the rendered policy changes.
 export const VM_FIREWALL_RENDER_VERSION = 1;
 
-/**
- * Proxmox reads this IPSet as the set of source addresses the guest is allowed
- * to send from. The `net0` suffix is the NIC index, and student VMs are
- * provisioned with exactly one NIC.
- */
+// Proxmox reads this IPSet as the set of source addresses the guest is allowed
+// to send from. The `net0` suffix is the NIC index, and student VMs are
+// provisioned with exactly one NIC.
 export const VM_FIREWALL_IPSET = "ipfilter-net0";
 
 export class VmFirewallError extends Error {}
 
 export type VmFirewallInput = {
-    /** Proxmox VMID, as a string, matching `instances.proxmox_id`. */
+    // Proxmox VMID, as a string, matching `instances.proxmox_id`.
     vmid: string;
-    /** The group's subnet, which bounds every address the VM may claim. */
+    // The group's subnet, which bounds every address the VM may claim.
     subnet_cidr: string;
-    /** Reserved infrastructure addresses inside that subnet, `.1` and `.2`. */
+    // Reserved infrastructure addresses inside that subnet, `.1` and `.2`.
     gateway_ip: string;
     access_ip: string;
-    /** TCP ports the Access appliance may open a session on. */
+    // TCP ports the Access appliance may open a session on.
     session_ports: number[];
-    /** Subnets of explicitly peered groups. Empty unless a peering exists. */
+    // Subnets of explicitly peered groups. Empty unless a peering exists.
     peer_subnet_cidrs: string[];
-    /**
-     * The owning profile's `lab_profiles.allow_same_group`. True admits the
-     * group's own subnet on every port and protocol. A group is one owner on one
-     * profile, so this is one student's VMs reaching each other, never two
-     * students'.
-     *
-     * Deliberately NOT expressed through `peer_subnet_cidrs`: that list is the
-     * `group_peerings` table, and pushing the group's own subnet into it would
-     * trip the self-peering guard below. Deliberately not a pre-resolved CIDR
-     * either — `subnet_cidr` above is already the group's own subnet, and a
-     * second field carrying it could disagree and open a foreign /24.
-     *
-     * Required, with no default: the two call sites that render this policy —
-     * provisioning and the drift reconciler — must agree, or the ten-minute
-     * sweep rewrites whatever provisioning just wrote, forever. A compile error
-     * is the only reliable guard against forgetting one.
-     */
+    // The owning profile's `lab_profiles.allow_same_group`. True admits the
+    // group's own subnet on every port and protocol. A group is one owner on one
+    // profile, so this is one student's VMs reaching each other, never two
+    // students'.
+    //
+    // Deliberately NOT expressed through `peer_subnet_cidrs`: that list is the
+    // `group_peerings` table, and pushing the group's own subnet into it would
+    // trip the self-peering guard below. Deliberately not a pre-resolved CIDR
+    // either — `subnet_cidr` above is already the group's own subnet, and a
+    // second field carrying it could disagree and open a foreign /24.
+    //
+    // Required, with no default: the two call sites that render this policy —
+    // provisioning and the drift reconciler — must agree, or the ten-minute
+    // sweep rewrites whatever provisioning just wrote, forever. A compile error
+    // is the only reliable guard against forgetting one.
     allow_same_group: boolean;
 };
 
 export type VmFirewallIpSetEntry = {
     cidr: string;
-    /** True marks an exclusion from an enclosing range, not a separate match. */
+    // True marks an exclusion from an enclosing range, not a separate match.
     nomatch: boolean;
     comment: string;
 };
@@ -67,9 +82,10 @@ export type VmFirewallPolicy = {
         "enable" | "dhcp" | "ipfilter" | "macfilter" | "ndp" | "radv" | "policy_in" | "policy_out"
     >>;
     ipset: VmFirewallIpSetEntry[];
-    /** In Proxmox evaluation order: first match wins, then the policy applies. */
+    // In Proxmox evaluation order: first match wins, then the policy applies.
     rules: ProxmoxFirewallRuleInput[];
 };
+
 
 function requireIpv4(value: string, field: string): string {
     if (isIP(value) !== 4) {
@@ -77,6 +93,7 @@ function requireIpv4(value: string, field: string): string {
     }
     return value;
 }
+
 
 function requireIpv4Cidr(value: string, field: string): string {
     const [address, prefixText, extra] = value.split("/");
@@ -92,6 +109,7 @@ function requireIpv4Cidr(value: string, field: string): string {
     return value;
 }
 
+
 function requirePort(port: number): number {
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
         throw new VmFirewallError(`Session port must be 1-65535, received ${port}`);
@@ -99,14 +117,30 @@ function requirePort(port: number): number {
     return port;
 }
 
-/**
- * The TCP ports the Access appliance opens a session on, derived from the
- * template rather than assumed.
- *
- * Guessing a superset here would widen the one ingress a student VM has. The
- * ports mirror what `POST /instances/:id/connection` actually dials: RDP for a
- * Guacamole template, the configured SSH port, or the configured web port.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// sessionPortsForTemplate
+// -----------------------------------------------------------
+//
+// The TCP ports the Access appliance opens a session on,
+// derived from the template rather than assumed.
+//
+// Guessing a superset here would widen the one ingress a
+// student VM has. The ports mirror what
+// `POST /instances/:id/connection` actually dials: RDP for
+// a Guacamole template, the configured SSH port, or the
+// configured web port.
+//
+// Used by:
+//   - provisioning-firewall.ts, drift-reconciler.ts
+// -----------------------------------------------------------
+
 export function sessionPortsForTemplate(
     connectionType: ConnectionType | null | undefined,
     connectionConfig: ConnectionConfig | null | undefined,
@@ -125,30 +159,43 @@ export function sessionPortsForTemplate(
     }
 }
 
-/**
- * Builds the Proxmox firewall policy for one student VM.
- *
- * This is the only place same-segment policy can be enforced. Traffic between
- * VMs on one VLAN is switched at layer 2 and never reaches the Gateway, so the
- * Gateway's ruleset — which is where every other network control lives — cannot
- * see it at all. Student-to-student isolation, rogue DHCP suppression, and
- * source-address spoofing are therefore enforced here or nowhere.
- *
- * Ingress is default-deny. The exceptions, in the order Proxmox evaluates them
- * because first match wins: the Access appliance on the template's session
- * ports, ICMP from the two infrastructure addresses for diagnostics and
- * path-MTU discovery, then — only when the group's profile sets
- * `allow_same_group` — the Gateway's DHCP reply, a DROP for each of the two
- * infrastructure addresses, and finally the group's own subnet on every port
- * and protocol. Those two DROPs are load-bearing: `.1` and `.2` are inside the
- * subnet, so without them the final ACCEPT would silently widen Access from its
- * session ports to everything. Explicitly peered groups come last.
- *
- * Egress stays default-allow, because the Gateway's nftables is the single
- * source of truth for what a VM may reach off-segment; duplicating it here would
- * create two policies that drift. The egress rules below are only the ones the
- * Gateway structurally cannot enforce, because the traffic never reaches it.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// buildVmFirewallPolicy
+// -----------------------------------------------------------
+//
+// Builds the Proxmox firewall policy for one student VM.
+//
+// Ingress is default-deny. The exceptions, in the order
+// Proxmox evaluates them because first match wins: the
+// Access appliance on the template's session ports, ICMP
+// from the two infrastructure addresses, then — only when
+// the group's profile sets `allow_same_group` — the
+// Gateway's DHCP reply, a DROP for each of the two
+// infrastructure addresses, and finally the group's own
+// subnet on every port and protocol. Those two DROPs are
+// load-bearing: `.1` and `.2` are inside the subnet, so
+// without them the final ACCEPT would silently widen Access
+// from its session ports to everything. Explicitly peered
+// groups come last.
+//
+// Egress stays default-allow, because the Gateway's
+// nftables is the single source of truth for what a VM may
+// reach off-segment; duplicating it here would create two
+// policies that drift. The egress rules below are only the
+// ones the Gateway structurally cannot enforce, because the
+// traffic never reaches it.
+//
+// Used by:
+//   - provisioning-firewall.ts, drift-reconciler.ts
+// -----------------------------------------------------------
+
 export function buildVmFirewallPolicy(input: VmFirewallInput): VmFirewallPolicy {
     const subnet = requireIpv4Cidr(input.subnet_cidr, "subnet_cidr");
     const gatewayIp = requireIpv4(input.gateway_ip, "gateway_ip");

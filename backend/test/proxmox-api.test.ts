@@ -1,3 +1,13 @@
+// -----------------------------------------------------------
+//  [*] Tests — the Proxmox HTTP client
+//
+//  Auth-header forms, GET retries, hyphen-to-underscore key
+//  rewriting and task waiting.
+//
+//  Covers src/proxmox/api.ts. Run with `npm test` (the whole
+//  suite) inside the backend container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import test from "node:test";

@@ -1,3 +1,14 @@
+// -----------------------------------------------------------
+//  [*] Proxmox — the app-wide client singleton
+//
+//  One ProxmoxClient built from the PROXMOX_* env vars.
+//  Network reconciliation does NOT use this: it builds its
+//  own clients from dedicated tokens (proxmox-clients.ts).
+//
+//  Used by:
+//    - controllers, routes and the metrics poller
+// -----------------------------------------------------------
+
 import { ProxmoxClient } from "./api";
 
 export const proxmox = new ProxmoxClient({

@@ -1,3 +1,17 @@
+// -----------------------------------------------------------
+//  [*] Admin — all instances
+//
+//  The admin twin of the student Instances page, over
+//  /api/instances/all: every user's VMs, polled every 5 s
+//  (state only updates when a row changed), filterable by
+//  template type, with owner and expirable-toggle columns
+//  the student page lacks. Lifecycle actions, create dialog
+//  and connect flow work the same way as there.
+//
+//  Used by:
+//    - router.tsx — route /admin/instances
+// -----------------------------------------------------------
+
 import { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { getErrorMessage } from "@/utils/errors";

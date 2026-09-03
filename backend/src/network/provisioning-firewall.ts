@@ -1,3 +1,16 @@
+// -----------------------------------------------------------
+//  [*] Network — per-VM firewall at provisioning time
+//
+//  The step that stands between one student's VM and the
+//  next on the same VLAN: builds the same-segment policy
+//  from the group's canonical slot and applies it to the
+//  freshly cloned VM.
+//
+//  Used by:
+//    - instances.route.ts — right after createInstance, with
+//      the VM destroyed if this fails
+// -----------------------------------------------------------
+
 import { proxmox } from "@/proxmox";
 import { NetworkGroup } from "@/types/network-groups";
 import { ConnectionConfig, ConnectionType } from "@/types/templates";
@@ -7,23 +20,19 @@ import { applyVmFirewall, VmFirewallApplyClient, VmFirewallApplyResult } from ".
 import { buildVmFirewallPolicy, sessionPortsForTemplate, VmFirewallError } from "./vm-firewall";
 
 export type EnsureInstanceFirewallInput = {
-    /** Proxmox VMID of the freshly created student VM. */
+    // Proxmox VMID of the freshly created student VM.
     vmid: string;
     group: NetworkGroup;
     connectionType: ConnectionType | null | undefined;
     connectionConfig: ConnectionConfig | null | undefined;
-    /**
-     * The group's profile `allow_same_group`. Required from the caller rather
-     * than looked up here: `input.group` carries only `profile_id`, and the one
-     * caller already holds the profile row it created the group under.
-     */
+    // The group's profile `allow_same_group`. Required from the caller rather
+    // than looked up here: `input.group` carries only `profile_id`, and the one
+    // caller already holds the profile row it created the group under.
     allowSameGroup: boolean;
-    /**
-     * Subnets of explicitly peered groups. Read from `group_peerings` when the
-     * caller does not supply them, because the Gateway routes peered traffic and
-     * the VM would otherwise drop it at `policy_in DROP` -- an approved pair that
-     * works in one layer and fails in the next.
-     */
+    // Subnets of explicitly peered groups. Read from `group_peerings` when the
+    // caller does not supply them, because the Gateway routes peered traffic and
+    // the VM would otherwise drop it at `policy_in DROP` -- an approved pair that
+    // works in one layer and fails in the next.
     peerSubnetCidrs?: string[];
 };
 
@@ -31,19 +40,36 @@ export type EnsureInstanceFirewallDependencies = {
     client?: VmFirewallApplyClient;
 };
 
-/**
- * Applies same-segment policy to a newly created student VM.
- *
- * Uses the provisioning Proxmox token rather than the network mutator token, and
- * deliberately so: the mutator is scoped to `/sdn` and holds no VM permission at
- * all, which is the property that keeps network reconciliation unable to touch
- * guests. Guest firewall configuration is a VM-scoped operation belonging to the
- * same credential that cloned the VM in the first place.
- *
- * The addresses come from the canonical slot for the group's VLAN rather than
- * from anything observed, so a VM is never handed a policy derived from a value
- * the VM itself could influence.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// ensureInstanceFirewall
+// -----------------------------------------------------------
+//
+// Applies same-segment policy to a newly created student VM.
+//
+// Uses the provisioning Proxmox token rather than the
+// network mutator token, and deliberately so: the mutator
+// is scoped to `/sdn` and holds no VM permission at all,
+// which is the property that keeps network reconciliation
+// unable to touch guests. Guest firewall configuration is a
+// VM-scoped operation belonging to the same credential that
+// cloned the VM in the first place.
+//
+// The addresses come from the canonical slot for the
+// group's VLAN rather than from anything observed, so a VM
+// is never handed a policy derived from a value the VM
+// itself could influence.
+//
+// Used by:
+//   - instances.route.ts (see header)
+// -----------------------------------------------------------
+
 export async function ensureInstanceFirewall(
     input: EnsureInstanceFirewallInput,
     dependencies: EnsureInstanceFirewallDependencies = {},

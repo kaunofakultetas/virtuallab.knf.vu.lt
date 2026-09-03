@@ -1,3 +1,13 @@
+// -----------------------------------------------------------
+//  [*] Tests — planAccess checks and actions
+//
+//  How one host observation grades against the
+//  infrastructure plan, and which actions drift produces.
+//
+//  Covers src/network/adapters/access.ts. Run with `npm
+//  test` (the whole suite) inside the backend container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildOperationalAccessPlan } from "../src/network/access-desired-state";

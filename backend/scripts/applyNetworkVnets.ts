@@ -1,3 +1,17 @@
+// -----------------------------------------------------------
+//  [*] Scripts — apply-network-vnets (operator CLI)
+//
+//  Operator entry point for the Proxmox VNet apply: pins a
+//  dry-run's revision, requires the typed confirmation, and
+//  runs the same InfrastructureApplyRunner provisioning
+//  uses — so the attempt log records this like any other
+//  apply.
+//
+//  Usage:
+//    npm run apply-network-vnets -- --requested-by <vu_id>
+//      --expected-revision <sha256> --confirm APPLY-PROXMOX-VNETS
+// -----------------------------------------------------------
+
 import { InfrastructureApplyRunner } from "@/network/infrastructure-apply-runner";
 import { createNetworkProxmoxMutator } from "@/network/proxmox-clients";
 import { pool } from "@/utils/db";
@@ -10,10 +24,12 @@ const argumentsSchema = z.object({
     confirmation: z.literal("APPLY-PROXMOX-VNETS"),
 });
 
+
 function option(name: string): string | undefined {
     const index = process.argv.indexOf(name);
     return index >= 0 ? process.argv[index + 1] : undefined;
 }
+
 
 async function main(): Promise<void> {
     const parsed = argumentsSchema.safeParse({
@@ -54,6 +70,7 @@ async function main(): Promise<void> {
         await pool.end();
     }
 }
+
 
 main().catch(async (error) => {
     console.error(error instanceof Error ? error.message : "VNet apply failed");

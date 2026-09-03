@@ -1,20 +1,28 @@
+// -----------------------------------------------------------
+//  [*] Scripts — apply-gateway-policy (operator CLI)
+//
+//  Operator entry point for applying rendered Gateway
+//  policy. Deliberately a CLI and not an HTTP route,
+//  matching apply-network-vnets: the plan keeps active
+//  infrastructure mutation off the API surface until the
+//  behaviour is proven operationally.
+//
+//  `--expected-revision` is required, not optional. The
+//  operator is expected to have read a dry-run first, and
+//  the guard makes it impossible to apply a plan that
+//  changed between reading it and confirming it.
+//
+//  Usage:
+//    npm run apply-gateway-policy -- --requested-by <vu_id>
+//      --expected-revision <sha256> --confirm APPLY-GATEWAY-POLICY
+// -----------------------------------------------------------
+
 import { GatewayApplyError } from "@/network/gateway-apply";
 import { GatewayApplyRunner } from "@/network/gateway-apply-runner";
 import { createGatewayApplier, createGatewayObserver } from "@/network/gateway-clients";
 import { pool } from "@/utils/db";
 import { z } from "zod";
 
-/**
- * Operator entry point for applying rendered Gateway policy.
- *
- * Deliberately a CLI and not an HTTP route, matching apply-network-vnets: the
- * plan keeps active infrastructure mutation off the API surface until the
- * behaviour is proven operationally.
- *
- * `--expected-revision` is required, not optional. The operator is expected to
- * have read a dry-run first, and the guard makes it impossible to apply a plan
- * that changed between reading it and confirming it.
- */
 const argumentsSchema = z.object({
     requestedBy: z.string().min(1),
     expectedRevision: z.string().regex(/^[0-9a-f]{64}$/),
@@ -23,10 +31,12 @@ const argumentsSchema = z.object({
     confirmation: z.literal("APPLY-GATEWAY-POLICY"),
 });
 
+
 function option(name: string): string | undefined {
     const index = process.argv.indexOf(name);
     return index >= 0 ? process.argv[index + 1] : undefined;
 }
+
 
 async function main(): Promise<void> {
     const parsed = argumentsSchema.safeParse({
@@ -83,6 +93,7 @@ async function main(): Promise<void> {
         await pool.end();
     }
 }
+
 
 main().catch((error: unknown) => {
     if (error instanceof GatewayApplyError) {

@@ -1,4 +1,28 @@
 #!/usr/bin/env python3
+############################################################
+#  [*] Access observe — read-only collector inside LXC 200
+#
+#  Captures the Access LXC's network reality as one JSON
+#  document on stdout: interfaces, Docker bridge subnets,
+#  service listeners and their client sources, forwarding
+#  sysctls, and the full nftables ruleset. Root is needed
+#  for the ruleset, Docker state and conntrack.
+#
+#  Changes nothing. Collectors append to a shared `errors`
+#  list instead of raising — a non-empty errors array means
+#  the observation is incomplete and must fail readiness,
+#  but every collector that could run still reports.
+#
+#  Each collector is split into a pure parse_* half (unit
+#  tested) and a thin half that shells out.
+#
+#  Used by:
+#    - observe_access_forced_command.py — runs this through
+#      `pct exec` for the backend reconciliation dry-run
+#    - observe-access.sh — the manual operator wrapper
+#    - test_observe_access.py — the parse_* halves
+############################################################
+
 
 import datetime
 import ipaddress
@@ -13,6 +37,25 @@ from typing import Any
 
 SERVICE_PORTS = {8080, 9443}
 
+
+
+
+
+
+
+
+############################################################
+# run
+############################################################
+#
+# The shared subprocess wrapper for this collector: stdout
+# on success, None on failure — with the failure appended to
+# `errors` instead of raised, so one missing tool does not
+# abort the whole observation.
+#
+# Used by:
+#   - every shelling collector in this file
+############################################################
 
 def run(command: list[str], errors: list[str]) -> str | None:
     try:
@@ -31,6 +74,24 @@ def run(command: list[str], errors: list[str]) -> str | None:
     return None
 
 
+
+
+
+
+
+
+############################################################
+# ipv4
+############################################################
+#
+# The normalised IPv4 address out of a raw string, or None —
+# IPv6 (bracketed or not) and garbage both come back None,
+# so callers filter on a single check.
+#
+# Used by:
+#   - endpoint, parse_conntrack, parse_packet_capture (below)
+############################################################
+
 def ipv4(value: str) -> str | None:
     value = value.strip("[]")
     try:
@@ -40,6 +101,24 @@ def ipv4(value: str) -> str | None:
     return str(address) if address.version == 4 else None
 
 
+
+
+
+
+
+
+############################################################
+# endpoint
+############################################################
+#
+# "address:port" → (address, port), or None when either half
+# does not parse. rpartition, not split: the address half
+# may itself contain colons.
+#
+# Used by:
+#   - parse_socket_state (below)
+############################################################
+
 def endpoint(value: str) -> tuple[str, int] | None:
     host, separator, port_text = value.rpartition(":")
     if not separator or not port_text.isdigit():
@@ -47,6 +126,24 @@ def endpoint(value: str) -> tuple[str, int] | None:
     address = ipv4(host)
     return (address, int(port_text)) if address is not None else None
 
+
+
+
+
+
+
+
+############################################################
+# parse_interfaces
+############################################################
+#
+# `ip -j -4 address show` JSON → sorted name/addresses
+# pairs, IPv4 only.
+#
+# Used by:
+#   - interfaces (below)
+#   - test_observe_access.py
+############################################################
 
 def parse_interfaces(output: str) -> list[dict[str, Any]]:
     data = json.loads(output)
@@ -66,6 +163,23 @@ def parse_interfaces(output: str) -> list[dict[str, Any]]:
     )
 
 
+
+
+
+
+
+
+############################################################
+# interfaces
+############################################################
+#
+# The shelling half of parse_interfaces; parse failures are
+# reported through `errors`, not raised.
+#
+# Used by:
+#   - main (below)
+############################################################
+
 def interfaces(errors: list[str]) -> list[dict[str, Any]]:
     output = run(["ip", "-j", "-4", "address", "show"], errors)
     if output is None:
@@ -76,6 +190,26 @@ def interfaces(errors: list[str]) -> list[dict[str, Any]]:
         errors.append(f"cannot parse ip address output: {error}")
         return []
 
+
+
+
+
+
+
+
+############################################################
+# parse_docker_bridge_cidrs
+############################################################
+#
+# `docker network inspect` JSON → the sorted IPv4 subnets of
+# bridge-driver networks. Normalised through ip_network so
+# a host-address form like 172.18.0.1/16 comes out as the
+# network 172.18.0.0/16.
+#
+# Used by:
+#   - docker_bridge_cidrs (below)
+#   - test_observe_access.py
+############################################################
 
 def parse_docker_bridge_cidrs(output: str) -> list[str]:
     networks = json.loads(output)
@@ -88,6 +222,23 @@ def parse_docker_bridge_cidrs(output: str) -> list[str]:
     }
     return sorted(cidrs)
 
+
+
+
+
+
+
+
+############################################################
+# docker_bridge_cidrs
+############################################################
+#
+# The shelling half of parse_docker_bridge_cidrs: list the
+# network IDs first, then inspect them all in one call.
+#
+# Used by:
+#   - main (below)
+############################################################
 
 def docker_bridge_cidrs(errors: list[str]) -> list[str]:
     network_ids = run(["docker", "network", "ls", "--quiet"], errors)
@@ -105,6 +256,26 @@ def docker_bridge_cidrs(errors: list[str]) -> list[str]:
         errors.append(f"cannot parse Docker network output: {error}")
         return []
 
+
+
+
+
+
+
+
+############################################################
+# parse_socket_state
+############################################################
+#
+# `ss -H -4 -tna` output → (listeners, connections) for the
+# service ports only. Connections seen here carry the post-
+# DNAT source; the true client address comes from conntrack
+# or the packet capture (below).
+#
+# Used by:
+#   - socket_state (below)
+#   - test_observe_access.py
+############################################################
 
 def parse_socket_state(output: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     listeners: set[tuple[int, str]] = set()
@@ -134,6 +305,27 @@ def parse_socket_state(output: str) -> tuple[list[dict[str, Any]], list[dict[str
     )
 
 
+
+
+
+
+
+
+############################################################
+# parse_conntrack
+############################################################
+#
+# /proc/net/nf_conntrack lines → service-port connections
+# keyed by the ORIGINAL source address. Only the first
+# src/dst tuple per line is read (a repeated key means the
+# reply tuple has started): that is the pre-DNAT view, the
+# client as it really is before Docker rewrites it.
+#
+# Used by:
+#   - conntrack_state (below)
+#   - test_observe_access.py
+############################################################
+
 def parse_conntrack(output: str) -> list[dict[str, Any]]:
     connections: set[tuple[int, str]] = set()
     for line in output.splitlines():
@@ -160,6 +352,24 @@ def parse_conntrack(output: str) -> list[dict[str, Any]]:
     ]
 
 
+
+
+
+
+
+
+############################################################
+# conntrack_state
+############################################################
+#
+# Reads whichever conntrack proc file this kernel exposes;
+# an empty result (no file, or no flows) tells socket_state
+# to fall back to the packet capture.
+#
+# Used by:
+#   - socket_state (below)
+############################################################
+
 def conntrack_state() -> list[dict[str, Any]]:
     for path in (Path("/proc/net/nf_conntrack"), Path("/proc/net/ip_conntrack")):
         try:
@@ -168,6 +378,25 @@ def conntrack_state() -> list[dict[str, Any]]:
             continue
     return []
 
+
+
+
+
+
+
+
+############################################################
+# parse_packet_capture
+############################################################
+#
+# tcpdump text → service-port connections by source address.
+# Matches only inbound "IP src.port > dst.SERVICEPORT:"
+# lines, so chatter on other ports never registers.
+#
+# Used by:
+#   - packet_capture (below)
+#   - test_observe_access.py
+############################################################
 
 def parse_packet_capture(output: str) -> list[dict[str, Any]]:
     connections: set[tuple[int, str]] = set()
@@ -184,6 +413,26 @@ def parse_packet_capture(output: str) -> list[dict[str, Any]]:
         for port, address in sorted(connections)
     ]
 
+
+
+
+
+
+
+
+############################################################
+# packet_capture
+############################################################
+#
+# The passive fallback when conntrack shows nothing: watch
+# eth0 — the management interface, BEFORE Docker DNAT — for
+# five seconds of service traffic. SIGINT on timeout, not
+# kill: tcpdump then flushes and exits 0/130, both of which
+# count as success.
+#
+# Used by:
+#   - socket_state (below)
+############################################################
 
 def packet_capture(errors: list[str], duration_seconds: int = 5) -> list[dict[str, Any]]:
     command = [
@@ -216,6 +465,25 @@ def packet_capture(errors: list[str], duration_seconds: int = 5) -> list[dict[st
         return []
 
 
+
+
+
+
+
+
+############################################################
+# socket_state
+############################################################
+#
+# Listeners plus the merged connection view: socket-level
+# connections (post-DNAT), overlaid with the original client
+# sources from conntrack — or from a live capture when
+# conntrack has no matching flow.
+#
+# Used by:
+#   - main (below)
+############################################################
+
 def socket_state(errors: list[str]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     output = run(["ss", "-H", "-4", "-tna"], errors)
     listeners, socket_connections = (
@@ -234,10 +502,45 @@ def socket_state(errors: list[str]) -> tuple[list[dict[str, Any]], list[dict[str
     ]
 
 
+
+
+
+
+
+
+############################################################
+# sysctl_boolean
+############################################################
+#
+# True when the named sysctl reads exactly `true_value` —
+# note the ipv6_enabled caller inverts the sense by asking
+# whether disable_ipv6 is "0".
+#
+# Used by:
+#   - main (below)
+############################################################
+
 def sysctl_boolean(name: str, true_value: str, errors: list[str]) -> bool:
     output = run(["sysctl", "-n", name], errors)
     return output is not None and output.strip() == true_value
 
+
+
+
+
+
+
+
+############################################################
+# nftables
+############################################################
+#
+# The complete ruleset as text, with an availability flag so
+# "no nft" and "empty ruleset" stay distinguishable.
+#
+# Used by:
+#   - main (below)
+############################################################
 
 def nftables(errors: list[str]) -> dict[str, Any]:
     output = run(["nft", "list", "ruleset"], errors)
@@ -246,6 +549,23 @@ def nftables(errors: list[str]) -> dict[str, Any]:
         "ruleset": output or "",
     }
 
+
+
+
+
+
+
+
+############################################################
+# main
+############################################################
+#
+# Assembles the observation document and prints it as one
+# sorted-keys JSON line.
+#
+# Used by:
+#   - the __main__ guard
+############################################################
 
 def main() -> None:
     errors: list[str] = []
@@ -266,6 +586,12 @@ def main() -> None:
         "errors": errors,
     }
     print(json.dumps(observation, sort_keys=True))
+
+
+
+
+
+
 
 
 if __name__ == "__main__":

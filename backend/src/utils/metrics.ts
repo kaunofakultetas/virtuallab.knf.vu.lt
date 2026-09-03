@@ -1,3 +1,16 @@
+// -----------------------------------------------------------
+//  [*] Utils — the Prometheus metric registry
+//
+//  Every metric the backend exposes, on one dedicated
+//  Registry (plus prom-client's default process metrics),
+//  all labeled app=virtual-proxmox-lab-backend. Definitions
+//  only — each metric's `help` string says what it measures;
+//  the section banners say who writes it.
+//
+//  Scraped through GET /metrics (metrics.route.ts, guarded
+//  by METRICS_TOKEN).
+// -----------------------------------------------------------
+
 import {
     Counter,
     Gauge,
@@ -10,7 +23,17 @@ export const registry = new Registry();
 registry.setDefaultLabels({ app: "virtual-proxmox-lab-backend" });
 collectDefaultMetrics({ register: registry });
 
-// ---------- HTTP ----------
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// HTTP — written by metrics.middleware.ts on every request
+// -----------------------------------------------------------
+
 export const httpRequestsTotal = new Counter({
     name: "http_requests_total",
     help: "Total HTTP requests handled by the backend",
@@ -32,7 +55,20 @@ export const httpInFlightRequests = new Gauge({
     registers: [registry],
 });
 
-// ---------- Business / domain ----------
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// Business / domain — gauges refreshed by the poller's
+// pollPostgres pass; the lifecycle counter and create-
+// duration histogram are written by instances.controller.ts
+// as operations happen
+// -----------------------------------------------------------
+
 export const vlabUsersTotal = new Gauge({
     name: "vlab_users_total",
     help: "Total users in the database, grouped by role",
@@ -74,7 +110,19 @@ export const vlabInstancesExpiredRemovedTotal = new Counter({
     registers: [registry],
 });
 
-// ---------- Proxmox ----------
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// Proxmox — gauges refreshed by the poller's pollProxmox
+// pass from /cluster/resources; the error counter is
+// incremented by proxmox/api.ts per failed call
+// -----------------------------------------------------------
+
 export const proxmoxNodeUp = new Gauge({
     name: "proxmox_node_up",
     help: "1 if the Proxmox node reports online, 0 otherwise",
@@ -145,7 +193,19 @@ export const proxmoxApiErrorsTotal = new Counter({
     registers: [registry],
 });
 
-// ---------- Guacamole ----------
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// Guacamole — gauges refreshed by the poller's pollGuacamole
+// pass; the error counter is incremented by guacamole/api.ts
+// per failed call
+// -----------------------------------------------------------
+
 export const guacamoleUsersTotal = new Gauge({
     name: "guacamole_users_total",
     help: "Total Guacamole users",
@@ -171,7 +231,19 @@ export const guacamoleApiErrorsTotal = new Counter({
     registers: [registry],
 });
 
-// ---------- Poll-loop health ----------
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// Poll-loop health — written by metrics-poller.ts about
+// itself, so a silently dead poller is visible as a stale
+// last-success timestamp
+// -----------------------------------------------------------
+
 export const metricsPollDurationSeconds = new Histogram({
     name: "vlab_metrics_poll_duration_seconds",
     help: "Duration of the metrics poller, by source",

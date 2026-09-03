@@ -1,3 +1,14 @@
+// -----------------------------------------------------------
+//  [*] Tests — datacenter firewall enforcement
+//
+//  The cluster enable flag and the control-plane node rules
+//  graded together.
+//
+//  Covers src/network/vm-firewall-enforcement.ts. Run with
+//  `npm test` (the whole suite) inside the backend
+//  container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import { checkVmFirewallEnforcement } from "../src/network/vm-firewall-enforcement";

@@ -1,3 +1,13 @@
+// -----------------------------------------------------------
+//  [*] Tests — grading Access guest observations
+//
+//  compareAccessObservation's checks against a plan,
+//  including the unobserved source-port grading.
+//
+//  Covers src/network/access-observation.ts. Run with `npm
+//  test` (the whole suite) inside the backend container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildAccessPlan } from "../src/network/access-desired-state";

@@ -1,3 +1,21 @@
+// -----------------------------------------------------------
+//  [*] Network — dedicated Proxmox clients for reconciliation
+//
+//  Reconciliation never uses the app-wide Proxmox singleton:
+//  it builds its own clients from two separate tokens — an
+//  observer (read-only) and a mutator (scoped to /sdn, no VM
+//  permissions at all). That scoping is what keeps network
+//  reconciliation structurally unable to touch guests.
+//
+//  Callers own the client's lifetime and must close() it.
+//
+//  Used by:
+//    - network.route.ts, readiness.ts, drift-reconciler.ts —
+//      the observer
+//    - infrastructure-apply-runner.ts — the mutator
+//    - scripts/preflightNetworkProxmoxTokens.ts — both
+// -----------------------------------------------------------
+
 import { ProxmoxClient } from "@/proxmox/api";
 import { z } from "zod";
 
@@ -6,6 +24,7 @@ const sharedConfigSchema = z.object({
     PROXMOX_NODE_NAME: z.string().min(1),
     PROXMOX_TLS_INSECURE: z.enum(["true", "false"]).optional(),
 });
+
 
 function createNetworkProxmoxClient(tokenVariable: string): ProxmoxClient {
     const shared = sharedConfigSchema.safeParse(process.env);
@@ -21,9 +40,11 @@ function createNetworkProxmoxClient(tokenVariable: string): ProxmoxClient {
     });
 }
 
+
 export function createNetworkProxmoxObserver(): ProxmoxClient {
     return createNetworkProxmoxClient("PROXMOX_NETWORK_OBSERVER_AUTH_TOKEN");
 }
+
 
 export function createNetworkProxmoxMutator(): ProxmoxClient {
     return createNetworkProxmoxClient("PROXMOX_NETWORK_MUTATOR_AUTH_TOKEN");

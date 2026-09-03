@@ -1,3 +1,22 @@
+// -----------------------------------------------------------
+//  [*] Network — planning the Access trunk
+//
+//  Pure planning for Access LXC 200's VLAN trunk. The two
+//  halves are planned independently because they ARE
+//  independent: `pct set` only rewrites the container's
+//  persistent `trunks=` allowlist and does not reprogram a
+//  running host-side veth, while `bridge vlan add/del` does
+//  the opposite and is lost on restart. The live host has
+//  already been observed persistent-correct while
+//  live-stale; collapsing the two into one boolean would
+//  let either half hide the other's drift.
+//
+//  Used by:
+//    - access-trunk-runner.ts — the apply flow
+//    - drift-reconciler.ts — trunk drift checks
+//    - test/access-trunk.test.ts
+// -----------------------------------------------------------
+
 import z from "zod";
 
 import { ACCESS_MIGRATION_VLAN } from "./infrastructure-desired-state";
@@ -30,11 +49,9 @@ export type AccessTrunkPlanInput = z.infer<typeof accessTrunkPlanInputSchema>;
 export type AccessTrunkPersistentTrunks = {
     status: "satisfied" | "drifted";
     observed_vlan_ids: number[];
-    /**
-     * The complete trunk list to write, never a partial append: `pct set --net1
-     * ...,trunks=<list>` replaces the whole allowlist, so writing anything less
-     * than the full desired list silently drops the VLANs left out.
-     */
+    // The complete trunk list to write, never a partial append: `pct set --net1
+    // ...,trunks=<list>` replaces the whole allowlist, so writing anything less
+    // than the full desired list silently drops the VLANs left out.
     set_vlan_ids: number[];
 };
 
@@ -52,40 +69,48 @@ export type AccessTrunkPlan = {
     no_change_required: boolean;
 };
 
+
 function canonical(vlanIds: number[]): number[] {
     return [...new Set(vlanIds)].sort((left, right) => left - right);
 }
+
 
 function sameVlans(left: number[], right: number[]): boolean {
     return left.length === right.length && left.every((vlan, index) => vlan === right[index]);
 }
 
-/**
- * Plans the two halves of an Access trunk independently.
- *
- * `pct set` only rewrites the container's persistent `trunks=` allowlist; it
- * does not reprogram the bridge VLAN membership of an already-running host-side
- * veth. `bridge vlan add/del` does the opposite: it changes the running veth and
- * is lost on the next container or host restart. `infra/access/stage-access.sh`
- * therefore performs both operations, and the live host has already been
- * observed persistent-correct while live-stale. Collapsing the two into one
- * boolean would let either half hide the other's drift, so each side carries its
- * own status and its own changes.
- */
+
 export class AccessTrunkInvariantError extends Error {}
 
-/**
- * Plans persistent and live trunk membership.
- *
- * Refuses rather than plans when the desired list omits ACCESS_MIGRATION_VLAN.
- * That VLAN carries the Access LXC's only tagged transport, the rest of the
- * codebase force-injects it and grades it as a required check, and a caller can
- * legitimately hand over an empty list (no active groups, a partial read, a
- * plan that has not loaded). Planning a teardown from that would sever tagged
- * transport with no signal, and an all-empty observation would then be blessed
- * as healthy -- the "empty projection silently drops a security property"
- * failure this repository has already hit once.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// planAccessTrunk
+// -----------------------------------------------------------
+//
+// Plans persistent and live trunk membership.
+//
+// Refuses rather than plans when the desired list omits
+// ACCESS_MIGRATION_VLAN. That VLAN carries the Access LXC's
+// only tagged transport, the rest of the codebase
+// force-injects it and grades it as a required check, and a
+// caller can legitimately hand over an empty list (no
+// active groups, a partial read, a plan that has not
+// loaded). Planning a teardown from that would sever tagged
+// transport with no signal, and an all-empty observation
+// would then be blessed as healthy — the "empty projection
+// silently drops a security property" failure this
+// repository has already hit once.
+//
+// Used by:
+//   - access-trunk-runner.ts, drift-reconciler.ts
+// -----------------------------------------------------------
+
 export function planAccessTrunk(input: unknown): AccessTrunkPlan {
     const parsed = accessTrunkPlanInputSchema.parse(input);
     const desired = canonical(parsed.desired_vlan_ids);
@@ -129,16 +154,31 @@ export function planAccessTrunk(input: unknown): AccessTrunkPlan {
     };
 }
 
-/**
- * Grades a trunk plan for a reconciliation attempt.
- *
- * The two halves are graded separately for the reason `planAccessTrunk`
- * separates them, and the migration VLAN gets its own check so a ruleset that
- * happens to converge on a list missing VLAN 2000 could never read as healthy.
- * `unobservable` is graded `unobserved`, not `fail`: an absent veth is a
- * container that is not running, which is a different problem from a trunk that
- * is wrong.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// accessTrunkChecks
+// -----------------------------------------------------------
+//
+// Grades a trunk plan for a reconciliation attempt.
+//
+// The two halves are graded separately for the reason
+// planAccessTrunk separates them, and the migration VLAN
+// gets its own check so a ruleset that happens to converge
+// on a list missing VLAN 2000 could never read as healthy.
+// `unobservable` is graded `unobserved`, not `fail`: an
+// absent veth is a container that is not running, which is
+// a different problem from a trunk that is wrong.
+//
+// Used by:
+//   - access-trunk-runner.ts, drift-reconciler.ts
+// -----------------------------------------------------------
+
 export function accessTrunkChecks(plan: AccessTrunkPlan): ReconciliationCheck[] {
     const desired = `[${plan.desired_vlan_ids.join(", ")}]`;
     return [

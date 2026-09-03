@@ -1,9 +1,32 @@
+// -----------------------------------------------------------
+//  [*] Network — the infrastructure desired-state plan
+//
+//  Extends the network plan with what the infrastructure
+//  executors act on: the Proxmox VNet list and both trunks'
+//  VLAN sets. The plan's revision is a sha256 over the whole
+//  desired state — the value every apply pins and every
+//  guest embeds as its revision comment.
+//
+//  Operational scope: groups in `creating` or `active`,
+//  plus `error` groups that still hold an allocation —
+//  their infrastructure must keep converging so a retry
+//  can succeed.
+//
+//  Used by:
+//    - infrastructure-apply-runner.ts, provisioning-vnet.ts
+//    - the access/gateway/trunk desired-state modules and
+//      adapters, drift-reconciler.ts
+// -----------------------------------------------------------
+
 import { createHash } from "node:crypto";
 import { QueryResult, QueryResultRow } from "pg";
 import { pool } from "@/utils/db";
 import { NetworkGroupState } from "@/types/network-groups";
 import { buildNetworkPlan, DesiredStateInputRow, ProjectedNetworkGroup } from "./desired-state";
 
+// VLAN 2000 carries the Access LXC's tagged transport; it stays on the Access
+// trunk regardless of what the allocator says, and planAccessTrunk refuses any
+// desired list that omits it.
 export const ACCESS_MIGRATION_VLAN = 2000;
 
 export type InfrastructureDesiredStateInputRow = DesiredStateInputRow & {
@@ -43,12 +66,37 @@ export type InfrastructurePlanQuery = {
     ): Promise<QueryResult<Row>>;
 };
 
+
+// A group claims infrastructure while creating/active, and keeps it in
+// `error` as long as it still holds a VLAN — see the header.
 function isOperationalTarget(row: InfrastructureDesiredStateInputRow): boolean {
     if (row.state === "creating" || row.state === "active") {
         return true;
     }
     return row.state === "error" && row.vlan_tag !== null && row.vlan_tag !== undefined;
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// buildInfrastructurePlan
+// -----------------------------------------------------------
+//
+// Pure: rows → the plan. The Access trunk always carries
+// the migration VLAN on top of the allocated ones; the
+// Gateway trunk carries only the allocated set. An
+// operational group without a persisted allocation is an
+// invariant violation, not a plannable state.
+//
+// Used by:
+//   - getInfrastructurePlan (below)
+//   - test/infrastructure-desired-state.test.ts
+// -----------------------------------------------------------
 
 export function buildInfrastructurePlan(
     rows: InfrastructureDesiredStateInputRow[],
@@ -88,6 +136,27 @@ export function buildInfrastructurePlan(
         desired_state: desiredState,
     };
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// getInfrastructurePlan
+// -----------------------------------------------------------
+//
+// Reads the operational groups (with their profile's
+// domains aggregated in) and builds the plan. Accepts any
+// queryable so a runner can read INSIDE its reconciliation
+// lock's transaction.
+//
+// Used by:
+//   - every apply runner, provisioning-vnet.ts,
+//     drift-reconciler.ts
+// -----------------------------------------------------------
 
 export async function getInfrastructurePlan(
     queryable: InfrastructurePlanQuery = pool,

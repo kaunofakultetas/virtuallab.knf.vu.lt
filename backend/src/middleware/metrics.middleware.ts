@@ -1,3 +1,15 @@
+// -----------------------------------------------------------
+//  [*] Middleware — HTTP request metrics
+//
+//  Feeds the three HTTP metrics in utils/metrics.ts: the
+//  request counter, the duration histogram and the in-flight
+//  gauge. /metrics itself is excluded so the scraper does
+//  not count its own scrapes.
+//
+//  Used by:
+//    - index.ts — registered before the routes
+// -----------------------------------------------------------
+
 import { NextFunction, Request, Response } from "express";
 import {
     httpInFlightRequests,
@@ -5,9 +17,10 @@ import {
     httpRequestsTotal,
 } from "@/utils/metrics";
 
+
+// Express fills route.path on matched requests; fall back to a coarse label
+// so unmatched URLs don't blow up label cardinality.
 const routeLabel = (req: Request): string => {
-    // Express fills route.path on matched requests; fall back to a coarse label
-    // so unmatched URLs don't blow up label cardinality.
     const route = (req as Request & { route?: { path?: string } }).route?.path;
     if (route) {
         return `${req.baseUrl ?? ""}${route}` || route;
@@ -16,6 +29,7 @@ const routeLabel = (req: Request): string => {
         ? req.path
         : "unmatched";
 };
+
 
 export const metricsMiddleware = (
     req: Request,

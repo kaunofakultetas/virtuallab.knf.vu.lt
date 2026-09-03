@@ -1,3 +1,19 @@
+// -----------------------------------------------------------
+//  [*] Admin — lab-wide settings
+//
+//  Two halves: the network readiness panel (the same
+//  report that gates flipping the network mode to active,
+//  with failing checks shown as alerts) and the metadata
+//  settings table. SETTINGS_META maps the backend's dotted
+//  keys to labels, descriptions and input types — a key the
+//  backend adds but this map does not know still renders,
+//  just under its raw name. Reset writes the default back
+//  rather than deleting the row.
+//
+//  Used by:
+//    - router.tsx — route /admin/settings
+// -----------------------------------------------------------
+
 import { useEffect, useState } from "react";
 import axios from "axios";
 import Box from "@mui/material/Box";
@@ -59,6 +75,8 @@ interface NetworkReadiness {
     };
 }
 
+// Presentation only — the value types here drive the edit input and the
+// number parse on save; the backend stays the authority on validity.
 const SETTINGS_META: Record<string, SettingMeta> = {
     "settings.network.mode": {
         label: "Network mode",

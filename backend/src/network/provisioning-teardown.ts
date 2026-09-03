@@ -1,3 +1,15 @@
+// -----------------------------------------------------------
+//  [*] Network — releasing a group after its last VM
+//
+//  The bridge between instance deletion and network
+//  teardown: whichever path removed a group's last VM calls
+//  this to return the VLAN to the pool.
+//
+//  Used by:
+//    - instances.route.ts — the user-facing delete
+//    - instances.controller.ts — the expiry sweeper
+// -----------------------------------------------------------
+
 import { NetworkGroup } from "@/types/network-groups";
 import { pool } from "@/utils/db";
 import { logger } from "@/utils/logger";
@@ -8,23 +20,36 @@ export type ReleaseAfterInstanceDependencies = {
     release?: typeof releaseNetworkGroup;
 };
 
-/**
- * Releases a group once its last VM is gone.
- *
- * Called after an instance is deleted, from both the user-facing route and the
- * expiry sweeper, so a VLAN is returned to the pool by whichever path removed
- * the last VM.
- *
- * It never throws. The VM is already gone by the time this runs, so a failed
- * teardown is a leaked VLAN and a group stuck in `deleting` — worth an error in
- * the log and a retry later, but not worth telling the caller their deletion
- * failed when it did not. The allocation stays reserved either way, which is the
- * safe direction: a VLAN nobody can reuse beats one handed to a second owner
- * while Proxmox still carries the first one's bridge.
- *
- * The group is looked up before deletion elsewhere, because the instance row
- * carrying `network_group_id` is exactly what gets removed.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// releaseNetworkGroupAfterInstance
+// -----------------------------------------------------------
+//
+// Releases a group once its last VM is gone.
+//
+// It never throws. The VM is already gone by the time this
+// runs, so a failed teardown is a leaked VLAN and a group
+// stuck in `deleting` — worth an error in the log and a
+// retry later, but not worth telling the caller their
+// deletion failed when it did not. The allocation stays
+// reserved either way, which is the safe direction: a VLAN
+// nobody can reuse beats one handed to a second owner while
+// Proxmox still carries the first one's bridge.
+//
+// The group is looked up before deletion elsewhere, because
+// the instance row carrying `network_group_id` is exactly
+// what gets removed.
+//
+// Used by:
+//   - instances.route.ts, instances.controller.ts (above)
+// -----------------------------------------------------------
+
 export async function releaseNetworkGroupAfterInstance(
     networkGroupId: number | null | undefined,
     requestedBy: string,

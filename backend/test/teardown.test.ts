@@ -1,3 +1,14 @@
+// -----------------------------------------------------------
+//  [*] Tests — the group release sequence
+//
+//  Guards, ordering (VNet first, trunk last), paced retries
+//  around locks and revisions, and the recorded failure
+//  reasons.
+//
+//  Covers src/network/teardown.ts. Run with `npm test` (the
+//  whole suite) inside the backend container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import { NetworkGroup } from "../src/types/network-groups";

@@ -1,3 +1,18 @@
+// -----------------------------------------------------------
+//  [*] Pages — Login
+//
+//  The entry point of the app: a card on the animated dot
+//  background offering password login (VU ID + password →
+//  POST /api/auth/login, then navigate home) and the VU SSO
+//  button, which is a plain link to /api/auth/sso — the
+//  backend redirects to the IdP from there. Arriving with
+//  ?error=sso_failed (the SSO callback's failure redirect)
+//  pre-fills the error alert.
+//
+//  Used by:
+//    - router.tsx — route /login
+// -----------------------------------------------------------
+
 import { useState } from "react";
 import { useNavigate, useSearchParams, Link as RouterLink } from "react-router-dom";
 import axios from "axios";
@@ -14,6 +29,7 @@ import { AnimatedBackground } from "@/components/AnimatedBackground";
 import { useColorMode } from "@/hooks/useColorMode";
 import knfLogo from "@/assets/knfLogoText.svg";
 
+
 export default function Login() {
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
@@ -26,6 +42,7 @@ export default function Login() {
             : null,
     );
     const [loading, setLoading] = useState(false);
+
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -45,6 +62,7 @@ export default function Login() {
         }
     };
 
+
     return (
         <div className="relative min-h-screen flex items-center justify-center bg-(--color-bg)">
             <AnimatedBackground />
@@ -63,6 +81,7 @@ export default function Login() {
                     borderRadius: 3,
                 }}
             >
+                {/* The logo SVG is white; light mode inverts it to black. */}
                 <Box sx={{ display: "flex", justifyContent: "center", mb: 3 }}>
                     <img
                         src={knfLogo}

@@ -1,3 +1,18 @@
+// -----------------------------------------------------------
+//  [*] Middleware — zod request validation
+//
+//  validateRequest({ body?, params?, query? }) builds a
+//  handler that parses each given section with its schema.
+//  All three are checked before answering, so one 400
+//  carries every flattened error at once — and on success
+//  the PARSED values replace the originals, so downstream
+//  handlers see coerced/defaulted data, not raw strings.
+//
+//  Used by:
+//    - every route file that declares schemas in
+//      types/validators/*.zod.ts
+// -----------------------------------------------------------
+
 import { RequestHandler } from "express";
 import z from "zod";
 
@@ -6,6 +21,7 @@ type ValidationSchemas = {
     params?: z.ZodType;
     query?: z.ZodType;
 };
+
 
 export const validateRequest = ({
     body,

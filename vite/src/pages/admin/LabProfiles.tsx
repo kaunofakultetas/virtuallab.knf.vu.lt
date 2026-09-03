@@ -1,3 +1,17 @@
+// -----------------------------------------------------------
+//  [*] Admin — lab profiles
+//
+//  The lab-profile CRUD page: a table of profiles (template
+//  and domain counts, the protected Default chip) and one
+//  dialog for both create and edit — `editing` null means
+//  create. Domains are edited as a growable row list; the
+//  backend re-validates them as strict hostnames, so this
+//  form only trims and lowercases.
+//
+//  Used by:
+//    - router.tsx — route /admin/lab-profiles
+// -----------------------------------------------------------
+
 import { useEffect, useState } from "react";
 import axios from "axios";
 import Alert from "@mui/material/Alert";
@@ -88,6 +102,8 @@ export default function LabProfiles() {
         void fetchData();
     }, []);
 
+
+    // The one dialog serves both flows: `editing` decides POST vs PATCH.
     const openCreate = () => {
         setEditing(null);
         setValues(emptyValues);

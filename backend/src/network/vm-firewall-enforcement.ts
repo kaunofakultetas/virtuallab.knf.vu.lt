@@ -1,16 +1,28 @@
+// -----------------------------------------------------------
+//  [*] Network — is the datacenter firewall actually on?
+//
+//  Per-VM rules are inert unless the cluster firewall is
+//  enabled — and nothing else would say so: every `.fw`
+//  file reads correct, every apply converges, and student
+//  VMs can simply reach each other. This check exists so a
+//  silent, total loss of same-segment isolation surfaces in
+//  the readiness report instead.
+//
+//  Used by:
+//    - readiness.ts — the vm-firewall-enforcement check
+// -----------------------------------------------------------
+
 import { ProxmoxFirewallOptions, ProxmoxFirewallRule } from "@/proxmox/types";
 import { ObservationStatus } from "./observations";
 
-/**
- * The host ports the orchestrator itself reaches through the `exit` forwarder:
- * the Proxmox API, and SSH for every restricted forced-command principal.
- *
- * These need explicit node rules. Proxmox's automatic management allowances are
- * scoped to the host's own management network, and the orchestrator reaches the
- * host from the isolated Docker network instead — so with the datacenter
- * firewall on and no rule here, the control plane is cut off while every guest
- * stays perfectly reachable, which is a confusing way to lose an orchestrator.
- */
+// The host ports the orchestrator itself reaches through the `exit` forwarder:
+// the Proxmox API, and SSH for every restricted forced-command principal.
+//
+// These need explicit node rules. Proxmox's automatic management allowances are
+// scoped to the host's own management network, and the orchestrator reaches the
+// host from the isolated Docker network instead — so with the datacenter
+// firewall on and no rule here, the control plane is cut off while every guest
+// stays perfectly reachable, which is a confusing way to lose an orchestrator.
 export const CONTROL_PLANE_PORTS = ["8006", "22"] as const;
 
 export type VmFirewallEnforcementClient = {
@@ -18,19 +30,29 @@ export type VmFirewallEnforcementClient = {
     getNodeFirewallRules(): Promise<ProxmoxFirewallRule[]>;
 };
 
-/**
- * Reports whether per-VM firewall policy is actually being enforced.
- *
- * The rendered guest rules are inert unless the datacenter firewall is enabled,
- * and nothing else would say so: every `.fw` file would read as correct, every
- * apply would converge, and student VMs would simply be able to reach each
- * other. A silent, total loss of same-segment isolation is exactly the kind of
- * failure a readiness report exists to surface.
- *
- * The control-plane rules are graded alongside it because enabling the firewall
- * without them is what actually happened in testing: the orchestrator lost the
- * Proxmox API and every restricted SSH channel at once.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// checkVmFirewallEnforcement
+// -----------------------------------------------------------
+//
+// Reports whether per-VM firewall policy is actually being
+// enforced: the cluster enable flag, plus the node rules
+// that keep the orchestrator's own control-plane ports open.
+// The control-plane grading is there because enabling the
+// firewall without those rules is what actually happened in
+// testing: the orchestrator lost the Proxmox API and every
+// restricted SSH channel at once.
+//
+// Used by:
+//   - readiness.ts
+// -----------------------------------------------------------
+
 export async function checkVmFirewallEnforcement(
     client: VmFirewallEnforcementClient,
 ): Promise<{ status: ObservationStatus; detail: string }> {

@@ -1,5 +1,19 @@
+// -----------------------------------------------------------
+//  [*] Scripts — create-admin (operator CLI)
+//
+//  Creates or resets an admin account. The password comes
+//  from ADMIN_PASSWORD in the environment, never an
+//  argument, so it stays out of shell history and process
+//  listings. Upserts: an existing account is promoted to
+//  admin with the new password.
+//
+//  Usage:
+//    ADMIN_PASSWORD=... npm run create-admin -- --vu-id <id>
+// -----------------------------------------------------------
+
 import bcrypt from "bcryptjs";
 import pg from "pg";
+
 
 function getVuId(): string {
     const args = process.argv.slice(2);
@@ -17,6 +31,7 @@ function getVuId(): string {
 
     return vuId;
 }
+
 
 async function main() {
     const vuId = getVuId();
@@ -47,6 +62,7 @@ async function main() {
         await client.end();
     }
 }
+
 
 void main().catch((err: Error) => {
     console.error(err.message);

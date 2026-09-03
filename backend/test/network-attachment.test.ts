@@ -1,3 +1,13 @@
+// -----------------------------------------------------------
+//  [*] Tests — network attachment resolution
+//
+//  Which bridge a VM gets per network mode, and the
+//  compensation split between planned and allocated groups.
+//
+//  Covers src/network/attachment.ts. Run with `npm test`
+//  (the whole suite) inside the backend container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import {

@@ -1,3 +1,15 @@
+// -----------------------------------------------------------
+//  [*] Types — network admin (API shapes)
+//
+//  Mirrors the /network/* responses the admin Network page
+//  renders: the readiness report, group summaries, the
+//  drift report, teardown outcomes, peerings and
+//  reconciliation attempts.
+//
+//  Used by:
+//    - pages/admin/Network.tsx, pages/admin/Settings.tsx
+// -----------------------------------------------------------
+
 export type NetworkMode = "legacy" | "dry-run" | "active";
 
 export type NetworkCheckStatus = "pass" | "fail" | "unobserved" | "not_applicable";
@@ -38,23 +50,17 @@ export interface NetworkGroupSummary {
     instance_count: number;
 }
 
-/**
- * The success shape of a network group release. A refusal never reaches the
- * client as a body -- the route answers those with 409 and an `error` string.
- */
 export type DriftComponent =
     | "gateway-policy"
     | "access-policy"
     | "access-trunk"
     | "vm-firewall";
 
-/**
- * The outcome of one observe-then-repair pass.
- *
- * `ran: false` is not an error -- the pass declines outside `active` mode, and
- * when another reconciliation already holds the lock. `failed` can be non-empty
- * alongside `repaired`: components are repaired independently.
- */
+// The outcome of one observe-then-repair pass.
+//
+// `ran: false` is not an error -- the pass declines outside `active` mode, and
+// when another reconciliation already holds the lock. `failed` can be non-empty
+// alongside `repaired`: components are repaired independently.
 export interface DriftReconciliationReport {
     ran: boolean;
     reason?: string;
@@ -63,6 +69,8 @@ export interface DriftReconciliationReport {
     failed: { component: DriftComponent; detail: string }[];
 }
 
+// The success shape of a network group release. A refusal never reaches the
+// client as a body -- the route answers those with 409 and an `error` string.
 export interface NetworkTeardownOutcome {
     released: true;
     vlan_tag: number;

@@ -1,3 +1,26 @@
+// -----------------------------------------------------------
+//  [*] Routes — auth: sessions, user admin, VU SSO
+//
+//  Mounted at /auth. Sessions are a JWT in an httpOnly
+//  strict-samesite cookie (24 h); "logout" just clears it —
+//  nothing is invalidated server-side. The SSO endpoints go
+//  live only when SAML is configured, answering 503
+//  otherwise.
+//
+//    GET    /auth                 — current session info
+//    POST   /auth/login           — password login → cookie
+//    POST   /auth/logout          — clear the cookie
+//    POST   /auth/change-password — self-service change
+//    POST   /auth/users           — bulk create (admin)
+//    GET    /auth/users           — list users (admin)
+//    GET    /auth/users/:vu_id    — one user (admin)
+//    DELETE /auth/users/:vu_id    — delete user (admin)
+//    PATCH  /auth/users/:vu_id    — password/role (admin)
+//    GET    /auth/sso             — redirect to the VU IdP
+//    POST   /auth/sso/callback    — SAML assertion consumer
+//    GET    /auth/saml/metadata   — SP metadata XML
+// -----------------------------------------------------------
+
 import { Users } from "@/controllers/users.controller";
 import { isAdmin, isAuthenticated } from "@/middleware/auth.middleware";
 import { validateRequest } from "@/middleware/zod-validation.middleware";
@@ -18,7 +41,26 @@ import jwt from "jsonwebtoken";
 
 const router = Router();
 
-// Return info about current session
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// GET /auth
+// -----------------------------------------------------------
+//
+// Who am I: the token's identity plus profile extras
+// (last_login, has_password — false for SSO-only accounts,
+// which hides the password-change UI).
+//
+// Used by:
+//   - AuthGuard.tsx — the session check on every page
+//   - PageLayout.tsx, Settings.tsx
+// -----------------------------------------------------------
+
 router.get("/", isAuthenticated, async (req, res) => {
     if (!req.user) {
         return res.status(401).json({ message: "Unauthorized" });
@@ -34,7 +76,25 @@ router.get("/", isAuthenticated, async (req, res) => {
     });
 });
 
-// Login with username and password, return JWT token
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// POST /auth/login
+// -----------------------------------------------------------
+//
+// Password login → 24 h JWT cookie. The response body also
+// carries the payload so the SPA can render without a
+// second round trip.
+//
+// Used by:
+//   - Login.tsx — the password form
+// -----------------------------------------------------------
+
 router.post(
     "/login",
     validateRequest({ body: loginSchema }),
@@ -74,7 +134,24 @@ router.post(
     },
 );
 
-// Logout, invalidate JWT token
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// POST /auth/logout
+// -----------------------------------------------------------
+//
+// Clears the cookie; the JWT itself stays valid until it
+// expires — there is no server-side revocation.
+//
+// Used by:
+//   - PageLayout.tsx — the logout button
+// -----------------------------------------------------------
+
 router.post("/logout", isAuthenticated, (req, res) => {
     res.clearCookie("token", {
         httpOnly: true,
@@ -83,7 +160,24 @@ router.post("/logout", isAuthenticated, (req, res) => {
     }).json({ message: "Logout successful" });
 });
 
-// Change password
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// POST /auth/change-password
+// -----------------------------------------------------------
+//
+// Re-proves the current password through the same login
+// path before writing the new one.
+//
+// Used by:
+//   - Settings.tsx — the password form
+// -----------------------------------------------------------
+
 router.post(
     "/change-password",
     isAuthenticated,
@@ -111,7 +205,26 @@ router.post(
     },
 );
 
-// Create user(s) (admin only)
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// POST /auth/users
+// -----------------------------------------------------------
+//
+// Bulk create, one result per requested user — a duplicate
+// fails alone without sinking the batch. Users without a
+// given password get a generated one, returned ONCE in this
+// response and never retrievable again.
+//
+// Used by:
+//   - admin/Users.tsx — the create-users dialog
+// -----------------------------------------------------------
+
 router.post(
     "/users",
     isAuthenticated,
@@ -159,7 +272,21 @@ router.post(
     },
 );
 
-// Get all users (admin only)
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// GET /auth/users
+// -----------------------------------------------------------
+//
+// Used by:
+//   - admin/Users.tsx — the users table
+// -----------------------------------------------------------
+
 router.get("/users", isAuthenticated, isAdmin, (req, res) => {
     Users.getAll()
         .then((users) => res.json(users))
@@ -169,7 +296,21 @@ router.get("/users", isAuthenticated, isAdmin, (req, res) => {
         });
 });
 
-// Get user by ID (admin only)
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// GET /auth/users/:vu_id
+// -----------------------------------------------------------
+//
+// Used by:
+//   - admin/Users.tsx
+// -----------------------------------------------------------
+
 router.get(
     "/users/:vu_id",
     isAuthenticated,
@@ -195,7 +336,24 @@ router.get(
     },
 );
 
-// Delete user (admin only)
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// DELETE /auth/users/:vu_id
+// -----------------------------------------------------------
+//
+// The heavyweight cascade lives in Users.delete: instances
+// first, then the DB row, then the Guacamole account.
+//
+// Used by:
+//   - admin/Users.tsx — the delete button
+// -----------------------------------------------------------
+
 router.delete(
     "/users/:vu_id",
     isAuthenticated,
@@ -215,7 +373,23 @@ router.delete(
     },
 );
 
-// Update user password and/or role (admin only)
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// PATCH /auth/users/:vu_id
+// -----------------------------------------------------------
+//
+// Admin sets a new password and/or role.
+//
+// Used by:
+//   - admin/Users.tsx — the edit dialog
+// -----------------------------------------------------------
+
 router.patch(
     "/users/:vu_id",
     isAuthenticated,
@@ -238,7 +412,24 @@ router.patch(
     },
 );
 
-// Initiate SAML login — redirects browser to IdP
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// GET /auth/sso
+// -----------------------------------------------------------
+//
+// Starts the SAML dance: redirects the browser to the VU
+// IdP with a login request.
+//
+// Used by:
+//   - Login.tsx — the "VU SSO" button
+// -----------------------------------------------------------
+
 router.get("/sso", (req, res) => {
     const saml = getSamlInstances();
     if (!saml) {
@@ -248,7 +439,27 @@ router.get("/sso", (req, res) => {
     res.redirect(context as string);
 });
 
-// SAML assertion consumer — IdP posts SAMLResponse here
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// POST /auth/sso/callback
+// -----------------------------------------------------------
+//
+// The assertion consumer the IdP posts back to. The user
+// identity is eduPersonTargetedID (opaque, persistent,
+// per-SP) with NameID as fallback; first login creates the
+// account. Failures redirect to /login with an error flag
+// rather than answering JSON — the browser is mid-redirect.
+//
+// Used by:
+//   - the VU IdP (sso.vu.lt) — never called by our own UI
+// -----------------------------------------------------------
+
 router.post(
     "/sso/callback",
     express.urlencoded({ extended: false }),
@@ -302,7 +513,23 @@ router.post(
     },
 );
 
-// Serve SP metadata XML for federation registration
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// GET /auth/saml/metadata
+// -----------------------------------------------------------
+//
+// The hand-built LITNET FEDI-compliant SP metadata XML.
+//
+// Used by:
+//   - the federation registry — fetched during registration
+// -----------------------------------------------------------
+
 router.get("/saml/metadata", (req, res) => {
     const saml = getSamlInstances();
     if (!saml) {
@@ -310,5 +537,12 @@ router.get("/saml/metadata", (req, res) => {
     }
     res.type("application/xml").send(buildSpMetadata(saml.signingCert));
 });
+
+
+
+
+
+
+
 
 export { router as authRouter };

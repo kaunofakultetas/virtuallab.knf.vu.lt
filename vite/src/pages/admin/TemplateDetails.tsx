@@ -1,3 +1,24 @@
+// -----------------------------------------------------------
+//  [*] Admin — one template's detail page
+//
+//  Renders the template the router loader fetched, with
+//  edit (TemplateFormDialog), validate (the Proxmox-side
+//  probe) and delete actions. A loader result cannot be
+//  refetched without navigating, so successful edits are
+//  kept in a local `overrides` map layered over the loader
+//  data.
+//
+//  openEditDialog and buildConnectionConfig translate both
+//  ways between the flat form values and the API's
+//  connection_config — the "creatorId"/"userId" modes are
+//  stored literally and resolved by the backend at session
+//  time.
+//
+//  Used by:
+//    - router.tsx — route /admin/templates/:id (with
+//      templateDetailsLoader)
+// -----------------------------------------------------------
+
 import { useMemo, useState } from "react";
 import { useLoaderData, useNavigate } from "react-router-dom";
 import axios from "axios";
@@ -25,6 +46,7 @@ import {
 
 const templateTypeOptions = ["student_vm", "lab_vm"];
 
+// The dialog's blank slate; openEditDialog overwrites it from the template.
 const emptyFormValues: TemplateFormValues = {
     name: "",
     type: "",
@@ -71,8 +93,12 @@ export default function TemplateDetails() {
         [editValues],
     );
 
+    // Local edits win over the (stale) loader data.
     const template = overrides[String(loaderTemplate.id)] ?? loaderTemplate;
 
+
+    // API config → form values. A stored credential that is neither
+    // placeholder reads back as "custom" with the literal value.
     const openEditDialog = () => {
         const cfg = template.connection_config ?? {};
         const connType = template.connection_type ?? "guacamole";
@@ -100,6 +126,9 @@ export default function TemplateDetails() {
         setEditOpen(true);
     };
 
+
+    // Form values → the connection_config the API stores; only the active
+    // connection type's fields are emitted.
     const buildConnectionConfig = (values: TemplateFormValues) => {
         const cfg: Record<string, unknown> = {};
         const resolveCredential = (mode: string, custom: string) =>

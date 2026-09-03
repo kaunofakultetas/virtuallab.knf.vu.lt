@@ -1,9 +1,36 @@
+// -----------------------------------------------------------
+//  [*] Routes — Guacamole admin view
+//
+//  Mounted at /guacamole. One read-only endpoint that
+//  flattens the Guacamole connection list for the admin UI.
+//
+//    GET /guacamole/connections — admin connection table
+// -----------------------------------------------------------
+
 import { guacamole } from "@/guacamole";
 import { isAdmin, isAuthenticated } from "@/middleware/auth.middleware";
 import { logger } from "@/utils/logger";
 import { Router } from "express";
 
 const router = Router();
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// GET /guacamole/connections
+// -----------------------------------------------------------
+//
+// The full connection list, flattened to the fields the
+// table shows (attributes unpacked, lastActive nullable).
+//
+// Used by:
+//   - admin/Guacamole.tsx — the connections table
+// -----------------------------------------------------------
 
 router.get("/connections", isAuthenticated, isAdmin, async (_req, res) => {
     try {
@@ -25,5 +52,12 @@ router.get("/connections", isAuthenticated, isAdmin, async (_req, res) => {
         return res.status(500).json({ error: "Failed to fetch connections" });
     }
 });
+
+
+
+
+
+
+
 
 export { router as guacamoleRouter };

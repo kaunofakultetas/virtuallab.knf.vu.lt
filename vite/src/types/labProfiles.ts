@@ -1,3 +1,14 @@
+// -----------------------------------------------------------
+//  [*] Types — lab profiles (API shapes)
+//
+//  Mirrors the backend's /lab-profiles responses; dates
+//  arrive as ISO strings.
+//
+//  Used by:
+//    - pages/admin/LabProfiles.tsx, pages/Instances.tsx,
+//      pages/admin/AdminInstances.tsx
+// -----------------------------------------------------------
+
 import type { Template } from "@/types/templates";
 
 export interface AllowedWebDomain {

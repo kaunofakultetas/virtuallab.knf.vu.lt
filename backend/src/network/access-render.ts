@@ -1,3 +1,19 @@
+// -----------------------------------------------------------
+//  [*] Network — rendering Access configuration files
+//
+//  AccessPlan → the literal file contents the Access
+//  applier installs: networkd units for the trunk parent
+//  and every VLAN subinterface, the sysctl file, and the
+//  nftables ruleset. Every file opens with the plan's
+//  revision comment — that comment IS the convergence
+//  signal drift checks look for.
+//
+//  Used by:
+//    - access-apply.ts — building the stage request
+//    - scripts/renderAccessConfiguration.ts — operator CLI
+//    - test/access-render.test.ts
+// -----------------------------------------------------------
+
 import { AccessPlan } from "./access-desired-state";
 
 export type RenderedAccessConfiguration = {
@@ -9,6 +25,9 @@ export type RenderedAccessConfiguration = {
     };
 };
 
+
+// nftables inline-set syntax: one value bare, several in braces. Empty is an
+// error — the callers must decide what emptiness means, never this.
 function nftSet(values: Array<string | number>): string {
     if (values.length === 0) {
         throw new Error("Cannot render an empty nftables set");
@@ -16,25 +35,42 @@ function nftSet(values: Array<string | number>): string {
     return values.length === 1 ? String(values[0]) : `{ ${values.join(", ")} }`;
 }
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// renderNetworkd
+// -----------------------------------------------------------
+//
+// One `.network` unit for the trunk parent plus a
+// .netdev/.network pair per VLAN interface.
+//
+// A whole `.network` unit for the parent, not a `.network.d`
+// drop-in: the drop-in this replaces worked only because
+// Proxmox happens to generate `eth1.network` for a
+// container NIC, and systemd-networkd reads `<name>.network.d/`
+// only beside a `<name>.network` that exists. That made a
+// PVE implementation detail — the filename it chooses —
+// load-bearing for every lab VLAN interface, with no signal
+// if it ever changed. The identical arrangement on the
+// Gateway was silently inert for exactly this reason. `50-`
+// sorts ahead of PVE's `eth1.network`, so this unit wins
+// while leaving PVE's own file untouched.
+//
+// Used by:
+//   - renderAccessConfiguration (below)
+// -----------------------------------------------------------
+
 function renderNetworkd(plan: AccessPlan): Record<string, string> {
     const interfaces = plan.desired_state.transport.interfaces;
     if (interfaces.length === 0) {
         return {};
     }
 
-    // A whole `.network` unit for the trunk parent, not a `.network.d` drop-in.
-    //
-    // The drop-in this replaces worked only because Proxmox happens to generate
-    // `/etc/systemd/network/eth1.network` for a container NIC, and
-    // systemd-networkd reads `<name>.network.d/` only beside a `<name>.network`
-    // that exists. That made a PVE implementation detail -- the filename it
-    // chooses -- load-bearing for every lab VLAN interface, with no signal if it
-    // ever changed. The identical arrangement on the Gateway was silently inert
-    // for exactly this reason, because nothing there generated the base file at
-    // all.
-    //
-    // `50-` sorts ahead of PVE's `eth1.network`, so this unit wins while leaving
-    // PVE's own file untouched.
     const parent = plan.desired_state.transport.parent_interface;
     const files: Record<string, string> = {
         [`/etc/systemd/network/50-virtual-lab-${parent}.network`]: [
@@ -80,6 +116,24 @@ function renderNetworkd(plan: AccessPlan): Record<string, string> {
     return files;
 }
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// renderSysctl
+// -----------------------------------------------------------
+//
+// IPv4 forwarding on, IPv6 off at every level — and refuses
+// to render at all for a plan that claims IPv6.
+//
+// Used by:
+//   - renderAccessConfiguration (below)
+// -----------------------------------------------------------
+
 function renderSysctl(plan: AccessPlan): string {
     if (plan.desired_state.ipv6_enabled) {
         throw new Error("Access rendering requires IPv6 to remain disabled");
@@ -93,6 +147,29 @@ function renderSysctl(plan: AccessPlan): string {
         "",
     ].join("\n");
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// renderNftables
+// -----------------------------------------------------------
+//
+// The managed table: a prerouting chain protecting the
+// published Guacamole ports, and a policy-drop forward
+// chain that admits only established/related, the published
+// service path, and Docker-to-lab over the VLAN interfaces.
+// The long inline comments carry the two load-bearing
+// decisions (self-contained load; the explicit zero-group
+// branch).
+//
+// Used by:
+//   - renderAccessConfiguration (below)
+// -----------------------------------------------------------
 
 function renderNftables(plan: AccessPlan): string {
     const desired = plan.desired_state;
@@ -164,6 +241,25 @@ function renderNftables(plan: AccessPlan): string {
     );
     return rules.join("\n");
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// renderAccessConfiguration
+// -----------------------------------------------------------
+//
+// The full render. Refuses a plan with VLANs but no
+// observed Docker bridges: that ruleset would cut Guacamole
+// off from every lab VM.
+//
+// Used by:
+//   - access-apply.ts, scripts/renderAccessConfiguration.ts
+// -----------------------------------------------------------
 
 export function renderAccessConfiguration(plan: AccessPlan): RenderedAccessConfiguration {
     if (

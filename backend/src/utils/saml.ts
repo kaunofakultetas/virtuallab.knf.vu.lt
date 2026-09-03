@@ -1,6 +1,26 @@
+// -----------------------------------------------------------
+//  [*] Utils — SAML service provider for VU SSO
+//
+//  The samlify glue for logging in through the university's
+//  IdP (sso.vu.lt). SAML is opt-in: initSaml() is a no-op
+//  unless SAML_SP_ENTITY_ID is set, and then the remaining
+//  env vars (ACS URL, SP key/cert paths) become mandatory.
+//  IdP metadata is fetched from VU at boot, so a failed
+//  fetch fails startup rather than the first login.
+//
+//  Used by:
+//    - index.ts — initSaml() on boot
+//    - auth.route.ts — getSamlInstances() for the login
+//      redirect and ACS callback, buildSpMetadata() for the
+//      published SP metadata endpoint
+// -----------------------------------------------------------
+
 import * as samlify from "samlify";
 import fs from "fs";
 
+// samlify refuses to parse responses unless a schema validator is registered;
+// this registers a pass-through. Assertion signatures are still enforced
+// through wantAssertionsSigned below.
 samlify.setSchemaValidator({ validate: (_xml: string) => Promise.resolve() });
 
 type SamlInstances = {
@@ -9,7 +29,29 @@ type SamlInstances = {
     signingCert: string;
 };
 
+// null until initSaml() succeeds — auth.route.ts treats that as "SSO disabled".
 let instances: SamlInstances | null = null;
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// initSaml
+// -----------------------------------------------------------
+//
+// Builds the SP (our side) from the local key/cert and the
+// IdP (VU's side) from its live metadata, and publishes them
+// through getSamlInstances(). Returns silently when SAML is
+// not configured at all; throws when it is configured but
+// incompletely.
+//
+// Used by:
+//   - index.ts — once on boot
+// -----------------------------------------------------------
 
 export async function initSaml(): Promise<void> {
     if (!process.env.SAML_SP_ENTITY_ID) return;
@@ -51,13 +93,49 @@ export async function initSaml(): Promise<void> {
     instances = { sp, idp, signingCert };
 }
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// getSamlInstances
+// -----------------------------------------------------------
+//
+// The initialised SP/IdP pair, or null while SAML is
+// disabled or not yet initialised.
+//
+// Used by:
+//   - auth.route.ts — every SSO endpoint
+// -----------------------------------------------------------
+
 export function getSamlInstances(): SamlInstances | null {
     return instances;
 }
 
-// Builds a LITNET FEDI-compliant SP metadata XML.
-// samlify's getMetadata() omits UIInfo, Organization, ContactPerson,
-// NameIDFormat, and RequestedAttribute — all required by the spec.
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// buildSpMetadata
+// -----------------------------------------------------------
+//
+// Builds a LITNET FEDI-compliant SP metadata XML by hand:
+// samlify's getMetadata() omits UIInfo, Organization,
+// ContactPerson, NameIDFormat and RequestedAttribute — all
+// required by the spec.
+//
+// Used by:
+//   - auth.route.ts — the SP metadata endpoint the
+//     federation reads
+// -----------------------------------------------------------
+
 export function buildSpMetadata(signingCert: string): string {
     const entityID = process.env.SAML_SP_ENTITY_ID!;
     const acsUrl = process.env.SAML_ACS_URL!;

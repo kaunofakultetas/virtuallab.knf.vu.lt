@@ -1,3 +1,18 @@
+// -----------------------------------------------------------
+//  [*] Routes — lab profiles
+//
+//  Mounted at /lab-profiles. The listing is the only
+//  student-reachable endpoint (students get a filtered
+//  view); everything else is admin CRUD delegating to the
+//  LabProfiles DAO.
+//
+//    GET    /lab-profiles     — list (students: filtered)
+//    GET    /lab-profiles/:id — one profile (admin)
+//    POST   /lab-profiles     — create (admin)
+//    PATCH  /lab-profiles/:id — update (admin)
+//    DELETE /lab-profiles/:id — delete (admin, non-default)
+// -----------------------------------------------------------
+
 import { LabProfiles } from "@/controllers/lab-profiles.controller";
 import { isAdmin, isAuthenticated } from "@/middleware/auth.middleware";
 import { validateRequest } from "@/middleware/zod-validation.middleware";
@@ -15,6 +30,25 @@ import { Router } from "express";
 
 const router = Router();
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// GET /lab-profiles
+// -----------------------------------------------------------
+//
+// Admins see everything; a non-admin caller gets only
+// profiles with student-visible templates.
+//
+// Used by:
+//   - Instances.tsx — the create-instance profile picker
+//   - admin/LabProfiles.tsx, admin/AdminInstances.tsx
+// -----------------------------------------------------------
+
 router.get("/", isAuthenticated, async (req, res) => {
     try {
         const profiles = await LabProfiles.getAll(req.user?.role !== "admin");
@@ -24,6 +58,21 @@ router.get("/", isAuthenticated, async (req, res) => {
         return res.status(500).json({ error: "Failed to fetch lab profiles" });
     }
 });
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// GET /lab-profiles/:id
+// -----------------------------------------------------------
+//
+// Used by:
+//   - admin/LabProfiles.tsx
+// -----------------------------------------------------------
 
 router.get(
     "/:id",
@@ -43,6 +92,21 @@ router.get(
     },
 );
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// POST /lab-profiles
+// -----------------------------------------------------------
+//
+// Used by:
+//   - admin/LabProfiles.tsx — the create dialog
+// -----------------------------------------------------------
+
 router.post(
     "/",
     isAuthenticated,
@@ -60,6 +124,21 @@ router.post(
         }
     },
 );
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// PATCH /lab-profiles/:id
+// -----------------------------------------------------------
+//
+// Used by:
+//   - admin/LabProfiles.tsx — the edit dialog
+// -----------------------------------------------------------
 
 router.patch(
     "/:id",
@@ -84,6 +163,26 @@ router.patch(
         }
     },
 );
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// DELETE /lab-profiles/:id
+// -----------------------------------------------------------
+//
+// Three outcomes from the DAO map to three statuses: 404
+// unknown, 409 for the protected default profile, 204 done.
+// The catch-all 409 covers FK violations — a profile still
+// referenced by live network groups.
+//
+// Used by:
+//   - admin/LabProfiles.tsx — the delete button
+// -----------------------------------------------------------
 
 router.delete(
     "/:id",
@@ -110,5 +209,12 @@ router.delete(
         }
     },
 );
+
+
+
+
+
+
+
 
 export { router as labProfilesRouter };

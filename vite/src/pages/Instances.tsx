@@ -1,3 +1,21 @@
+// -----------------------------------------------------------
+//  [*] Pages — My Instances
+//
+//  The student's VM table, polled every 10 s (state only
+//  updates when a row actually changed, so the table does
+//  not re-render on every tick). Row actions follow the
+//  status: connect / copy-IP / reboot / stop while running,
+//  start while stopped, renew and delete always. Connect
+//  branches on the session type: "web" sets the
+//  webTargetMachine cookie and opens the :8888 proxy,
+//  anything else opens the Guacamole URL. The create dialog
+//  offers profile → template (auto-selected when only one
+//  exists) and shows the 429 VM-limit answer as a warning.
+//
+//  Used by:
+//    - router.tsx — route /instances
+// -----------------------------------------------------------
+
 import { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import Box from "@mui/material/Box";
@@ -143,6 +161,8 @@ export default function Instances() {
     const selectedProfile = profiles.find(({ id }) => id === selectedProfileId);
     const availableTemplates = selectedProfile?.templates ?? [];
 
+
+    // Per-row busy latch, so one instance's action never disables another's.
     const withAction = async (
         instanceId: string,
         action: () => Promise<void>,

@@ -1,30 +1,44 @@
+// -----------------------------------------------------------
+//  [*] Scripts — release-network-group (operator CLI)
+//
+//  Operator entry point for releasing a network group's
+//  VLAN and subnet. Provisioning drives teardown
+//  automatically when the last VM is deleted; this exists
+//  for the case that path leaves behind: a teardown that
+//  failed part-way puts the group in `deleting` with its
+//  allocation still reserved, deliberately, and something
+//  has to be able to resume it. Teardown is idempotent, so
+//  a retry simply continues from wherever the previous
+//  attempt stopped.
+//
+//  It refuses a group that still has instances, and one
+//  whose VNet is still referenced by a guest, so it cannot
+//  be used to strip a live lab. The admin Network page
+//  drives the same teardown over HTTP; this survives when
+//  the API is down.
+//
+//  Usage:
+//    npm run release-network-group -- --group-id <id>
+//      --requested-by <vu_id> --confirm RELEASE-NETWORK-GROUP
+// -----------------------------------------------------------
+
 import { pool } from "@/utils/db";
 import { NetworkGroup } from "@/types/network-groups";
 import { NetworkTeardownError, releaseNetworkGroup } from "@/network/teardown";
 import { z } from "zod";
 
-/**
- * Operator entry point for releasing a network group's VLAN and subnet.
- *
- * Provisioning drives teardown automatically when the last VM is deleted. This
- * exists for the case that path leaves behind: a teardown that failed part-way
- * puts the group in `deleting` with its allocation still reserved, deliberately,
- * and something has to be able to resume it. Teardown is idempotent, so a retry
- * simply continues from wherever the previous attempt stopped.
- *
- * It refuses a group that still has instances, and it refuses one whose VNet is
- * still referenced by a guest, so it cannot be used to strip a live lab.
- */
 const argumentsSchema = z.object({
     groupId: z.coerce.number().int().positive(),
     requestedBy: z.string().min(1),
     confirmation: z.literal("RELEASE-NETWORK-GROUP"),
 });
 
+
 function option(name: string): string | undefined {
     const index = process.argv.indexOf(name);
     return index >= 0 ? process.argv[index + 1] : undefined;
 }
+
 
 async function main(): Promise<void> {
     const parsed = argumentsSchema.safeParse({
@@ -53,6 +67,7 @@ async function main(): Promise<void> {
         await pool.end();
     }
 }
+
 
 main().catch((error: unknown) => {
     if (error instanceof NetworkTeardownError) {

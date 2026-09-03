@@ -1,3 +1,13 @@
+// -----------------------------------------------------------
+//  [*] Tests — VNet apply execution and compensation
+//
+//  Snapshot, execute, converge — and the compensation that
+//  restores pre-apply state on failure.
+//
+//  Covers src/network/infrastructure-apply.ts. Run with `npm
+//  test` (the whole suite) inside the backend container.
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import {

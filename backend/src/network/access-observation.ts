@@ -1,3 +1,20 @@
+// -----------------------------------------------------------
+//  [*] Network — grading an Access observation
+//
+//  Validates the JSON the Access guest collector produced
+//  (strictly — an observation that does not parse is not an
+//  observation) and compares it against the Access plan:
+//  management address, VLAN interfaces, Docker bridges,
+//  service bindings and their client sources, sysctls, and
+//  the nftables revision comment. `ready` demands every
+//  check pass AND an empty collector error list.
+//
+//  Used by:
+//    - adapters/access.ts — turns the drift report into
+//      reconciliation checks
+//    - test/access-observation.test.ts
+// -----------------------------------------------------------
+
 import { isIP } from "node:net";
 import z from "zod";
 import { AccessPlan } from "./access-desired-state";
@@ -10,6 +27,7 @@ const ipv4CidrSchema = z.string().refine((cidr) => {
 
 const ipv4Schema = z.string().refine((address) => isIP(address) === 4, "Invalid IPv4 address");
 
+// The exact document infra/access/observe_access.py emits.
 export const accessObservationSchema = z.object({
     version: z.literal(1),
     captured_at: z.iso.datetime(),
@@ -54,17 +72,21 @@ export type AccessDriftReport = {
     observation_errors: string[];
 };
 
+
 function sorted(values: string[]): string[] {
     return [...new Set(values)].sort();
 }
+
 
 function sameValues(left: string[], right: string[]): boolean {
     return JSON.stringify(sorted(left)) === JSON.stringify(sorted(right));
 }
 
+
 function interfaceAddresses(observation: AccessObservation, name: string): string[] {
     return observation.interfaces.find((networkInterface) => networkInterface.name === name)?.addresses ?? [];
 }
+
 
 function cidrContainsAddress(cidr: string, address: string): boolean {
     const [network, prefixText] = cidr.split("/");
@@ -76,6 +98,27 @@ function cidrContainsAddress(cidr: string, address: string): boolean {
     const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
     return (toNumber(network) & mask) === (toNumber(address) & mask);
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// compareAccessObservation
+// -----------------------------------------------------------
+//
+// The comparison itself. Notable gradings: a service port
+// with NO captured connections is `unobserved` rather than
+// pass/fail (nothing to judge), and the legacy transport
+// parent must carry NO address — its transport moved onto
+// the VLAN subinterfaces.
+//
+// Used by:
+//   - adapters/access.ts
+// -----------------------------------------------------------
 
 export function compareAccessObservation(
     plan: AccessPlan,

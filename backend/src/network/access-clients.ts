@@ -1,3 +1,30 @@
+// -----------------------------------------------------------
+//  [*] Network — the three Access SSH channels
+//
+//  Construction of the Access observer and both appliers,
+//  kept in one place so the read-only and mutating
+//  principals cannot drift apart. The Gateway equivalent
+//  lives in gateway-clients.ts and follows the same rules.
+//
+//  They are separate keys with separate forced commands on
+//  purpose: the observer cannot change anything, neither
+//  applier can be used to read arbitrary state, and the two
+//  appliers are separated from each other because they
+//  mutate different things — the guest's files versus the
+//  hypervisor's NIC. An apply proves convergence through
+//  the observer channel precisely because it is a different
+//  key on a different connection.
+//
+//  Identity and known-hosts paths must be absolute: a
+//  relative path would resolve against whatever the process
+//  working directory happens to be.
+//
+//  Used by:
+//    - network.route.ts, readiness.ts, drift-reconciler.ts,
+//      teardown.ts, provisioning-network.ts
+//    - scripts/applyAccessPolicy.ts, applyAccessTrunk.ts
+// -----------------------------------------------------------
+
 import { z } from "zod";
 import { AccessApplyClient, RestrictedSshAccessApplyClient } from "./access-apply";
 import {
@@ -9,22 +36,6 @@ import {
     RestrictedSshAccessObservationClient,
 } from "./adapters/access";
 import { RestrictedSshTransport } from "./adapters/restricted-ssh";
-
-/**
- * Construction of the three Access SSH channels, kept in one place so the
- * read-only and mutating principals cannot drift apart. The Gateway equivalent
- * lives in `gateway-clients.ts` and follows the same rules.
- *
- * They are separate keys with separate forced commands on purpose: the observer
- * cannot change anything, neither applier can be used to read arbitrary state,
- * and the two appliers are separated from each other because they mutate
- * different things — the guest's files versus the hypervisor's NIC. An apply
- * proves convergence through the observer channel precisely because it is a
- * different key on a different connection.
- *
- * Identity and known-hosts paths must be absolute: a relative path would resolve
- * against whatever the process working directory happens to be.
- */
 
 const observerConfigSchema = z.object({
     ACCESS_OBSERVER_HOST: z.string().min(1),
@@ -63,16 +74,33 @@ export class AccessClientConfigurationError extends Error {
     }
 }
 
+
 function missingKeys(error: z.ZodError): string[] {
     return [...new Set(error.issues.map((issue) => issue.path.join(".")))].sort();
 }
 
-/**
- * Throws when unconfigured rather than returning null. Unlike the Gateway
- * observer, whose absence merely drops some dry-run checks, Access observation
- * is what every Access apply proves itself against — a stack that cannot observe
- * must not be allowed to look like one that observed nothing wrong.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// createAccessObserver
+// -----------------------------------------------------------
+//
+// Throws when unconfigured rather than returning null.
+// Unlike the Gateway observer, whose absence merely drops
+// some dry-run checks, Access observation is what every
+// Access apply proves itself against — a stack that cannot
+// observe must not be allowed to look like one that
+// observed nothing wrong.
+//
+// Used by:
+//   - network.route.ts, readiness.ts, drift-reconciler.ts
+// -----------------------------------------------------------
+
 export function createAccessObserver(
     environment: NodeJS.ProcessEnv = process.env,
 ): AccessObservationClient {
@@ -94,11 +122,26 @@ export function createAccessObserver(
     }));
 }
 
-/**
- * The guest policy applier. Throws when unconfigured, because every caller is an
- * explicit mutation request and silently doing nothing would be worse than
- * refusing.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// createAccessApplier
+// -----------------------------------------------------------
+//
+// The guest policy applier. Throws when unconfigured,
+// because every caller is an explicit mutation request and
+// silently doing nothing would be worse than refusing.
+//
+// Used by:
+//   - provisioning-network.ts, teardown.ts,
+//     drift-reconciler.ts, scripts/applyAccessPolicy.ts
+// -----------------------------------------------------------
+
 export function createAccessApplier(
     environment: NodeJS.ProcessEnv = process.env,
 ): AccessApplyClient {
@@ -123,11 +166,27 @@ export function createAccessApplier(
     }));
 }
 
-/**
- * The hypervisor-side trunk applier. Separate from the policy applier because it
- * runs entirely on the Proxmox host — `pct set` and `bridge vlan` — and never
- * enters the container.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// createAccessTrunkApplier
+// -----------------------------------------------------------
+//
+// The hypervisor-side trunk applier. Separate from the
+// policy applier because it runs entirely on the Proxmox
+// host — `pct set` and `bridge vlan` — and never enters the
+// container.
+//
+// Used by:
+//   - provisioning-network.ts, teardown.ts,
+//     drift-reconciler.ts, scripts/applyAccessTrunk.ts
+// -----------------------------------------------------------
+
 export function createAccessTrunkApplier(
     environment: NodeJS.ProcessEnv = process.env,
 ): AccessTrunkApplyClient {

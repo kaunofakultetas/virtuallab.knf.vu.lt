@@ -1,7 +1,26 @@
+// -----------------------------------------------------------
+//  [*] Components — the flipping theme toggle
+//
+//  A 3D card flip between a sun face and a moon face,
+//  driven by the shared color mode. `onDark` restyles both
+//  faces for placement on the burgundy navbar, where the
+//  normal surface colors would vanish.
+//
+//  Split into (root component first — Face is its private
+//  half):
+//
+//    ThemeToggle — the button (rotates on mode)
+//    Face        — one side of the flipping card
+//
+//  Used by:
+//    - Navbar.tsx (onDark), Login.tsx
+// -----------------------------------------------------------
+
 import { ButtonBase, Box, Tooltip } from "@mui/material";
 import LightModeOutlinedIcon from "@mui/icons-material/LightModeOutlined";
 import DarkModeOutlinedIcon from "@mui/icons-material/DarkModeOutlined";
 import { useColorMode } from "@/hooks/useColorMode";
+
 
 export function ThemeToggle({ onDark = false }: { onDark?: boolean }) {
     const { mode, toggle } = useColorMode();
@@ -30,6 +49,7 @@ export function ThemeToggle({ onDark = false }: { onDark?: boolean }) {
                     "&:hover .face-back svg": { transform: "rotate(-12deg)" },
                 }}
             >
+                {/* The rotating card — the two faces sit back to back inside. */}
                 <Box
                     sx={{
                         position: "relative",
@@ -64,6 +84,24 @@ export function ThemeToggle({ onDark = false }: { onDark?: boolean }) {
         </Tooltip>
     );
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// Face
+// -----------------------------------------------------------
+//
+// One side of the card; `back` pre-rotates it 180° so the
+// parent's flip brings it into view.
+//
+// Used by:
+//   - ThemeToggle (above)
+// -----------------------------------------------------------
 
 function Face({
     children,

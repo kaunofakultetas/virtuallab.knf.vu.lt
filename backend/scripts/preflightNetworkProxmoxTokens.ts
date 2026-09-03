@@ -1,3 +1,18 @@
+// -----------------------------------------------------------
+//  [*] Scripts — preflight-network-tokens (operator CLI)
+//
+//  Proves the two network Proxmox tokens hold exactly the
+//  privileges the design assumes, by exercising them: the
+//  observer must read SDN but be refused a write, the
+//  mutator must create/apply/delete a disposable VNet but
+//  be unable to enumerate VMs or storage. Any assertion
+//  failure is a mis-scoped token, caught before the first
+//  real reconciliation runs.
+//
+//  Usage:
+//    npm run preflight-network-tokens   (env vars only)
+// -----------------------------------------------------------
+
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { Agent, request as httpRequest } from "undici";
@@ -7,11 +22,13 @@ type RequestResult = {
     body: unknown;
 };
 
+
 function requiredEnvironment(name: string): string {
     const value = process.env[name]?.trim();
     if (!value) throw new Error(`Missing ${name}`);
     return value;
 }
+
 
 const configuredBaseUrl = requiredEnvironment("PROXMOX_BASE_URL").replace(/\/$/, "");
 const baseUrl = configuredBaseUrl.endsWith("/api2/json")
@@ -29,6 +46,7 @@ const dispatcher = new Agent({
         rejectUnauthorized: process.env.PROXMOX_TLS_INSECURE !== "true",
     },
 });
+
 
 async function request(
     token: string,
@@ -49,6 +67,7 @@ async function request(
     return { status: response.statusCode, body };
 }
 
+
 // Proxmox list endpoints do not answer 403 for an unprivileged token; they
 // answer 200 with the result set filtered down to what the token may see. A
 // bare status check would therefore read as an escalation when none exists.
@@ -59,10 +78,12 @@ function entryCount(result: RequestResult): number {
     return Array.isArray(data) ? data.length : 0;
 }
 
+
 function isDenied(result: RequestResult): boolean {
     if (result.status === 403) return true;
     return result.status === 200 && entryCount(result) === 0;
 }
+
 
 async function main(): Promise<void> {
     let created = false;
@@ -136,6 +157,7 @@ async function main(): Promise<void> {
         }
     }
 }
+
 
 main().catch((error) => {
     console.error(error instanceof Error ? error.message : "Network token preflight failed");

@@ -1,3 +1,17 @@
+// -----------------------------------------------------------
+//  [*] Network — executing VNet actions with compensation
+//
+//  The executor half of a VNet apply: snapshot the touched
+//  VNets, run the mutations, poll until Proxmox observably
+//  converges, and on failure restore the snapshot — with
+//  the attempt record checkpointed through every phase so
+//  the audit trail shows exactly how far things got.
+//
+//  Used by:
+//    - infrastructure-apply-runner.ts — after planning
+//    - test/infrastructure-apply.test.ts
+// -----------------------------------------------------------
+
 import {
     executeProxmoxVnetActions,
     ProxmoxVnetMutationAction,
@@ -62,13 +76,16 @@ export class ProxmoxVnetCompensationError extends Error {
     }
 }
 
+// What each touched VNet looked like before the apply; null = did not exist.
 type VnetSnapshot = Map<string, ProxmoxSdnVnet | null>;
+
 
 function matches(vnet: ProxmoxSdnVnet | undefined, desired: ProxmoxSdnVnet): boolean {
     return vnet?.vnet === desired.vnet
         && vnet.zone === desired.zone
         && vnet.tag === desired.tag;
 }
+
 
 function convergenceOptions(dependencies: InfrastructureApplyDependencies) {
     const attempts = dependencies.convergence?.attempts ?? 5;
@@ -83,6 +100,7 @@ function convergenceOptions(dependencies: InfrastructureApplyDependencies) {
     return { attempts, intervalMs, sleep };
 }
 
+
 async function observeVnets(
     dependencies: InfrastructureApplyDependencies,
 ): Promise<ProxmoxSdnVnet[]> {
@@ -92,6 +110,26 @@ async function observeVnets(
         throw new ProxmoxVnetObservationError();
     }
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// snapshotVnets
+// -----------------------------------------------------------
+//
+// Captures pre-apply state for compensation, and refuses an
+// apply whose actions no longer match reality (a create
+// over an existing VNet, an update over a missing one) —
+// the plan is stale and must be rebuilt, not forced.
+//
+// Used by:
+//   - applyProxmoxVnetActions (below)
+// -----------------------------------------------------------
 
 async function snapshotVnets(
     mutations: ProxmoxVnetMutationAction[],
@@ -118,6 +156,7 @@ async function snapshotVnets(
     return snapshot;
 }
 
+
 function convergenceChecks(
     mutations: ProxmoxVnetMutationAction[],
     observedVnets: Awaited<ReturnType<ProxmoxVnetObservationClient["getSdnVnets"]>>,
@@ -138,6 +177,28 @@ function convergenceChecks(
         };
     });
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// compensateVnets
+// -----------------------------------------------------------
+//
+// Restores the snapshot in reverse order — deleting what
+// this apply created, putting back what it changed — but
+// ONLY where the current state is recognisably this apply's
+// work: anything else means a third party wrote in between,
+// and overwriting them would compound the damage. Ends by
+// polling until the restoration is observable.
+//
+// Used by:
+//   - applyProxmoxVnetActions (below) — on failure
+// -----------------------------------------------------------
 
 async function compensateVnets(
     mutations: ProxmoxVnetMutationAction[],
@@ -190,6 +251,9 @@ async function compensateVnets(
     throw new ProxmoxVnetCompensationError();
 }
 
+
+// Persisted actions arrive as loose JSON; validate the shape before letting
+// one anywhere near a mutation.
 function toProxmoxVnetMutationAction(action: ReconciliationAction): ProxmoxVnetMutationAction {
     if (action.component !== "proxmox-vnet") {
         throw new Error(`Apply does not support ${action.component} actions`);
@@ -219,6 +283,28 @@ function toProxmoxVnetMutationAction(action: ReconciliationAction): ProxmoxVnetM
         },
     };
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// applyProxmoxVnetActions
+// -----------------------------------------------------------
+//
+// The full execution: validate actions, snapshot, execute
+// with per-action checkpoints, poll convergence (each poll
+// rewrites the convergence checks in the attempt), then
+// finish. On failure, compensation runs only for mutations
+// that actually started; its own success or failure becomes
+// a check and the attempt's final phase.
+//
+// Used by:
+//   - infrastructure-apply-runner.ts
+// -----------------------------------------------------------
 
 export async function applyProxmoxVnetActions(
     attempt: ReconciliationAttempt,

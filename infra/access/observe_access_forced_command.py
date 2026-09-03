@@ -1,4 +1,25 @@
 #!/usr/bin/env python3
+############################################################
+#  [*] Access observe — forced command on the Proxmox host
+#
+#  The read-only half of Access reconciliation: reads LXC
+#  200's config through pvesh, verifies the LXC is running,
+#  reads the host veth's tagged VLAN membership, and runs
+#  the checked-in guest collector (observe_access.py)
+#  through `pct exec` — all in answer to one fixed, bounded
+#  observation request. No mutation operation, no caller-
+#  controlled command dispatch.
+#
+#  Runs behind a `restrict,command=` authorized_keys entry
+#  with PROXMOX_NODE_NAME pinned in the entry itself. Reads
+#  JSON on stdin, answers JSON on stdout.
+#
+#  Used by:
+#    - backend access-clients.ts createAccessObserver — the
+#      read-only SSH principal for reconciliation dry-runs
+#    - test_observe_access_forced_command.py — the parsers
+############################################################
+
 
 import datetime
 import json
@@ -17,6 +38,23 @@ MAX_REQUEST_BYTES = 4096
 PROXMOX_NODE_NAME = os.environ.get("PROXMOX_NODE_NAME", "")
 
 
+
+
+
+
+
+
+############################################################
+# run
+############################################################
+#
+# The shared subprocess wrapper: check=True, captured text
+# output, a hard 12 s timeout on every host command.
+#
+# Used by:
+#   - main (below)
+############################################################
+
 def run(command: list[str], *, input_text: str | None = None) -> str:
     result = subprocess.run(
         command,
@@ -28,6 +66,25 @@ def run(command: list[str], *, input_text: str | None = None) -> str:
     )
     return result.stdout
 
+
+
+
+
+
+
+
+############################################################
+# parse_request
+############################################################
+#
+# Accepts exactly one request shape — the fixed observe call
+# with a strict UUID request ID — and rejects any extra or
+# missing field by name-set comparison.
+#
+# Used by:
+#   - main (below)
+#   - test_observe_access_forced_command.py
+############################################################
 
 def parse_request(raw: bytes) -> dict[str, Any]:
     if len(raw) > MAX_REQUEST_BYTES:
@@ -45,6 +102,27 @@ def parse_request(raw: bytes) -> dict[str, Any]:
         raise ValueError("invalid request ID")
     return request
 
+
+
+
+
+
+
+
+############################################################
+# parse_net1
+############################################################
+#
+# The LXC's net1 property string → a structured view of the
+# fields reconciliation cares about. Stricter than the
+# guest-side parsers: a malformed or duplicate field is an
+# error here, because this is the desired-state side of the
+# diff.
+#
+# Used by:
+#   - main (below)
+#   - test_observe_access_forced_command.py
+############################################################
 
 def parse_net1(value: str) -> dict[str, Any]:
     fields: dict[str, str] = {}
@@ -67,6 +145,26 @@ def parse_net1(value: str) -> dict[str, Any]:
     }
 
 
+
+
+
+
+
+
+############################################################
+# parse_bridge_vlans
+############################################################
+#
+# `bridge -j vlan show` → the veth's tagged VLAN list. The
+# PVID / Egress Untagged filter here is the ONLY place VLAN
+# 1 is stripped from the live view — the backend planner
+# never sees it, so it can never plan to remove it.
+#
+# Used by:
+#   - main (below)
+#   - test_observe_access_forced_command.py
+############################################################
+
 def parse_bridge_vlans(output: str) -> list[int]:
     entries = json.loads(output)
     matching = [entry for entry in entries if entry.get("ifname") == HOST_VETH]
@@ -83,10 +181,37 @@ def parse_bridge_vlans(output: str) -> list[int]:
     return sorted(set(vlans))
 
 
+
+
+
+
+
+
+############################################################
+# main
+############################################################
+#
+# One observation round trip: config via pvesh (digest and
+# net1 both mandatory), running check, live bridge VLANs,
+# then the guest collector piped into `pct exec python3 -`
+# so the guest never holds a copy. Any failure is fatal —
+# a partial observation is not an observation.
+#
+# Used by:
+#   - the __main__ guard
+############################################################
+
 def main() -> None:
+    # STEP 1: validate the request and the pinned node name
+    # =====================================================
     request = parse_request(sys.stdin.buffer.read(MAX_REQUEST_BYTES + 1))
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]{0,62}", PROXMOX_NODE_NAME):
         raise ValueError("PROXMOX_NODE_NAME is missing or malformed")
+
+
+    # STEP 2: the Proxmox-owned half — config digest, net1,
+    # running status, live bridge VLANs
+    # =====================================================
     config = json.loads(run([
         "pvesh", "get", f"/nodes/{PROXMOX_NODE_NAME}/lxc/{VMID}/config", "--output-format", "json",
     ]))
@@ -101,11 +226,19 @@ def main() -> None:
         raise ValueError("Access LXC is not running")
     run(["ip", "link", "show", "dev", HOST_VETH])
     live_vlans = parse_bridge_vlans(run(["bridge", "-j", "vlan", "show", "dev", HOST_VETH]))
+
+
+    # STEP 3: the guest half — pipe the checked-in collector in
+    # =========================================================
     guest_source = GUEST_OBSERVER.read_text()
     guest = json.loads(run(
         ["pct", "exec", str(VMID), "--", "python3", "-"],
         input_text=guest_source,
     ))
+
+
+    # STEP 4: one combined JSON answer
+    # ================================
     response = {
         "version": 1,
         "request_id": request["request_id"],
@@ -125,6 +258,12 @@ def main() -> None:
         "errors": [],
     }
     print(json.dumps(response, sort_keys=True, separators=(",", ":")))
+
+
+
+
+
+
 
 
 if __name__ == "__main__":

@@ -1,3 +1,29 @@
+// -----------------------------------------------------------
+//  [*] Network — the approved projection: VLANs, subnets,
+//      addresses
+//
+//  The single source of the lab network's shape: 256 VLANs
+//  (2000-2255) mapping one-to-one onto the /24s of
+//  10.200.0.0/16, with fixed host numbers for the Gateway
+//  (.1) and Access (.2) and the DHCP range after them.
+//  getNetworkSlot() is the only translation from a VLAN tag
+//  to its canonical VNet/subnet/addresses — every renderer
+//  and policy builder derives from it, never from observed
+//  state.
+//
+//  Split into (validator last):
+//
+//    networkProjectionConfig        — the approved values
+//    getNetworkSlot                 — VLAN tag → slot
+//    validateNetworkProjectionConfig — invariant checks
+//
+//  Used by:
+//    - desired-state.ts, gateway-desired-state.ts,
+//      access-desired-state.ts — plan building
+//    - provisioning-firewall.ts, groups.ts, attachment.ts,
+//      readiness.ts and the renderers
+// -----------------------------------------------------------
+
 export type NetworkProjectionConfig = {
     version: 1;
     vlan: {
@@ -28,6 +54,24 @@ export type NetworkProjectionConfig = {
         enabled: false;
     };
 };
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// networkProjectionConfig
+// -----------------------------------------------------------
+//
+// The approved values. Changing any of these changes every
+// derived plan revision at once.
+//
+// Used by:
+//   - getNetworkSlot (below) and every plan builder
+// -----------------------------------------------------------
 
 export const networkProjectionConfig: NetworkProjectionConfig = {
     version: 1,
@@ -75,6 +119,26 @@ export type NetworkSlot = {
     dhcpLastIp: string;
 };
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// getNetworkSlot
+// -----------------------------------------------------------
+//
+// VLAN tag → its canonical slot: lab<tag> as the VNet name,
+// 10.200.<tag-2000>.0/24 as the subnet, and the fixed host
+// addresses within it. Refuses tags outside the approved
+// pool.
+//
+// Used by:
+//   - desired-state.ts, provisioning-firewall.ts, groups.ts
+// -----------------------------------------------------------
+
 export function getNetworkSlot(
     vlanTag: number,
     config: NetworkProjectionConfig = networkProjectionConfig,
@@ -98,6 +162,27 @@ export function getNetworkSlot(
         dhcpLastIp: `${subnetPrefix}.${config.ipv4.dhcpLastHost}`,
     };
 }
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// validateNetworkProjectionConfig
+// -----------------------------------------------------------
+//
+// The invariants the slot arithmetic assumes: exactly 256
+// VLANs onto exactly the /24s of 10.200.0.0/16, host
+// numbers in range and non-overlapping with the DHCP
+// window, IPv6 off until isolation policy exists for it.
+//
+// Used by:
+//   - getNetworkSlot (above) — on every call
+//   - readiness.ts — the configuration check
+// -----------------------------------------------------------
 
 export function validateNetworkProjectionConfig(
     config: NetworkProjectionConfig = networkProjectionConfig,

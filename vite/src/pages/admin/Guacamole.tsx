@@ -1,3 +1,16 @@
+// -----------------------------------------------------------
+//  [*] Admin — Guacamole connections
+//
+//  Read-only table of every connection registered in
+//  Guacamole (GET /api/guacamole/connections): protocol,
+//  live session count, connection limits, last activity.
+//  Manual refresh only — this page is for spot checks, not
+//  monitoring.
+//
+//  Used by:
+//    - router.tsx — route /admin/guacamole
+// -----------------------------------------------------------
+
 import { useEffect, useState } from "react";
 import axios from "axios";
 import { getErrorMessage } from "@/utils/errors";
@@ -18,6 +31,7 @@ import Tooltip from "@mui/material/Tooltip";
 import RefreshOutlinedIcon from "@mui/icons-material/RefreshOutlined";
 import FiberManualRecordIcon from "@mui/icons-material/FiberManualRecord";
 
+// The flattened row shape the backend's connections route answers with.
 interface GuacConnection {
     identifier: string;
     name: string;
@@ -29,11 +43,13 @@ interface GuacConnection {
     maxConnectionsPerUser: string | null;
 }
 
+
 export default function AdminGuacamole() {
     const [connections, setConnections] = useState<GuacConnection[]>([]);
     const [fetching, setFetching] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
+
 
     const fetchConnections = async () => {
         setFetching(true);
@@ -51,17 +67,21 @@ export default function AdminGuacamole() {
         }
     };
 
+
     useEffect(() => {
         void fetchConnections();
     }, []);
+
 
     const formatLastActive = (ts: number | null): string => {
         if (!ts) return "—";
         return new Date(ts).toLocaleString();
     };
 
+
     return (
         <Stack spacing={2}>
+            {/* Header row — title and the manual refresh */}
             <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2 }}>
                 <Box>
                     <Typography variant="h5" sx={{ fontWeight: 700 }}>
@@ -86,6 +106,7 @@ export default function AdminGuacamole() {
 
             {error && <Alert severity="error">{error}</Alert>}
 
+            {/* The table — spinner row, empty row, or the connections */}
             <Paper sx={{ overflowX: "auto" }}>
                 <Table size="small">
                     <TableHead>
@@ -184,4 +205,3 @@ export default function AdminGuacamole() {
         </Stack>
     );
 }
-

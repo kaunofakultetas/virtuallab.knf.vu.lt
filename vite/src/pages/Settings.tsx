@@ -1,3 +1,18 @@
+// -----------------------------------------------------------
+//  [*] Pages — user settings
+//
+//  Three cards: the account summary (from the session
+//  context), the password change form, and the dark-mode
+//  switch. An SSO-only account (has_password === false)
+//  gets an info notice instead of the form — there is no
+//  password to change. Validation runs client-side first;
+//  a 401 from the API is translated to "current password is
+//  incorrect".
+//
+//  Used by:
+//    - router.tsx — route /settings
+// -----------------------------------------------------------
+
 import { useMemo, useState } from "react";
 import axios from "axios";
 import Box from "@mui/material/Box";
@@ -16,7 +31,9 @@ import { useAuth } from "@/utils/AuthGuard";
 import { useColorMode } from "@/hooks/useColorMode";
 import { getErrorMessage } from "@/utils/errors";
 
+// Mirrors the backend's password schema minimum.
 const MIN_PASSWORD_LENGTH = 6;
+
 
 export default function Settings() {
     const auth = useAuth();
@@ -32,6 +49,9 @@ export default function Settings() {
         severity: "success" | "error";
     } | null>(null);
 
+
+    // Only judged once all three fields have content, so the form is not
+    // shouting at a user who has barely started typing.
     const validationError = useMemo(() => {
         if (!newPassword || !confirmPassword || !currentPassword) return null;
         if (newPassword.length < MIN_PASSWORD_LENGTH)
@@ -47,6 +67,7 @@ export default function Settings() {
         Boolean(currentPassword && newPassword && confirmPassword) &&
         !validationError &&
         !submitting;
+
 
     const handleChangePassword = async () => {
         setFormError(null);
@@ -78,6 +99,7 @@ export default function Settings() {
         }
     };
 
+
     return (
         <Stack spacing={2} sx={{ maxWidth: 640 }}>
             <Box>
@@ -89,6 +111,7 @@ export default function Settings() {
                 </Typography>
             </Box>
 
+            {/* Account summary */}
             <Paper sx={{ p: 3 }}>
                 <Stack spacing={2}>
                     <Typography variant="h6" sx={{ fontWeight: 700 }}>
@@ -141,6 +164,7 @@ export default function Settings() {
                 </Stack>
             </Paper>
 
+            {/* Password change — or the SSO-only notice */}
             <Paper sx={{ p: 3 }}>
                 {auth?.has_password === false ? (
                     <Stack spacing={2}>
@@ -218,6 +242,7 @@ export default function Settings() {
                 )}
             </Paper>
 
+            {/* Appearance */}
             <Paper sx={{ p: 3 }}>
                 <Stack spacing={2}>
                     <Typography variant="h6" sx={{ fontWeight: 700 }}>

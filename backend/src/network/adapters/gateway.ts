@@ -1,3 +1,19 @@
+// -----------------------------------------------------------
+//  [*] Network adapters — Gateway: the observation channel
+//
+//  The schemas for what the Gateway forced observer returns
+//  (host + guest halves), the SSH client that fetches it,
+//  the renderer-to-guest path contract, and planGateway —
+//  the grading of one observation against the Gateway plan.
+//  All read-only: planGateway emits checks and no actions.
+//
+//  Used by:
+//    - gateway-clients.ts — createGatewayObserver
+//    - gateway-apply.ts, gateway-apply-runner.ts,
+//      infrastructure-reconciler.ts, drift-reconciler.ts
+//    - test/gateway-adapter.test.ts
+// -----------------------------------------------------------
+
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { GatewayPlan } from "../gateway-desired-state";
@@ -6,12 +22,10 @@ import { networkProjectionConfig } from "../config";
 import { ReconciliationCheck, ReconciliationDryRun } from "../reconciliation-types";
 import { RestrictedSshTransport } from "./restricted-ssh";
 
-/**
- * The Gateway guest reports digests of its managed files rather than their
- * content, so drift detection never transports rendered policy over the
- * observation channel. `null` means the file is genuinely absent; the observer
- * raises rather than reporting `null` for a file it merely could not read.
- */
+// The Gateway guest reports digests of its managed files rather than their
+// content, so drift detection never transports rendered policy over the
+// observation channel. `null` means the file is genuinely absent; the observer
+// raises rather than reporting `null` for a file it merely could not read.
 export const gatewayGuestObservationSchema = z.object({
     version: z.literal(1),
     captured_at: z.string(),
@@ -73,6 +87,24 @@ export interface GatewayObservationClient {
     observe(): Promise<GatewayHostObservation>;
 }
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// RestrictedSshGatewayObservationClient
+// -----------------------------------------------------------
+//
+// One observe call over the restricted transport, with the
+// answer matched to the request that asked for it.
+//
+// Used by:
+//   - gateway-clients.ts — createGatewayObserver
+// -----------------------------------------------------------
+
 export class RestrictedSshGatewayObservationClient implements GatewayObservationClient {
     constructor(private readonly transport: Pick<RestrictedSshTransport, "execute">) {}
 
@@ -91,14 +123,31 @@ export class RestrictedSshGatewayObservationClient implements GatewayObservation
     }
 }
 
-/**
- * The rendered files, keyed by the absolute path they occupy on the guest.
- *
- * This mapping is the contract between the renderer and the observer: the
- * observer digests exactly these paths. Keep it aligned with
- * `renderGatewayConfiguration`'s bundle writer and with `MANAGED_PATHS` in
- * `infra/gateway/observe_gateway.py`.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// renderedGatewayFiles
+// -----------------------------------------------------------
+//
+// The rendered files, keyed by the absolute path they
+// occupy on the guest.
+//
+// This mapping is the contract between the renderer and the
+// observer: the observer digests exactly these paths. Keep
+// it aligned with `renderGatewayConfiguration`'s bundle
+// writer and with `MANAGED_PATHS` in
+// `infra/gateway/observe_gateway.py`.
+//
+// Used by:
+//   - gateway-apply.ts — the stage request
+//   - planGateway (below) — the digest comparison
+// -----------------------------------------------------------
+
 export function renderedGatewayFiles(plan: GatewayPlan): Record<string, string> {
     const rendered = renderGatewayConfiguration(plan);
     return {
@@ -110,24 +159,46 @@ export function renderedGatewayFiles(plan: GatewayPlan): Record<string, string> 
     };
 }
 
+
 function digest(content: string): string {
     return createHash("sha256").update(content).digest("hex");
 }
+
 
 function sameValues(left: number[], right: number[]): boolean {
     const canonical = (values: number[]) => [...new Set(values)].sort((a, b) => a - b);
     return JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
 }
 
+
 const REQUIRED_SERVICES = ["nftables", "dnsmasq", "squid"] as const;
 
-/**
- * Compares a Gateway observation against desired state.
- *
- * Every check is deterministic and read-only. Nothing here proposes an action:
- * the Gateway applier does not exist yet, so a failing check reports drift for
- * an operator rather than scheduling a mutation.
- */
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// planGateway
+// -----------------------------------------------------------
+//
+// Compares a Gateway observation against desired state.
+//
+// Every check is deterministic and read-only. Nothing here
+// proposes an action: a failing check reports drift for the
+// apply runners and the drift sweep to act on. The inline
+// comments carry each check's reasoning — the trunk carries
+// the whole approved pool, the VLAN check compares names
+// AND addresses, the nftables revision is read from the
+// running ruleset, and so on.
+//
+// Used by:
+//   - gateway-apply.ts, gateway-apply-runner.ts,
+//     infrastructure-reconciler.ts, drift-reconciler.ts
+// -----------------------------------------------------------
+
 export function planGateway(
     gatewayPlan: GatewayPlan,
     input: unknown,
