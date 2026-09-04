@@ -13,6 +13,7 @@
 //    GET    /templates/:id/validate — Proxmox-side check
 // -----------------------------------------------------------
 
+import { Instances } from "@/controllers/instances.controller";
 import { Templates } from "@/controllers/templates.controller";
 import { isAdmin, isAuthenticated } from "@/middleware/auth.middleware";
 import { validateRequest } from "@/middleware/zod-validation.middleware";
@@ -195,9 +196,28 @@ router.delete(
 
         Templates.delete(id)
             .then(() => res.status(204).send())
-            .catch((err) => {
+            .catch(async (err) => {
+                // 23503 = foreign-key violation. instances.template_id is
+                // ON DELETE RESTRICT, so a template still backing live VMs
+                // cannot be removed -- deleting it used to null those rows out
+                // and let the drift reconciler rewrite their firewalls to RDP.
+                // Tell the admin what is holding it rather than answering 500.
+                if ((err as { code?: string }).code === "23503") {
+                    const dependants = await Instances.countByTemplate(id).catch(
+                        () => null,
+                    );
+                    return res.status(409).json({
+                        error: "Template is still in use",
+                        message:
+                            dependants === null
+                                ? "Instances created from this template still exist. Delete them first."
+                                : `${dependants} instance(s) created from this template still exist. Delete them first.`,
+                    });
+                }
                 logger.error(err, "Error deleting template:");
-                res.status(500).json({ error: "Failed to delete template" });
+                return res
+                    .status(500)
+                    .json({ error: "Failed to delete template" });
             });
     },
 );

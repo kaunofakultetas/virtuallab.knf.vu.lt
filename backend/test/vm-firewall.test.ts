@@ -294,5 +294,18 @@ test("session ports mirror what the connection route actually dials", () => {
     assert.deepEqual(sessionPortsForTemplate("ssh", {}), [22]);
     assert.deepEqual(sessionPortsForTemplate("ssh", { port: 2222 }), [2222]);
     assert.deepEqual(sessionPortsForTemplate("web", { port: 8443 }), [8443]);
-    assert.deepEqual(sessionPortsForTemplate(null, null), [3389]);
+});
+
+test("a template that has gone away is refused, not defaulted to RDP", () => {
+    // This used to return [3389]. `instances.template_id` was ON DELETE SET
+    // NULL, so deleting a template nulled the column on every live VM cloned
+    // from it, and the drift reconciler then read a null connection type and
+    // rewrote each VM's one ingress rule to RDP -- opening 3389 on machines
+    // that never exposed it and breaking their real session.
+    //
+    // Throwing is what the caller wants: the reconciler classifies a throw as
+    // `unreadable` rather than as drift, so it reports the VM and changes
+    // nothing. The FK is now RESTRICT, so this should also be unreachable.
+    assert.throws(() => sessionPortsForTemplate(null, null), VmFirewallError);
+    assert.throws(() => sessionPortsForTemplate(undefined, {}), VmFirewallError);
 });

@@ -8,6 +8,7 @@
 //  otherwise.
 //
 //    GET    /auth                 — current session info
+//    ALL    /auth/guac-auth       — Caddy forward-auth for /guac/*
 //    POST   /auth/login           — password login → cookie
 //    POST   /auth/logout          — clear the cookie
 //    POST   /auth/change-password — self-service change
@@ -74,6 +75,41 @@ router.get("/", isAuthenticated, async (req, res) => {
         last_login: profile?.last_login ?? null,
         has_password: profile?.has_password ?? false,
     });
+});
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// ALL /auth/guac-auth
+// -----------------------------------------------------------
+//
+// Forward-auth endpoint for the Guacamole reverse proxy
+// (/guac/*). Guacamole runs at its container's root context,
+// so that one prefix carries the entire app — HTML, static
+// assets, /api/*, and the websocket tunnel — and Caddy calls
+// this on every one of them. Any non-2xx makes Caddy deny.
+//
+// Deliberately NOT /instances/proxy-auth: that one requires a
+// webTargetMachine cookie and resolves a specific VM. Here the
+// only question is "is this a signed-in session", because
+// Guacamole enforces per-connection authorization itself.
+// A bare JWT verify, no database round trip, which matters
+// because this fires once per proxied asset.
+//
+// Used by:
+//   - endpoint/Caddyfile — the /guac/* forward_auth block
+// -----------------------------------------------------------
+
+router.all("/guac-auth", isAuthenticated, (req, res) => {
+    if (!req.user?.vu_id) {
+        return res.status(401).end();
+    }
+    return res.status(204).end();
 });
 
 

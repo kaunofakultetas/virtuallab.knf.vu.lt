@@ -1,9 +1,15 @@
 // -----------------------------------------------------------
 //  [*] Utils — instance helpers shared by the three lists
 //
-//  The copy-IP action and the network label, used by the
-//  student dashboard, the instances page and the admin
-//  instances page so all three say the same thing.
+//  What the student dashboard, the instances page and the
+//  admin instances page all have to agree on:
+//
+//    displayStatus   — the chip label, including the two
+//                      lifecycle states that are not in
+//                      `status`
+//    isActionable    — whether to offer the row's buttons
+//    copyInstanceIp  — the copy-IP action
+//    networkLabel    — the network heading and detail
 //
 //  Used by:
 //    - pages/Index.tsx, pages/Instances.tsx,
@@ -36,6 +42,69 @@ const INTERNAL_IPV4 = /^10\./;
 
 
 // -----------------------------------------------------------
+// displayStatus
+// -----------------------------------------------------------
+//
+// What to show in the status chip. Two lifecycle facts live
+// outside `status`, because the 15-second Proxmox status sync
+// overwrites that column for every VM it sees and would erase
+// anything written there:
+//
+//   provisioning — the row exists but the VM is still being
+//                  cloned; without this it reads "stopped" and
+//                  the UI offers a Start button for a machine
+//                  that does not exist yet.
+//   quarantined  — the VM may be running unfiltered; the
+//                  backend refuses start and session, so the
+//                  UI must not offer them either.
+//
+// Used by:
+//   - pages/Index.tsx, pages/Instances.tsx,
+//     pages/admin/AdminInstances.tsx
+// -----------------------------------------------------------
+
+export type DisplayStatus = Instance["status"] | "provisioning" | "quarantined";
+
+export function displayStatus(instance: Instance): DisplayStatus {
+    if (instance.quarantined) return "quarantined";
+    if (instance.provisioning_started_at) return "provisioning";
+    return instance.status ?? "unknown";
+}
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// isActionable
+// -----------------------------------------------------------
+//
+// Whether the power and connect buttons should be offered at
+// all. A provisioning row has no VM behind it yet, and a
+// quarantined one may be running unfiltered — the backend
+// refuses start and session for both, so offering the buttons
+// would only produce an error the user cannot act on.
+//
+// Used by:
+//   - pages/Index.tsx, pages/Instances.tsx,
+//     pages/admin/AdminInstances.tsx — the row action buttons
+// -----------------------------------------------------------
+
+export function isActionable(instance: Instance): boolean {
+    return !instance.quarantined && !instance.provisioning_started_at;
+}
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
 // copyInstanceIp
 // -----------------------------------------------------------
 //
@@ -44,7 +113,8 @@ const INTERNAL_IPV4 = /^10\./;
 // message rather than a throw so callers just show it.
 //
 // Used by:
-//   - the copy-IP buttons on all three instance lists
+//   - pages/Instances.tsx, pages/admin/AdminInstances.tsx —
+//     the copy-IP buttons. The student dashboard has none.
 // -----------------------------------------------------------
 
 export async function copyInstanceIp(instanceId: number): Promise<CopyIpResult> {

@@ -75,6 +75,10 @@ export type DriftReconcilerDependencies = {
     observeVmFirewalls?: () => Promise<{ drifted: string[]; detail: string }>;
     repair?: Partial<Record<DriftComponent, () => Promise<ReconciliationAttempt>>>;
     repairVmFirewalls?: (vmids: string[]) => Promise<{ repaired: string[]; failed: string[] }>;
+    // Pulls back groups stranded in `deleting` while still holding instances.
+    // Injectable like everything else here so a pass can be exercised without a
+    // database.
+    recoverStranded?: () => Promise<void>;
 };
 
 
@@ -112,6 +116,11 @@ export async function reconcileNetworkDrift(
     const drifted: DriftComponent[] = [];
     const repaired: DriftComponent[] = [];
     const failed: { component: DriftComponent; detail: string }[] = [];
+
+    // Runs before every observation below, because a stranded group is INVISIBLE
+    // to them: `deleting` is excluded from the firewall, gateway and
+    // infrastructure target queries alike, so its VMs would go on being skipped.
+    await (dependencies.recoverStranded ?? recoverStrandedGroups)();
 
     const gateway = await (dependencies.observeGateway ?? observeGatewayDrift)();
     if (gateway.drifted) drifted.push("gateway-policy");
@@ -205,6 +214,7 @@ export async function reconcileNetworkDrift(
 // they have no reason to carry.
 let cachedFirewallClient: VmFirewallApplyClient | null = null;
 
+
 async function firewallClient(): Promise<VmFirewallApplyClient> {
     if (!cachedFirewallClient) {
         const { proxmox } = await import("@/proxmox");
@@ -213,6 +223,58 @@ async function firewallClient(): Promise<VmFirewallApplyClient> {
     return cachedFirewallClient;
 }
 
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// recoverStrandedGroups
+// -----------------------------------------------------------
+//
+// A group in `deleting` that still has instances is a
+// contradiction: teardown only sets that state when no
+// instance references the group, so reaching it means a VM
+// was written to the group after the check and before the
+// transition -- the create/delete race.
+//
+// The consequence is silent and permanent. Every desired-state
+// query excludes `deleting`, so the group's VMs drop out of
+// per-VM firewall reconciliation for good: later peering and
+// domain changes reach the Gateway and never reach them.
+//
+// Recovery is back to `creating`, deliberately not `active`.
+// Nothing has proven the executors converged, and `active` is
+// supposed to mean exactly that. `creating` is included in
+// every target query, so the rest of this sweep picks the
+// group up and converges it honestly.
+//
+// Used by:
+//   - reconcileNetworkDrift, before any observation
+// -----------------------------------------------------------
+
+async function recoverStrandedGroups(): Promise<void> {
+    const result = await pool.query<{ id: number; vlan_tag: number | null }>(
+        `UPDATE network_groups network_group
+            SET state = 'creating',
+                updated_at = NOW()
+          WHERE network_group.state = 'deleting'
+            AND EXISTS (
+                SELECT 1 FROM instances
+                 WHERE network_group_id = network_group.id
+            )
+      RETURNING network_group.id, network_group.vlan_tag`,
+    );
+
+    for (const group of result.rows) {
+        logger.warn(
+            { networkGroupId: group.id, vlanTag: group.vlan_tag },
+            "Recovered a network group that was left `deleting` while it still had instances",
+        );
+    }
+}
 
 type FirewallTarget = {
     proxmox_id: string;

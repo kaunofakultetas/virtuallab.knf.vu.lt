@@ -172,10 +172,31 @@ export class GuacamoleClient {
         }
     }
 
-    // Logs in AS THE STUDENT (their Guacamole password is their user ID) and
-    // builds the deep link straight into the connection's client view.
-    async getSessionUrl(userId: string, connectionId: string): Promise<string> {
-        const userAuth = await this.getToken(userId, userId);
+    // Logs in AS THE STUDENT and builds the deep link straight into the
+    // connection's client view. The password is passed in rather than derived:
+    // it used to be the user's own vu_id, which made every Guacamole account
+    // guessable from a student number.
+    //
+    // The `?token=` sits after the `#`, so it is part of the fragment and is
+    // never sent to a server — do not move it into the query string.
+    async getSessionUrl(
+        userId: string,
+        guacPassword: string,
+        connectionId: string,
+    ): Promise<string> {
+        const userAuth = await this.getToken(userId, guacPassword);
+
+        // getToken does not check res.ok: a rejected login yields
+        // `{token: undefined}` rather than throwing, which would otherwise
+        // produce a working-looking URL carrying the literal "undefined".
+        if (!userAuth.token) {
+            throw new GuacamoleApiError(
+                `Guacamole rejected the credentials for user ${userId}`,
+                401,
+                "/api/tokens",
+            );
+        }
+
         const urlB64Data = `${connectionId}\0c\0${this.dataSource}`;
         const encodedUrlData = Buffer.from(urlB64Data).toString("base64url");
 
@@ -225,10 +246,20 @@ export class GuacamoleClient {
 
         const { timeoutMs } = await this.getSettings();
         for (let attempt = 1; attempt <= attempts; attempt++) {
-            // The token rides in the query string on every attempt, so a
-            // mid-loop re-login is picked up automatically.
-            opts.query["token"] = this.authToken!;
-            const queryString = `?${new URLSearchParams(opts.query).toString()}`;
+            // Re-read on every attempt, so a mid-loop re-login is picked up
+            // automatically.
+            //
+            // Sent as a HEADER, not in the query string. GUACAMOLE_URL is plain
+            // HTTP (http://exit:8080), so a token in the URL crossed the network
+            // in cleartext on every single call and was written to Guacamole's
+            // access log, where anyone who could read it held Guacamole
+            // administrator. `Guacamole-Token` has been supported since 1.4;
+            // this deployment runs 1.6.
+            headers["Guacamole-Token"] = this.authToken!;
+            const queryEntries = Object.keys(opts.query).length > 0;
+            const queryString = queryEntries
+                ? `?${new URLSearchParams(opts.query).toString()}`
+                : "";
             const url = `${this.baseUrl}${path}${queryString}`;
 
             const controller = new AbortController();

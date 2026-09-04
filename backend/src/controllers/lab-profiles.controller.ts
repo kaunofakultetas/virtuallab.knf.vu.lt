@@ -25,6 +25,7 @@ import {
     LabProfile,
     UpdateLabProfileDTO,
 } from "@/types/lab-profiles";
+import { STUDENT_TEMPLATE_COLUMNS_ALIASED } from "@/controllers/templates.controller";
 import { Template } from "@/types/templates";
 import { pool } from "@/utils/db";
 import { PoolClient } from "pg";
@@ -150,7 +151,14 @@ async function hydrateProfiles(
             [profileIds],
         ),
         pool.query<Template & { profile_id: number }>(
-            `SELECT template.*, membership.profile_id
+            // Students get the projected column list, not `template.*` — the
+            // JSONB connection_config carries the template's RDP/SSH password.
+            // Admins keep the full row, which their template editor needs.
+            `SELECT ${
+                studentVisibleOnly
+                    ? STUDENT_TEMPLATE_COLUMNS_ALIASED
+                    : "template.*"
+            }, membership.profile_id
              FROM lab_profile_templates membership
              JOIN templates template ON template.id = membership.template_id
              WHERE membership.profile_id = ANY($1::int[])

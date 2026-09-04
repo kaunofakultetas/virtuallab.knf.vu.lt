@@ -18,10 +18,10 @@
 //    GET    /network/reconciliation-attempts/:id  — one attempt
 //    GET    /network/profiles/:profileId/domains  — list
 //    POST   /network/profiles/:profileId/domains  — add
-//    DELETE /network/profiles/:pid/domains/:domain — remove
+//    DELETE /network/profiles/:pid/domains/:domain — remove + converge
 //    GET    /network/peerings                     — list
 //    POST   /network/peerings                     — add
-//    DELETE /network/peerings/:aId/:bId           — remove
+//    DELETE /network/peerings/:aId/:bId           — remove + converge
 //
 //  Used by:
 //    - admin/Network.tsx — everything here
@@ -238,6 +238,61 @@ router.post("/groups/:groupId/release", isAuthenticated, isAdmin, async (req, re
         return res.status(500).json({ error: "Failed to release the network group" });
     }
 });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// convergeAfterRevocation
+// -----------------------------------------------------------
+//
+// Runs a reconciliation immediately after a policy REMOVAL.
+//
+// Removing a peering or an allowed domain used to be a
+// database write and a 204 -- the enforcement waited for the
+// 10-minute drift sweep. So an instructor revoking access
+// mid-exercise was told it had succeeded while the student
+// kept it for up to ten more minutes, which is exactly the
+// situation where somebody revokes access urgently.
+//
+// Grants can afford to wait; removals cannot. 204 is dropped
+// because it asserts completion: the caller now gets the
+// reconciliation report, including `ran: false` when another
+// sweep already holds the lock.
+//
+// Used by:
+//   - DELETE /network/profiles/:profileId/domains/:domain
+//   - DELETE /network/peerings/:groupAId/:groupBId
+// -----------------------------------------------------------
+
+async function convergeAfterRevocation(requestedBy: string) {
+    try {
+        return await reconcileNetworkDrift(requestedBy);
+    } catch (error) {
+        // The revocation itself is already committed, so this must not turn
+        // into a 5xx -- report it and let the scheduled sweep finish the job.
+        logger.error(error, "Reconciliation after a policy revocation failed");
+        return {
+            ran: false,
+            reason: "reconciliation failed; the scheduled sweep will retry",
+            drifted: [],
+            repaired: [],
+            failed: [],
+        };
+    }
+}
 
 
 
@@ -511,7 +566,9 @@ router.delete("/profiles/:profileId/domains/:domain", isAuthenticated, isAdmin, 
     try {
         const removed = await removeAllowedDomain(profileId.data, String(domain));
         if (!removed) return res.status(404).json({ error: "Allowed web domain not found" });
-        return res.status(204).end();
+        // Converge before answering: see convergeAfterRevocation.
+        const reconciliation = await convergeAfterRevocation(req.user!.vu_id);
+        return res.status(200).json({ removed: true, reconciliation });
     } catch (error) {
         logger.error(error, "Error removing an allowed web domain");
         return res.status(500).json({ error: "Failed to remove the allowed web domain" });
@@ -603,7 +660,9 @@ router.delete("/peerings/:groupAId/:groupBId", isAuthenticated, isAdmin, async (
     try {
         const removed = await removeGroupPeering(a.data, b.data);
         if (!removed) return res.status(404).json({ error: "Group peering not found" });
-        return res.status(204).end();
+        // Converge before answering: see convergeAfterRevocation.
+        const reconciliation = await convergeAfterRevocation(req.user!.vu_id);
+        return res.status(200).json({ removed: true, reconciliation });
     } catch (error) {
         if (error instanceof NetworkPolicyError) {
             return res.status(400).json({ error: error.message });

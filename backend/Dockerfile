@@ -10,6 +10,11 @@ RUN npm run build && npm run build-scripts
 FROM node:25-alpine AS production
 WORKDIR /app
 
+# Baked in rather than left to .env: this is what makes the session cookie's
+# `secure` flag true (auth.route.ts). A deployment that forgets it in .env would
+# otherwise ship cookies that are legal to send over plaintext HTTP.
+ENV NODE_ENV=production
+
 RUN apk add --no-cache openssh-client
 
 RUN addgroup -g 1001 -S nodejs && \

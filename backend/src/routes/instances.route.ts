@@ -4,9 +4,16 @@
 //  Mounted at /instances. Access control is per-instance:
 //  owner or admin, checked through Instances.hasAccessTo on
 //  every ID route. The big ones are POST / (create with
-//  network provisioning around it) and GET /:id/session
+//  network provisioning around it) and POST /:id/session
 //  (start the VM, then build whichever connection the
 //  template calls for).
+//
+//  The five state-changing sub-routes are POST, not GET. They
+//  were GET, which made them reachable from a bare <img> tag —
+//  and the VM web-UI proxy serves student-authored content
+//  from the same SITE as this API, so SameSite=Strict did not
+//  stop it. See same-origin.middleware.ts, which is the actual
+//  defence; the verbs are defence in depth.
 //
 //    GET    /instances                    — own instances
 //    GET    /instances/all                — all (admin)
@@ -16,17 +23,21 @@
 //    POST   /instances                    — create
 //    DELETE /instances/:instanceId        — delete
 //    PATCH  /instances/:instanceId/expirable — admin toggle
-//    GET    /instances/:instanceId/start  — start VM
-//    GET    /instances/:instanceId/stop   — stop VM
-//    GET    /instances/:instanceId/reboot — reboot VM
-//    GET    /instances/:instanceId/session — connection URL
-//    GET    /instances/:instanceId/renew  — extend runtime
+//    POST   /instances/:instanceId/start  — start VM
+//    POST   /instances/:instanceId/stop   — stop VM
+//    POST   /instances/:instanceId/reboot — reboot VM
+//    POST   /instances/:instanceId/session — connection URL
+//    POST   /instances/:instanceId/renew  — extend runtime
 //    GET    /instances/:instanceId/ip     — guest IPv4 list
 // -----------------------------------------------------------
 
-import { Instances } from "@/controllers/instances.controller";
+import {
+    Instances,
+    InstanceQuotaExceededError,
+} from "@/controllers/instances.controller";
 import { LabProfiles } from "@/controllers/lab-profiles.controller";
 import { Templates } from "@/controllers/templates.controller";
+import { Users } from "@/controllers/users.controller";
 import { guacamole } from "@/guacamole";
 import { isAdmin, isAuthenticated } from "@/middleware/auth.middleware";
 import { validateRequest } from "@/middleware/zod-validation.middleware";
@@ -50,6 +61,7 @@ import { ensureNetworkGroupInfrastructure } from "@/network/provisioning-network
 import { ensureInstanceFirewall } from "@/network/provisioning-firewall";
 import { releaseNetworkGroupAfterInstance } from "@/network/provisioning-teardown";
 import { getNetworkMode } from "@/network/mode";
+import { randomBytes } from "crypto";
 import { Router } from "express";
 
 const router = Router();
@@ -58,6 +70,60 @@ const router = Router();
 // forward-auth fires once per proxied asset, so we avoid hitting Proxmox each time.
 const webProxyIpCache = new Map<number, { ip: string; exp: number }>();
 const WEB_PROXY_IP_TTL_MS = 30_000;
+
+
+
+
+
+
+
+
+// -----------------------------------------------------------
+// ensureGuacamoleAccount
+// -----------------------------------------------------------
+//
+// Returns the secret this backend uses to log in AS the given
+// user, provisioning the Guacamole account if it is missing.
+//
+// The account's password used to be the user's own vu_id, so
+// anyone who could reach Guacamole could sign in as any
+// student whose number they knew. It is now a random secret
+// held only here.
+//
+// Rotation is delete-and-recreate because GuacamoleClient has
+// no password-change method. That is safe: connection grants
+// are re-checked and re-added per session by both callers, so
+// recreating the account loses nothing.
+//
+// Used by:
+//   - POST /instances/:instanceId/session — both branches
+// -----------------------------------------------------------
+
+async function ensureGuacamoleAccount(userId: string): Promise<string> {
+    const [storedSecret, guacUser] = await Promise.all([
+        Users.getGuacPassword(userId),
+        guacamole.getUser(userId),
+    ]);
+
+    // Both present and consistent — nothing to do.
+    if (storedSecret && guacUser) return storedSecret;
+
+    const secret = randomBytes(24).toString("base64url");
+
+    // A user with no stored secret still has the old vu_id-derived password on
+    // the Guacamole side, so the account has to go before it can be remade.
+    // deleteUser swallows 404, so this is safe when the account is simply gone.
+    if (guacUser) {
+        await guacamole.deleteUser(userId);
+    }
+
+    await guacamole.createUser(userId, secret);
+    await Users.setGuacPassword(userId, secret);
+
+    logger.info({ userId }, "Provisioned a Guacamole account with a random password");
+
+    return secret;
+}
 
 
 
@@ -349,7 +415,13 @@ router.post(
                 });
             }
 
-            // Enforce per-student VM limit (admins are exempt)
+            // Fast fail on the per-student VM limit (admins are exempt).
+            // NOT the enforcement point: this reads a count that the ~30 s
+            // clone can invalidate, which is how 20 parallel POSTs used to
+            // yield 20 VMs against a limit of 1. createInstance re-checks it
+            // inside the reservation transaction, under a per-owner lock, and
+            // throws InstanceQuotaExceededError -- caught below. This exists
+            // only to reject the common case before any Proxmox work.
             if (req.user.role !== "admin") {
                 const [limit, existing] = await Promise.all([
                     metadata.get<number>("settings.limits.vmPerStudent"),
@@ -420,6 +492,8 @@ router.post(
                     template,
                     attachment.group.id,
                     attachment.bridge,
+                    // Admins are exempt, exactly as in the pre-check above.
+                    req.user.role !== "admin",
                 );
                 if (attachment.isolated) {
                     // Same-segment policy can only be applied once the VM
@@ -461,20 +535,43 @@ router.post(
                             );
                         }
                     } catch (error) {
-                        await Instances.deleteInstance(instanceId).catch((cleanupError) => {
-                            // Reported, never rethrown: the firewall failure is
-                            // the cause an operator needs, and losing it behind
-                            // a cleanup error would hide why the VM existed.
-                            logger.error(
-                                { err: cleanupError, instanceId },
-                                "Failed to remove a VM whose firewall could not be applied",
-                            );
-                        });
+                        await Instances.deleteInstance(instanceId).catch(
+                            async (cleanupError) => {
+                                // Reported, never rethrown: the firewall failure
+                                // is the cause an operator needs, and losing it
+                                // behind a cleanup error would hide why the VM
+                                // existed.
+                                logger.error(
+                                    { err: cleanupError, instanceId },
+                                    "Failed to remove a VM whose firewall could not be applied",
+                                );
+                                // Both the firewall write and the teardown
+                                // failed -- the likeliest correlated failure,
+                                // since they hit the same API. The VM may be
+                                // running unfiltered on a shared VLAN, so mark
+                                // it: without this the row looks healthy and the
+                                // student can start and connect to it.
+                                await Instances.markQuarantined(instanceId).catch(
+                                    (markError) =>
+                                        logger.error(
+                                            { err: markError, instanceId },
+                                            "Failed to quarantine an unfiltered VM",
+                                        ),
+                                );
+                            },
+                        );
                         throw error;
                     }
                 }
                 return res.json({ id: instanceId });
             } catch (error) {
+                // The reservation transaction refused: the caller raced past
+                // the pre-check above. No VM was created and no row survives,
+                // so there is nothing to compensate -- just answer 429.
+                if (error instanceof InstanceQuotaExceededError) {
+                    await compensateNetworkAttachment(attachment, error.message);
+                    return res.status(429).json({ error: error.message });
+                }
                 await compensateNetworkAttachment(
                     attachment,
                     error instanceof Error ? error.message : "Provisioning failed",
@@ -606,9 +703,9 @@ router.patch(
 
 
 // -----------------------------------------------------------
-// GET /instances/:instanceId/start
-// GET /instances/:instanceId/stop
-// GET /instances/:instanceId/reboot
+// POST /instances/:instanceId/start
+// POST /instances/:instanceId/stop
+// POST /instances/:instanceId/reboot
 // -----------------------------------------------------------
 //
 // The three power buttons — same shape each time: access
@@ -619,7 +716,7 @@ router.patch(
 //   - Instances.tsx, admin/AdminInstances.tsx
 // -----------------------------------------------------------
 
-router.get(
+router.post(
     "/:instanceId/start",
     isAuthenticated,
     validateRequest({ params: instanceIdParamSchema }),
@@ -637,13 +734,22 @@ router.get(
             return res.status(400).json({ error: "Unauthorized" });
         }
 
+        // A quarantined VM may be running unfiltered on a shared VLAN; do not
+        // hand it back to its owner until an operator has dealt with it.
+        const instance = await Instances.getById(targetInstance);
+        if (instance?.quarantined) {
+            return res.status(409).json({
+                error: "This instance is quarantined and cannot be started. Contact an administrator.",
+            });
+        }
+
         const taskId = await Instances.startInstance(targetInstance);
         return res.status(200).json({ ok: true });
     },
 );
 
 
-router.get(
+router.post(
     "/:instanceId/stop",
     isAuthenticated,
     validateRequest({ params: instanceIdParamSchema }),
@@ -667,7 +773,7 @@ router.get(
 );
 
 
-router.get(
+router.post(
     "/:instanceId/reboot",
     isAuthenticated,
     validateRequest({ params: instanceIdParamSchema }),
@@ -698,7 +804,7 @@ router.get(
 
 
 // -----------------------------------------------------------
-// GET /instances/:instanceId/session
+// POST /instances/:instanceId/session
 // -----------------------------------------------------------
 //
 // The connect button. Starts the VM, then branches on the
@@ -718,7 +824,7 @@ router.get(
 //   - Instances.tsx / utils/instances.ts — the connect flow
 // -----------------------------------------------------------
 
-router.get(
+router.post(
     "/:instanceId/session",
     isAuthenticated,
     validateRequest({ params: instanceIdParamSchema }),
@@ -738,6 +844,17 @@ router.get(
         const instance = await Instances.getById(targetInstance);
         if (!instance) {
             return res.status(400).json({ error: "Instance not found" });
+        }
+
+        // Same reasoning as /start: a quarantined VM is one whose firewall
+        // policy could not be applied and which could not then be removed, so
+        // handing out a session to it is handing out an unfiltered machine.
+        // Note this route starts the VM further down, so the check must precede
+        // that, not merely the connection build.
+        if (instance.quarantined) {
+            return res.status(409).json({
+                error: "This instance is quarantined and cannot be connected to. Contact an administrator.",
+            });
         }
 
         const template = instance.template_id
@@ -781,11 +898,8 @@ router.get(
             const password = resolveCredential(rawConfig.password);
             const port = rawConfig.port ?? 22;
 
-            // Ensure Guacamole user exists
-            let guacUser = await guacamole.getUser(userId);
-            if (!guacUser) {
-                guacUser = await guacamole.createUser(userId, userId);
-            }
+            // Ensure Guacamole user exists, with a secret we hold
+            const guacSecret = await ensureGuacamoleAccount(userId);
 
             const guacName = `${instance.id}-ssh`;
             let guacConn = await guacamole.getConnectionSummary(guacName);
@@ -814,15 +928,12 @@ router.get(
 
             return res.status(200).json({
                 type: "guacamole",
-                url: await guacamole.getSessionUrl(userId, guacId),
+                url: await guacamole.getSessionUrl(userId, guacSecret, guacId),
             });
         }
 
         // Default: guacamole (RDP) — create user only when needed
-        let guacUser = await guacamole.getUser(userId);
-        if (!guacUser) {
-            guacUser = await guacamole.createUser(userId, userId);
-        }
+        const guacSecret = await ensureGuacamoleAccount(userId);
 
         const resolveGuacCredential = (value: string | undefined) => {
             if (value === "creatorId") return instanceOwnerId ?? userId;
@@ -901,7 +1012,7 @@ router.get(
 
         return res.status(200).json({
             type: "guacamole",
-            url: await guacamole.getSessionUrl(userId, guacId),
+            url: await guacamole.getSessionUrl(userId, guacSecret, guacId),
         });
     },
 );
@@ -914,7 +1025,7 @@ router.get(
 
 
 // -----------------------------------------------------------
-// GET /instances/:instanceId/renew
+// POST /instances/:instanceId/renew
 // -----------------------------------------------------------
 //
 // Resets run_until to now + defaultRuntimeHours.
@@ -923,7 +1034,7 @@ router.get(
 //   - Instances.tsx — the renew button
 // -----------------------------------------------------------
 
-router.get(
+router.post(
     "/:instanceId/renew",
     isAuthenticated,
     validateRequest({ params: instanceIdParamSchema }),
@@ -946,13 +1057,28 @@ router.get(
             return res.status(400).json({ error: "Instance not found" });
         }
 
-        const renewHours =
-            (await metadata.get<number>(
-                "settings.instances.defaultRuntimeHours",
-            )) ?? 3;
-        await Instances.updateRuntimeHours(instance.id, renewHours);
+        const [renewHours, maxHours] = await Promise.all([
+            metadata.get<number>("settings.instances.defaultRuntimeHours"),
+            metadata.get<number>("settings.limits.maxRuntimeHours"),
+        ]);
 
-        return res.status(200).json({ ok: true });
+        // Admins are exempt, as they are from the VM quota. For everyone else
+        // the ceiling is absolute: without it this endpoint could be looped to
+        // hold a VM indefinitely, defeating the only mechanism that reclaims
+        // lab capacity.
+        const cap = req.user.role === "admin" ? null : (maxHours ?? 24);
+
+        await Instances.updateRuntimeHours(
+            instance.id,
+            renewHours ?? 3,
+            cap,
+        );
+
+        const refreshed = await Instances.getById(instance.id);
+        return res.status(200).json({
+            ok: true,
+            run_until: refreshed?.run_until ?? null,
+        });
     },
 );
 

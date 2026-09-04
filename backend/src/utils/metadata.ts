@@ -64,6 +64,11 @@ const defaults: Record<string, MetaValue> = {
     "settings.proxmox.minVmId": 10_000,
     "settings.proxmox.storageReserveBytes": 2_147_483_648,
     "settings.instances.defaultRuntimeHours": 3,
+    // Ceiling on an instance's TOTAL life, measured from created_at.
+    // defaultRuntimeHours sets the initial window and bounds nothing after
+    // it: /renew reset run_until to now + default with no cap, so a loop
+    // kept a VM forever and the expiry sweeper never reclaimed it.
+    "settings.limits.maxRuntimeHours": 24,
     "settings.guacamole.parentIdentifier": "1",
     "settings.guacamole.requestTimeoutMs": 10_000,
     // Gateway guest facts that cannot be derived from the database. They stay

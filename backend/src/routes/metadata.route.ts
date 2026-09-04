@@ -96,6 +96,53 @@ router.patch(
         if (!(key in metadata.defaults)) {
             return res.status(404).json({ error: "Unknown setting key" });
         }
+
+        // Type-check against the default's shape. The module comment in
+        // utils/metadata.ts has always claimed this happened here; it did not,
+        // and `metadata.get<T>` is a cast rather than a parse, so a wrong type
+        // propagated silently to whatever read it. Two of the numeric limits
+        // then failed OPEN:
+        //   vmPerStudent = "unlimited"      -> `n >= NaN` is false -> no quota
+        //   storageReserveBytes = "0"       -> capacity check never trips
+        // Both ration a shared resource, and neither failure surfaced anywhere.
+        const defaultValue = metadata.defaults[key];
+        const value = req.body.value;
+
+        if (Array.isArray(defaultValue)) {
+            // No array-valued setting is editable through this endpoint: the
+            // request schema only admits scalars. Reject rather than coerce.
+            return res.status(400).json({
+                error: `${key} is a list and cannot be set through this endpoint`,
+            });
+        }
+        if (typeof value !== typeof defaultValue) {
+            return res.status(400).json({
+                error: `${key} must be a ${typeof defaultValue}`,
+            });
+        }
+        if (typeof value === "number" && !Number.isFinite(value)) {
+            return res.status(400).json({ error: `${key} must be a finite number` });
+        }
+
+        // The limits that ration shared resources additionally may not be
+        // negative -- a negative reserve or quota disables the check it exists
+        // to perform.
+        const NON_NEGATIVE_KEYS = [
+            "settings.limits.vmPerStudent",
+            "settings.limits.maxRuntimeHours",
+            "settings.proxmox.storageReserveBytes",
+            "settings.proxmox.minVmId",
+            "settings.instances.defaultRuntimeHours",
+            "settings.instances.ipWaitTimeoutMs",
+            "settings.instances.ipPollIntervalMs",
+            "settings.guacamole.requestTimeoutMs",
+        ];
+        if (NON_NEGATIVE_KEYS.includes(key) && (value as number) < 0) {
+            return res
+                .status(400)
+                .json({ error: `${key} must not be negative` });
+        }
+
         if (
             key === "settings.network.mode" &&
             req.body.value !== "legacy" &&

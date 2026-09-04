@@ -133,9 +133,15 @@ function requirePort(port: number): number {
 //
 // Guessing a superset here would widen the one ingress a
 // student VM has. The ports mirror what
-// `POST /instances/:id/connection` actually dials: RDP for
-// a Guacamole template, the configured SSH port, or the
+// `POST /instances/:instanceId/session` actually dials: RDP
+// for a Guacamole template, the configured SSH port, or the
 // configured web port.
+//
+// A null connection type means the template row is gone and
+// is REFUSED, not defaulted. Defaulting it to Guacamole
+// rewrote every affected VM's one ingress rule to RDP/3389;
+// throwing makes the reconciler report the VM as unreadable
+// and change nothing.
 //
 // Used by:
 //   - provisioning-firewall.ts, drift-reconciler.ts
@@ -147,7 +153,9 @@ export function sessionPortsForTemplate(
 ): number[] {
     const config = (connectionConfig ?? {}) as Record<string, unknown>;
     const configured = typeof config.port === "number" ? config.port : undefined;
-    switch (connectionType ?? "guacamole") {
+    // Switched on bare, with no `?? "guacamole"` default — that fallback made
+    // the `default:` branch below unreachable, which is why it never fired.
+    switch (connectionType) {
         case "guacamole":
             return [3389];
         case "ssh":

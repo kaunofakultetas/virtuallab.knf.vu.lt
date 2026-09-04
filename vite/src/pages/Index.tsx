@@ -50,7 +50,12 @@ import AddOutlinedIcon from "@mui/icons-material/AddOutlined";
 import WarningAmberOutlinedIcon from "@mui/icons-material/WarningAmberOutlined";
 import { useAuth } from "@/utils/AuthGuard";
 import { getErrorMessage } from "@/utils/errors";
-import type { Instance, ProxmoxStatus } from "@/types/instances";
+import {
+    displayStatus,
+    isActionable,
+    type DisplayStatus,
+} from "@/utils/instances";
+import type { Instance } from "@/types/instances";
 import type { User } from "@/types/users";
 
 // -----------------------------------------------------------
@@ -63,13 +68,21 @@ const statusColor: Record<string, "success" | "warning" | "error" | "default"> =
         stopped: "error",
         suspended: "warning",
         unknown: "default",
+        // Lifecycle states that live outside the Proxmox `status` column --
+        // see displayStatus() in utils/instances.
+        provisioning: "warning",
+        quarantined: "error",
     };
 
-const statusBorder: Record<ProxmoxStatus, string> = {
+// Keyed by DisplayStatus, not ProxmoxStatus: `provisioning` and `quarantined`
+// are lifecycle facts the API carries in their own columns.
+const statusBorder: Record<DisplayStatus, string> = {
     running: "#2e7d32",
     stopped: "#9e9e9e",
     suspended: "#ed6c02",
     unknown: "#bdbdbd",
+    provisioning: "#0288d1",
+    quarantined: "#d32f2f",
 };
 
 function formatRunUntil(runUntil: string | null): {
@@ -370,13 +383,11 @@ function AdminDashboard() {
                                                 <Chip
                                                     size="small"
                                                     label={
-                                                        instance.status ??
-                                                        "unknown"
+                                                        displayStatus(instance)
                                                     }
                                                     color={
                                                         statusColor[
-                                                            instance.status ??
-                                                                "unknown"
+                                                            displayStatus(instance)
                                                         ]
                                                     }
                                                 />
@@ -475,7 +486,7 @@ function StudentDashboard() {
     const handleStart = async (instance: Instance) => {
         setLoading(`start-${instance.id}`, true);
         try {
-            await axios.get(`/api/instances/${instance.id}/start`);
+            await axios.post(`/api/instances/${instance.id}/start`, null);
             setSnackbar({ message: "Instance starting…", severity: "info" });
             setTimeout(() => void fetchRef.current?.(false), 3000);
         } catch (err) {
@@ -491,7 +502,7 @@ function StudentDashboard() {
     const handleStop = async (instance: Instance) => {
         setLoading(`stop-${instance.id}`, true);
         try {
-            await axios.get(`/api/instances/${instance.id}/stop`);
+            await axios.post(`/api/instances/${instance.id}/stop`, null);
             setSnackbar({ message: "Instance stopping…", severity: "info" });
             setTimeout(() => void fetchRef.current?.(false), 3000);
         } catch (err) {
@@ -507,8 +518,9 @@ function StudentDashboard() {
     const handleConnect = async (instance: Instance) => {
         setLoading(`session-${instance.id}`, true);
         try {
-            const res = await axios.get<{ url: string }>(
+            const res = await axios.post<{ url: string }>(
                 `/api/instances/${instance.id}/session`,
+                null,
             );
             if (res.data.url) window.open(res.data.url, "_blank");
         } catch (err) {
@@ -524,7 +536,7 @@ function StudentDashboard() {
     const handleRenew = async (instance: Instance) => {
         setLoading(`renew-${instance.id}`, true);
         try {
-            await axios.get(`/api/instances/${instance.id}/renew`);
+            await axios.post(`/api/instances/${instance.id}/renew`, null);
             setSnackbar({ message: "Runtime extended.", severity: "success" });
             await fetchRef.current?.(false);
         } catch (err) {
@@ -639,7 +651,7 @@ function StudentDashboard() {
                                     borderLeft: 4,
                                     borderColor:
                                         statusBorder[
-                                            instance.status ?? "unknown"
+                                            displayStatus(instance)
                                         ],
                                 }}
                             >
@@ -673,12 +685,11 @@ function StudentDashboard() {
                                             <Chip
                                                 size="small"
                                                 label={
-                                                    instance.status ?? "unknown"
+                                                    displayStatus(instance)
                                                 }
                                                 color={
                                                     statusColor[
-                                                        instance.status ??
-                                                            "unknown"
+                                                        displayStatus(instance)
                                                     ]
                                                 }
                                             />
@@ -704,7 +715,8 @@ function StudentDashboard() {
                                             flexShrink: 0,
                                         }}
                                     >
-                                        {instance.status === "running" && (
+                                        {instance.status === "running" &&
+                                            isActionable(instance) && (
                                             <>
                                                 <Tooltip title="Connect">
                                                     <span>
@@ -761,7 +773,8 @@ function StudentDashboard() {
                                                 </Tooltip>
                                             </>
                                         )}
-                                        {instance.status === "stopped" && (
+                                        {instance.status === "stopped" &&
+                                            isActionable(instance) && (
                                             <Tooltip title="Start">
                                                 <span>
                                                     <IconButton

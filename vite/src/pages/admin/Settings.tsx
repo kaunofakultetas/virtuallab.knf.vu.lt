@@ -113,6 +113,21 @@ const SETTINGS_META: Record<string, SettingMeta> = {
         description: "Hours until a newly created instance expires",
         type: "number",
     },
+    // Both of these were absent from this map, so the dialog fell through to
+    // its string branch and PATCHed them as text. The backend now type-checks
+    // each write against the default's shape, which would reject that.
+    "settings.limits.maxRuntimeHours": {
+        label: "Maximum runtime (hours)",
+        description:
+            "Ceiling on an instance's total life, measured from creation. Renewals cannot push an instance past it.",
+        type: "number",
+    },
+    "settings.proxmox.storageReserveBytes": {
+        label: "Storage reserve (bytes)",
+        description:
+            "Free space that must remain on the datastore after a clone; creation is refused below it",
+        type: "number",
+    },
     "settings.guacamole.parentIdentifier": {
         label: "Guacamole folder ID",
         description: "Guacamole parent connection group identifier",

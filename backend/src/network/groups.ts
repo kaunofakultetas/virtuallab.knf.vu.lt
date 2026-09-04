@@ -344,7 +344,14 @@ export async function markNetworkGroupActive(
              applied_revision = $2,
              last_error = NULL,
              updated_at = NOW()
-         WHERE id = $1 AND state = 'creating'
+         -- 'deleting' is accepted as a recovery path, not as a normal
+         -- transition. A teardown that began while this VM was mid-clone could
+         -- mark the group deleting (its guard saw no instances yet, because the
+         -- row had not been written), and the group would then be stranded:
+         -- excluded from firewall reconciliation, but carrying a live VM.
+         -- Reservation rows make that race far harder to hit; this makes it
+         -- recoverable when it still does.
+         WHERE id = $1 AND state IN ('creating', 'deleting')
          RETURNING *`,
         [groupId, appliedRevision],
     );

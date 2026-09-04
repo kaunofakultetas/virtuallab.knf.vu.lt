@@ -40,6 +40,16 @@ CREATE TABLE IF NOT EXISTS users (
 -- Allow NULL passwords for SSO-only users (idempotent)
 ALTER TABLE users ALTER COLUMN password DROP NOT NULL;
 
+-- The account's Guacamole password. Stored in the clear, unlike `password`
+-- above, because the backend has to present it to Guacamole on the user's
+-- behalf -- it authenticates this service to Guacamole, it is never something a
+-- human types, and it is never returned by any API. It replaces the previous
+-- scheme where the Guacamole password WAS the vu_id: a student number is
+-- printed on ID cards, so anyone who could reach Guacamole could log in as
+-- anyone. NULL means "not yet rotated"; the session route mints one on the next
+-- connect and recreates the Guacamole account to match.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS guac_password VARCHAR(255);
+
 -- The subject scheduled network reconciliation is recorded against.
 -- `network_reconciliation_attempts.requested_by` is a foreign key to `users`, so
 -- a background job needs a real row; attributing its changes to an arbitrary
@@ -48,6 +58,17 @@ ALTER TABLE users ALTER COLUMN password DROP NOT NULL;
 -- anything -- it exists only so the audit trail can name a machine honestly.
 INSERT INTO users (vu_id, password, role)
 VALUES ('system-drift-reconciler', NULL, 'student')
+ON CONFLICT (vu_id) DO NOTHING;
+
+-- The subject a deleted account's audit rows are reattributed to.
+-- `network_reconciliation_attempts.requested_by` is ON DELETE RESTRICT and those
+-- rows are never deleted, so any user who ever provisioned an isolated VM could
+-- not be removed -- and the deletion path destroyed their VMs BEFORE hitting
+-- that constraint. Repointing to this tombstone keeps the audit trail (the
+-- change still happened) without keeping the account. Same NULL password and
+-- `student` role as above: it can never log in or authorise anything.
+INSERT INTO users (vu_id, password, role)
+VALUES ('deleted-user', NULL, 'student')
 ON CONFLICT (vu_id) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS templates (
@@ -258,10 +279,43 @@ CREATE TABLE IF NOT EXISTS instances (
     run_until TIMESTAMPTZ,
 
     FOREIGN KEY (owner_id) REFERENCES users(vu_id) ON DELETE SET NULL,
-    FOREIGN KEY (template_id) REFERENCES templates(id) ON DELETE SET NULL
+    FOREIGN KEY (template_id) REFERENCES templates(id) ON DELETE RESTRICT
 );
 
+-- template_id was ON DELETE SET NULL, which made deleting a template a silent
+-- firewall change on every VM cloned from it: the reconciler read a NULL
+-- connection type and (before the fallback was removed) rewrote the VM's one
+-- ingress rule to RDP/3389. RESTRICT makes the deletion fail loudly instead, so
+-- an admin is told which live instances still depend on the template.
+-- DROP ... IF EXISTS then ADD, because the constraint already exists with the
+-- old action and ADD alone would be a no-op guarded by duplicate_object.
+DO $$
+BEGIN
+    ALTER TABLE instances DROP CONSTRAINT IF EXISTS instances_template_id_fkey;
+    ALTER TABLE instances
+        ADD CONSTRAINT instances_template_id_fkey
+        FOREIGN KEY (template_id) REFERENCES templates(id) ON DELETE RESTRICT;
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
+
 ALTER TABLE instances ADD COLUMN IF NOT EXISTS network_group_id INT;
+
+-- Set while the VM is being cloned and started, NULL once the row describes a
+-- real machine. The row is now written BEFORE the clone rather than after it,
+-- because writing it after left a ~30-second window in which the per-student
+-- quota counted a stale number and every `NOT EXISTS (SELECT 1 FROM instances
+-- ...)` guard in the network state machine was blind to a VM that was already
+-- being built. A crash mid-clone leaves this set, which is how the expiry
+-- sweeper finds and reclaims an abandoned reservation.
+ALTER TABLE instances ADD COLUMN IF NOT EXISTS provisioning_started_at TIMESTAMPTZ;
+
+-- Set when a VM could not be given its firewall policy AND could not then be
+-- destroyed -- i.e. it may be running unfiltered on a shared VLAN. Deliberately
+-- a separate column rather than a `proxmox_status` value: the 15-second status
+-- sync overwrites `status` for every VM it sees, so a status-based marker would
+-- be erased on the next tick.
+ALTER TABLE instances ADD COLUMN IF NOT EXISTS quarantined BOOLEAN NOT NULL DEFAULT FALSE;
 
 DO $$
 BEGIN

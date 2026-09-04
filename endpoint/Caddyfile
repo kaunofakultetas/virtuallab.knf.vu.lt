@@ -51,7 +51,21 @@
             }
         }
 
+        # Guacamole's own login form is NOT sufficient authentication here:
+        # student Guacamole accounts are provisioned by the backend, so
+        # reaching this upstream unauthenticated puts a guessable login page
+        # on the public internet. Gate it on a valid lab session first, the
+        # same way the :8888 site below gates its own upstream.
+        #
+        # Guacamole serves the whole app from this one prefix (assets, /api/*
+        # and the websocket tunnel alike), so the check runs on every proxied
+        # request -- which is why it is a bare JWT verify with no DB round
+        # trip. Caddy passes the WebSocket upgrade through forward_auth.
         handle_path /guac/* {
+            forward_auth virtual-lab-backend:3000 {
+                uri /auth/guac-auth
+            }
+
             reverse_proxy 10.10.10.50:8080 {
                 header_up X-Forwarded-For {remote_host}
             }

@@ -29,6 +29,17 @@ export interface Instance {
 
     created_at: Date;
     run_until: Date | null;
+
+    // Non-NULL only while the VM is being cloned and started. The row is
+    // written before the clone so quotas and the network state machine can see
+    // an in-flight create; this is what distinguishes a reservation from a
+    // finished instance.
+    provisioning_started_at: Date | null;
+
+    // The VM could not be given its firewall policy and could not then be
+    // destroyed, so it may be running unfiltered. Start and session refuse it.
+    quarantined: boolean;
+
     network_group_id: number | null;
     network_group_state: string | null;
 

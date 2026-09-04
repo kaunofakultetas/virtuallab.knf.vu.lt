@@ -18,6 +18,7 @@
 // -----------------------------------------------------------
 
 import { proxmox } from "@/proxmox";
+import { ProxmoxApiError } from "@/proxmox/types";
 import { guacamole } from "@/guacamole";
 import { Instance } from "@/types/instances";
 import { Template } from "@/types/templates";
@@ -39,6 +40,36 @@ import {
     vlabInstanceLifecycleTotal,
     vlabInstancesExpiredRemovedTotal,
 } from "@/utils/metrics";
+
+
+// Thrown by createInstance when the reservation transaction finds the caller
+// already at their VM limit. It exists so the route can answer 429 rather than
+// 500: the authoritative quota check moved into that transaction, where the
+// route can no longer perform it itself.
+export class InstanceQuotaExceededError extends Error {
+    constructor(public readonly limit: number) {
+        super(`VM limit reached (max ${limit} per student)`);
+        this.name = "InstanceQuotaExceededError";
+    }
+}
+
+// How long a reservation may sit unfinished before the expiry sweeper reclaims
+// it. Comfortably longer than a clone-and-boot, short enough that a crashed
+// provisioning run does not hold a student's quota slot for a whole class.
+const RESERVATION_TIMEOUT_MINUTES = 15;
+
+// Proxmox reports an unknown VM as a 500 whose message says "does not exist",
+// not as a 404 -- templates.route.ts translates the same shape for the client.
+function isProxmoxVmMissing(err: unknown): boolean {
+    if (!(err instanceof ProxmoxApiError)) return false;
+    const details =
+        typeof err.details === "object" && err.details !== null
+            ? (err.details as Record<string, unknown>)
+            : null;
+    const message =
+        typeof details?.message === "string" ? details.message.toLowerCase() : "";
+    return err.status === 404 || message.includes("does not exist");
+}
 
 
 export const Instances = {
@@ -226,21 +257,47 @@ export const Instances = {
     },
 
     // The whole birth of an instance, timed end to end: storage capacity
-    // check, clone, cloud-init config (user = "user", password = the
-    // student's vu_id), start, then the DB row with its expiry.
+    // check, RESERVE the row, clone, cloud-init config (user = "user",
+    // password = the student's vu_id), start, then finalise the row.
+    //
+    // The row is reserved before the clone, not written after it. Writing it
+    // last meant the ~30 s clone was a window in which the caller's quota check
+    // read a stale count -- 20 parallel POSTs against a limit of 1 all passed --
+    // and in which `markNetworkGroupDeleting`'s "does this group still have
+    // instances?" guard could not see a VM that was already being built.
+    //
+    // The quota is re-checked INSIDE the reservation transaction, under a
+    // per-owner advisory lock, which is what actually makes it a limit. The
+    // caller's pre-check is only a fast fail.
+    //
+    // The lock is held for the reservation alone -- milliseconds -- and released
+    // before any Proxmox call. It deliberately does not span the clone: the
+    // steps around this one check out one or two more pool clients each, and
+    // with the default pool size of 10 a 30-second transaction would deadlock
+    // the pool under a handful of concurrent creates.
     createInstance: async (
         userId: string,
         template: Template,
         networkGroupId: number,
         bridge: string,
+        // null exempts the caller from the per-student limit, matching the
+        // route's `req.user.role !== "admin"` pre-check. Passed explicitly
+        // rather than re-derived here, so the two checks cannot disagree about
+        // who is exempt.
+        enforceVmLimit: boolean = true,
     ): Promise<number> => {
         const stopTimer = vlabInstanceCreateDurationSeconds.startTimer();
+        let instanceId: number | null = null;
+        let clonedVmId: string | null = null;
+
         try {
-            const [minVmId, defaultRuntimeHours, storageReserveBytes] = await Promise.all([
-                metadata.get<number>("settings.proxmox.minVmId"),
-                metadata.get<number>("settings.instances.defaultRuntimeHours"),
-                metadata.get<number>("settings.proxmox.storageReserveBytes"),
-            ]);
+            const [minVmId, defaultRuntimeHours, storageReserveBytes, vmLimit] =
+                await Promise.all([
+                    metadata.get<number>("settings.proxmox.minVmId"),
+                    metadata.get<number>("settings.instances.defaultRuntimeHours"),
+                    metadata.get<number>("settings.proxmox.storageReserveBytes"),
+                    metadata.get<number>("settings.limits.vmPerStudent"),
+                ]);
             const templateConfig = await proxmox.getVmConfig(template.proxmox_id);
             const storage = getBootDiskStorage(templateConfig);
             const storageStatus = await proxmox.getNodeStorageStatus(storage);
@@ -251,12 +308,75 @@ export const Instances = {
             );
             const newId = await proxmox.getNextAvailableId(minVmId ?? 10_000);
 
+            // --- Reservation: quota + row, atomically -------------------
+            const client = await pool.connect();
+            try {
+                await client.query("BEGIN");
+                // Serialises concurrent creates by the same owner and nobody
+                // else. hashtext() is stable within a major version, which is
+                // all an advisory key needs.
+                await client.query(
+                    "SELECT pg_advisory_xact_lock(hashtext($1))",
+                    [userId],
+                );
+
+                const countRes = await client.query<{ count: string }>(
+                    `SELECT count(*) AS count FROM instances WHERE owner_id = $1`,
+                    [userId],
+                );
+                const owned = parseInt(countRes.rows[0].count, 10);
+
+                // Fail CLOSED on a malformed limit. metadata.get is a cast, not
+                // a parse, so a non-numeric `vmPerStudent` reaches here as-is;
+                // comparing against it yields `n >= NaN` -> false, which
+                // silently removed the quota for everyone. Falling back to the
+                // default is the safe reading of an unusable setting.
+                const configured = Number(vmLimit);
+                const limit =
+                    Number.isFinite(configured) && configured >= 0
+                        ? configured
+                        : 1;
+
+                if (enforceVmLimit && owned >= limit) {
+                    await client.query("ROLLBACK");
+                    throw new InstanceQuotaExceededError(limit);
+                }
+
+                const sqlResp = await client.query<{ id: number }>(
+                    `INSERT INTO instances (
+                        owner_id, template_id, proxmox_id, name, run_until,
+                        network_group_id, provisioning_started_at
+                     )
+                     VALUES ($1, $2, $3, $4, NOW() + make_interval(hours => $5), $6, NOW())
+                     RETURNING id`,
+                    [
+                        userId,
+                        template.id,
+                        newId,
+                        template.name,
+                        defaultRuntimeHours ?? 3,
+                        networkGroupId,
+                    ],
+                );
+                await client.query("COMMIT");
+                instanceId = sqlResp.rows[0].id;
+            } catch (error) {
+                // The quota path has already rolled back; rolling back a
+                // finished transaction is a no-op warning, not an error.
+                await client.query("ROLLBACK").catch(() => {});
+                throw error;
+            } finally {
+                client.release();
+            }
+            // --- end reservation ----------------------------------------
+
             // Clone template -> new id
             const cloneTask = await proxmox.cloneVM(
                 template.proxmox_id,
                 newId,
                 template.name,
             );
+            clonedVmId = newId;
 
             const cloneSuccess = await proxmox.waitForTaskCompletion(cloneTask);
 
@@ -278,33 +398,85 @@ export const Instances = {
                 throw Error("Failed to start VM");
             }
 
-            const sqlResp = await pool.query(
-                `INSERT INTO instances (
-                    owner_id, template_id, proxmox_id, name, run_until, network_group_id
-                 )
-                 VALUES ($1, $2, $3, $4, NOW() + make_interval(hours => $5), $6)
-                 RETURNING id`,
-                [
-                    userId,
-                    template.id,
-                    newId,
-                    template.name,
-                    defaultRuntimeHours ?? 3,
-                    networkGroupId,
-                ],
+            // The row now describes a real machine.
+            await pool.query(
+                `UPDATE instances SET provisioning_started_at = NULL WHERE id = $1`,
+                [instanceId],
             );
 
             vlabInstanceLifecycleTotal.inc({
                 op: "create",
                 result: "success",
             });
-            return sqlResp.rows[0].id;
+            return instanceId;
         } catch (err) {
             vlabInstanceLifecycleTotal.inc({ op: "create", result: "error" });
+
+            // Release the reservation so it stops counting against the quota.
+            // Proxmox teardown is best-effort and only attempted if a VM was
+            // actually cloned; the row must go either way, and whatever this
+            // misses the expiry sweeper reclaims.
+            if (clonedVmId) {
+                try {
+                    // stop first: deleteVM refuses a running guest
+                    const stopTask = await proxmox.stopVM(clonedVmId);
+                    await proxmox.waitForTaskCompletion(stopTask);
+                } catch (stopError) {
+                    logger.warn(
+                        { err: stopError, vmid: clonedVmId },
+                        "Could not stop a half-provisioned VM (may not be running)",
+                    );
+                }
+                try {
+                    const deleteTask = await proxmox.deleteVM(clonedVmId);
+                    await proxmox.waitForTaskCompletion(deleteTask);
+                } catch (cleanupError) {
+                    logger.error(
+                        { err: cleanupError, vmid: clonedVmId },
+                        "Failed to destroy a VM whose provisioning failed",
+                    );
+                }
+            }
+            if (instanceId !== null) {
+                await pool
+                    .query(`DELETE FROM instances WHERE id = $1`, [instanceId])
+                    .catch((cleanupError) => {
+                        logger.error(
+                            { err: cleanupError, instanceId },
+                            "Failed to release an instance reservation",
+                        );
+                    });
+            }
+
             throw err;
         } finally {
             stopTimer();
         }
+    },
+
+    // How many live instances still reference a template. Used only to make the
+    // 409 from DELETE /templates/:id say what is blocking it.
+    countByTemplate: async (templateId: number): Promise<number> => {
+        const res = await pool.query<{ count: string }>(
+            `SELECT count(*) AS count FROM instances WHERE template_id = $1`,
+            [templateId],
+        );
+        return parseInt(res.rows[0].count, 10);
+    },
+
+    // Flags a VM that could not be given its firewall policy AND could not then
+    // be destroyed, so it may be running unfiltered on a shared VLAN. The row is
+    // kept rather than deleted precisely so somebody can find the machine; the
+    // start and session routes refuse it in the meantime.
+    markQuarantined: async (instanceId: number): Promise<void> => {
+        await pool.query(
+            `UPDATE instances SET quarantined = TRUE WHERE id = $1`,
+            [instanceId],
+        );
+        logger.error(
+            { instanceId },
+            "Quarantined an instance: firewall policy failed and the VM could not be removed",
+        );
     },
 
     deleteInstance: async (instanceId: number): Promise<void> => {
@@ -323,8 +495,20 @@ export const Instances = {
                 );
             }
 
-            const deleteTask = await proxmox.deleteVM(instance.proxmox_id);
-            await proxmox.waitForTaskCompletion(deleteTask);
+            try {
+                const deleteTask = await proxmox.deleteVM(instance.proxmox_id);
+                await proxmox.waitForTaskCompletion(deleteTask);
+            } catch (err) {
+                // A reservation row can name a VM that was never cloned, and a
+                // retried teardown can name one already gone. Neither is a
+                // failure to delete -- rethrowing would strand the row, which
+                // is exactly what the row is here to avoid.
+                if (!isProxmoxVmMissing(err)) throw err;
+                logger.warn(
+                    { proxmox_id: instance.proxmox_id, instanceId },
+                    "VM was already absent from Proxmox; removing its row anyway",
+                );
+            }
 
             // 2. Delete Guacamole connections. RDP uses the bare instance id as the
             // name, SSH uses "<id>-ssh" — remove both so neither is orphaned.
@@ -361,19 +545,36 @@ export const Instances = {
     },
 
     // null = run forever (non-expirable).
+    // `maxHoursFromCreation` caps the instance's TOTAL life, measured from
+    // created_at rather than from now -- capping the increment instead would
+    // still let an unbounded number of renewals accumulate. Pass null to renew
+    // without a ceiling (admins), which is the old behaviour.
     updateRuntimeHours: async (
         instanceId: number,
         hoursFromNow: number | null,
+        maxHoursFromCreation: number | null = null,
     ) => {
         if (hoursFromNow === null) {
             await pool.query(
                 `UPDATE instances SET run_until = NULL WHERE id = $1`,
                 [instanceId],
             );
-        } else {
+        } else if (maxHoursFromCreation === null) {
             await pool.query(
                 `UPDATE instances SET run_until = NOW() + make_interval(hours => $1) WHERE id = $2`,
                 [hoursFromNow, instanceId],
+            );
+        } else {
+            // LEAST in SQL, so the ceiling is applied against the row's own
+            // created_at in one statement -- no read-modify-write to race.
+            await pool.query(
+                `UPDATE instances
+                    SET run_until = LEAST(
+                        NOW() + make_interval(hours => $1),
+                        created_at + make_interval(hours => $3)
+                    )
+                  WHERE id = $2`,
+                [hoursFromNow, instanceId, maxHoursFromCreation],
             );
         }
     },
@@ -404,11 +605,20 @@ export const Instances = {
         // `network_group_id` is selected here because the row carrying it is
         // what deletion removes, and the sweeper must release a group whose last
         // VM expired just as the user-facing route does.
+        //
+        // The second clause reclaims abandoned reservations. A row is written
+        // before its VM is cloned, so a crash between the two leaves one that
+        // describes nothing -- and it counts against its owner's quota until
+        // something removes it. `provisioning_started_at` is NULL on every
+        // healthy row, so this matches only genuinely stuck ones.
         const res = await pool.query<{ id: number; network_group_id: number | null }>(
             `SELECT id, network_group_id
              FROM instances
-             WHERE run_until IS NOT NULL
-               AND run_until <= NOW()`,
+             WHERE (run_until IS NOT NULL AND run_until <= NOW())
+                OR (provisioning_started_at IS NOT NULL
+                    AND provisioning_started_at
+                        < NOW() - make_interval(mins => $1))`,
+            [RESERVATION_TIMEOUT_MINUTES],
         );
 
         if (res.rowCount === 0) return 0;

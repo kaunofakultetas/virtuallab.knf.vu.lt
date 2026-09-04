@@ -53,7 +53,12 @@ import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined";
 import type { Instance } from "@/types/instances";
 import type { LabProfile } from "@/types/labProfiles";
 import { getErrorMessage } from "@/utils/errors";
-import { copyInstanceIp, networkLabel } from "@/utils/instances";
+import {
+    copyInstanceIp,
+    displayStatus,
+    isActionable,
+    networkLabel,
+} from "@/utils/instances";
 
 const statusColor: Record<string, "success" | "warning" | "error" | "default"> =
     {
@@ -61,6 +66,10 @@ const statusColor: Record<string, "success" | "warning" | "error" | "default"> =
         stopped: "error",
         suspended: "warning",
         unknown: "default",
+        // Lifecycle states that live outside the Proxmox `status` column --
+        // see displayStatus() in utils/instances.
+        provisioning: "warning",
+        quarantined: "error",
     };
 
 export default function Instances() {
@@ -177,7 +186,7 @@ export default function Instances() {
 
     const handleStart = (instance: Instance) =>
         withAction(String(instance.id), async () => {
-            await axios.get(`/api/instances/${instance.id}/start`);
+            await axios.post(`/api/instances/${instance.id}/start`, null);
             setSnackbar({
                 message: "Instance starting...",
                 severity: "info",
@@ -187,7 +196,7 @@ export default function Instances() {
 
     const handleStop = (instance: Instance) =>
         withAction(String(instance.id), async () => {
-            await axios.get(`/api/instances/${instance.id}/stop`);
+            await axios.post(`/api/instances/${instance.id}/stop`, null);
             setSnackbar({
                 message: "Instance stopping...",
                 severity: "info",
@@ -197,7 +206,7 @@ export default function Instances() {
 
     const handleReboot = (instance: Instance) =>
         withAction(String(instance.id), async () => {
-            await axios.get(`/api/instances/${instance.id}/reboot`);
+            await axios.post(`/api/instances/${instance.id}/reboot`, null);
             setSnackbar({
                 message: "Instance rebooting...",
                 severity: "info",
@@ -207,7 +216,7 @@ export default function Instances() {
 
     const handleRenew = (instance: Instance) =>
         withAction(String(instance.id), async () => {
-            await axios.get(`/api/instances/${instance.id}/renew`);
+            await axios.post(`/api/instances/${instance.id}/renew`, null);
             setSnackbar({
                 message: "Runtime extended by 3 hours.",
                 severity: "success",
@@ -221,8 +230,9 @@ export default function Instances() {
             [`session-${instance.id}`]: true,
         }));
         try {
-            const response = await axios.get<{ type: string; url?: string }>(
+            const response = await axios.post<{ type: string; url?: string }>(
                 `/api/instances/${instance.id}/session`,
+                null,
             );
             if (response.data.type === "web") {
                 // Cookies ignore ports, so this rides along to the :8888 proxy where
@@ -427,12 +437,11 @@ export default function Instances() {
                                             <Chip
                                                 size="small"
                                                 label={
-                                                    instance.status ?? "unknown"
+                                                    displayStatus(instance)
                                                 }
                                                 color={
                                                     statusColor[
-                                                        instance.status ??
-                                                            "unknown"
+                                                        displayStatus(instance)
                                                     ] ?? "default"
                                                 }
                                             />
@@ -463,7 +472,8 @@ export default function Instances() {
                                             </Typography>
                                         </TableCell>
                                         <TableCell align="right">
-                                            {instance.status === "running" && (
+                                            {instance.status === "running" &&
+                                            isActionable(instance) && (
                                                 <>
                                                     <Tooltip title="Connect">
                                                         <span>
@@ -555,7 +565,8 @@ export default function Instances() {
                                                     </Tooltip>
                                                 </>
                                             )}
-                                            {instance.status === "stopped" && (
+                                            {instance.status === "stopped" &&
+                                            isActionable(instance) && (
                                                 <Tooltip title="Start">
                                                     <span>
                                                         <IconButton

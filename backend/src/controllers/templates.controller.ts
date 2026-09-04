@@ -22,6 +22,47 @@ import {
 import { pool } from "@/utils/db";
 
 
+// -----------------------------------------------------------
+// Student-visible template columns
+// -----------------------------------------------------------
+//
+// `connection_config` is JSONB and holds whatever the admin
+// template form wrote, which for `custom` credential mode is a
+// literal RDP/SSH password. `SELECT *` therefore handed that
+// password to every student who could see the template — so
+// the student-facing reads project the column down to the two
+// fields a client has any use for.
+//
+// Two literals rather than one interpolated helper: the
+// lab-profile query joins `templates` under an alias, and a
+// hand-written list keeps SQL identifiers out of template
+// strings entirely.
+//
+// Used by:
+//   - getStudentTemplates (below)
+//   - lab-profiles.controller.ts — hydrateProfiles
+// -----------------------------------------------------------
+
+const STUDENT_SAFE_CONNECTION_CONFIG = `
+    jsonb_strip_nulls(jsonb_build_object(
+        'port', connection_config->'port',
+        'protocol', connection_config->'protocol'
+    )) AS connection_config`;
+
+export const STUDENT_TEMPLATE_COLUMNS = `
+    id, type, name, description, proxmox_id, visible_to_students,
+    connection_type, ${STUDENT_SAFE_CONNECTION_CONFIG}, created_at, updated_at`;
+
+export const STUDENT_TEMPLATE_COLUMNS_ALIASED = `
+    template.id, template.type, template.name, template.description,
+    template.proxmox_id, template.visible_to_students, template.connection_type,
+    jsonb_strip_nulls(jsonb_build_object(
+        'port', template.connection_config->'port',
+        'protocol', template.connection_config->'protocol'
+    )) AS connection_config,
+    template.created_at, template.updated_at`;
+
+
 export const Templates = {
     getAll: async (): Promise<Template[]> => {
         const res = await pool.query(`SELECT * FROM templates`);
@@ -39,7 +80,8 @@ export const Templates = {
 
     getStudentTemplates: async (): Promise<Template[]> => {
         const res = await pool.query(
-            `SELECT * FROM templates WHERE visible_to_students = true`,
+            `SELECT ${STUDENT_TEMPLATE_COLUMNS}
+             FROM templates WHERE visible_to_students = true`,
         );
 
         return res.rows as Template[];

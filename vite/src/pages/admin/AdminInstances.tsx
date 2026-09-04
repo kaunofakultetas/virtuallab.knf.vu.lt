@@ -52,7 +52,12 @@ import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined";
 import type { Instance, Template } from "@/types/instances";
 import type { LabProfile } from "@/types/labProfiles";
 import Switch from "@mui/material/Switch";
-import { copyInstanceIp, networkLabel } from "@/utils/instances";
+import {
+    copyInstanceIp,
+    displayStatus,
+    isActionable,
+    networkLabel,
+} from "@/utils/instances";
 
 type TypeFilter = "all" | "student_vm" | "lab_vm";
 
@@ -62,6 +67,10 @@ const statusColor: Record<string, "success" | "warning" | "error" | "default"> =
         stopped: "error",
         suspended: "warning",
         unknown: "default",
+        // Lifecycle states that live outside the Proxmox `status` column --
+        // see displayStatus() in utils/instances.
+        provisioning: "warning",
+        quarantined: "error",
     };
 
 const typeLabel: Record<string, string> = {
@@ -195,28 +204,28 @@ export default function AdminInstances() {
 
     const handleStart = (instance: Instance) =>
         withAction(String(instance.id), async () => {
-            await axios.get(`/api/instances/${instance.id}/start`);
+            await axios.post(`/api/instances/${instance.id}/start`, null);
             setSnackbar({ message: "Instance starting...", severity: "info" });
             setTimeout(() => void fetchInstancesRef.current?.(false), 3000);
         });
 
     const handleStop = (instance: Instance) =>
         withAction(String(instance.id), async () => {
-            await axios.get(`/api/instances/${instance.id}/stop`);
+            await axios.post(`/api/instances/${instance.id}/stop`, null);
             setSnackbar({ message: "Instance stopping...", severity: "info" });
             setTimeout(() => void fetchInstancesRef.current?.(false), 3000);
         });
 
     const handleReboot = (instance: Instance) =>
         withAction(String(instance.id), async () => {
-            await axios.get(`/api/instances/${instance.id}/reboot`);
+            await axios.post(`/api/instances/${instance.id}/reboot`, null);
             setSnackbar({ message: "Instance rebooting...", severity: "info" });
             setTimeout(() => void fetchInstancesRef.current?.(false), 3000);
         });
 
     const handleRenew = (instance: Instance) =>
         withAction(String(instance.id), async () => {
-            await axios.get(`/api/instances/${instance.id}/renew`);
+            await axios.post(`/api/instances/${instance.id}/renew`, null);
             setSnackbar({
                 message: "Runtime extended by 3 hours.",
                 severity: "success",
@@ -230,8 +239,9 @@ export default function AdminInstances() {
             [`session-${instance.id}`]: true,
         }));
         try {
-            const res = await axios.get<{ url: string }>(
+            const res = await axios.post<{ url: string }>(
                 `/api/instances/${instance.id}/session`,
+                null,
             );
             if (res.data.url) window.open(res.data.url, "_blank");
         } catch (err) {
@@ -512,12 +522,11 @@ export default function AdminInstances() {
                                             <Chip
                                                 size="small"
                                                 label={
-                                                    instance.status ?? "unknown"
+                                                    displayStatus(instance)
                                                 }
                                                 color={
                                                     statusColor[
-                                                        instance.status ??
-                                                            "unknown"
+                                                        displayStatus(instance)
                                                     ] ?? "default"
                                                 }
                                             />
@@ -559,7 +568,8 @@ export default function AdminInstances() {
                                             </Typography>
                                         </TableCell>
                                         <TableCell align="right">
-                                            {instance.status === "running" && (
+                                            {instance.status === "running" &&
+                                            isActionable(instance) && (
                                                 <>
                                                     <Tooltip title="Connect">
                                                         <span>
@@ -626,7 +636,8 @@ export default function AdminInstances() {
                                                     </Tooltip>
                                                 </>
                                             )}
-                                            {instance.status === "stopped" && (
+                                            {instance.status === "stopped" &&
+                                            isActionable(instance) && (
                                                 <Tooltip title="Start">
                                                     <span>
                                                         <IconButton

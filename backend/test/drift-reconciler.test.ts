@@ -52,6 +52,9 @@ function harness(overrides: Partial<DriftReconcilerDependencies> = {}) {
             detail: "converged",
         }),
         observeVmFirewalls: async () => ({ drifted: [], detail: "converged" }),
+        // Stubbed: the real one writes to Postgres, and this harness exercises
+        // the pass with no database at all.
+        recoverStranded: async () => {},
         repairVmFirewalls: async (vmids) => {
             repaired.push(...vmids.map((vmid) => `vm-firewall:${vmid}`));
             return { repaired: vmids, failed: [] };

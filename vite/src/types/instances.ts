@@ -24,6 +24,17 @@ export interface Instance {
     };
     created_at: string;
     run_until: string | null;
+
+    // Non-null only while the VM is still being cloned and started. The backend
+    // writes the row before the clone so quotas can count in-flight creates, so
+    // a row can exist for ~30 s before it describes a real machine.
+    provisioning_started_at: string | null;
+
+    // The VM's firewall policy could not be applied and the VM could not then
+    // be removed, so it may be running unfiltered. Start and session are
+    // refused server-side; the UI hides the buttons to match.
+    quarantined: boolean;
+
     network_group_id: number | null;
     network_group_state: string | null;
     // Null when the instance sits on the shared bridge rather than a reserved

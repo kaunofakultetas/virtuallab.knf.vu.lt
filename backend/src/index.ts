@@ -46,6 +46,7 @@ import { Instances } from "@/controllers/instances.controller";
 import { loggerMiddleware } from "@/middleware/logger.middleware";
 import { metricsMiddleware } from "@/middleware/metrics.middleware";
 import { requestIdMiddleware } from "@/middleware/request-id.middleware";
+import { sameOriginMiddleware } from "@/middleware/same-origin.middleware";
 import { errorHandlerMiddleware } from "@/middleware/error-handler.middleware";
 
 // AsyncTask, not Task. `Task` is the synchronous variant: it calls the handler
@@ -73,6 +74,9 @@ app.use(loggerMiddleware);
 app.use(metricsMiddleware);
 app.use(express.json());
 app.use(cookieParser());
+// After cookieParser so a rejected request is logged with its context, before
+// the routers so nothing state-changing runs on a cross-origin request.
+app.use(sameOriginMiddleware);
 
 app.get("/", (req: Request, res: Response) => {
     res.status(200).send("ok");
@@ -164,11 +168,57 @@ process.on("SIGINT", () => void shutdown("SIGINT"));
 
 
 // -----------------------------------------------------------
+// assertSigningSecret
+// -----------------------------------------------------------
+//
+// The JWT secret is the root of every session in the system,
+// and until now the only "validation" was the `as string`
+// cast at its three read sites. An UNSET secret already fails
+// closed — sign and verify both throw — so the case this
+// catches is the dangerous one: a placeholder or short value
+// that works fine and is brute-forceable offline against any
+// student's own cookie. Recovering it mints
+// {vu_id: anything, role: "admin"}.
+//
+// Used by:
+//   - bootstrap(), before anything else runs
+// -----------------------------------------------------------
+
+const EXAMPLE_JWT_SECRET = "change-me-to-a-long-random-secret";
+const MIN_JWT_SECRET_LENGTH = 32;
+
+function assertSigningSecret() {
+    const secret = process.env.BACKEND_JWT_SECRET;
+
+    if (!secret || secret.trim().length === 0) {
+        logger.error("BACKEND_JWT_SECRET is not set. Refusing to start.");
+        process.exit(1);
+    }
+    if (secret === EXAMPLE_JWT_SECRET) {
+        logger.error(
+            "BACKEND_JWT_SECRET is still the value from .env.example. Refusing to start.",
+        );
+        process.exit(1);
+    }
+    if (secret.length < MIN_JWT_SECRET_LENGTH) {
+        logger.error(
+            { length: secret.length, required: MIN_JWT_SECRET_LENGTH },
+            "BACKEND_JWT_SECRET is too short. Refusing to start.",
+        );
+        process.exit(1);
+    }
+}
+
+
+
+
+// -----------------------------------------------------------
 // bootstrap
 // -----------------------------------------------------------
 //
-// Startup order: schema + metadata defaults (idempotent on
-// every boot), SAML, the four background jobs, and only then
+// Startup order: the signing secret (before anything can mint
+// a token), schema + metadata defaults (idempotent on every
+// boot), SAML, the four background jobs, and only then
 // listen — so a request never arrives before the database is
 // ready. Any failure here tears everything down and exits.
 //
@@ -177,6 +227,8 @@ process.on("SIGINT", () => void shutdown("SIGINT"));
 // -----------------------------------------------------------
 
 async function bootstrap() {
+    assertSigningSecret();
+
     try {
         const schemaPath = path.join(__dirname, "..", "schema.sql");
         const schema = fs.readFileSync(schemaPath, "utf-8");
