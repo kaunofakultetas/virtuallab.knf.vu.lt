@@ -11,7 +11,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildOperationalAccessPlan } from "../src/network/access-desired-state";
-import { planAccess } from "../src/network/adapters/access";
+import { planAccess, RestrictedSshAccessObservationClient } from "../src/network/adapters/access";
 import { buildInfrastructurePlan } from "../src/network/infrastructure-desired-state";
 
 const infrastructurePlan = buildInfrastructurePlan([{
@@ -145,4 +145,24 @@ test("fails closed for malformed topology and plans guest drift", () => {
     assert.deepEqual(result.actions.map(({ resource }) => resource), [
         "lxc/200/guest-network-policy",
     ]);
+});
+
+test("the observer asks for the 5 s client capture only when told to", async () => {
+    const requests: unknown[] = [];
+    // The request is all that matters here; failing the call skips parsing.
+    const transport = {
+        async execute(request: unknown): Promise<unknown> {
+            requests.push(request);
+            throw new Error("stop");
+        },
+    };
+
+    await assert.rejects(new RestrictedSshAccessObservationClient(transport).observe(), /stop/);
+    await assert.rejects(new RestrictedSshAccessObservationClient(transport, true).observe(), /stop/);
+
+    // Absent, not false: a host on the previous forced command rejects any
+    // field it does not know, so the default request must stay byte-for-byte
+    // what it was.
+    assert.ok(!("capture_connections" in (requests[0] as object)));
+    assert.equal((requests[1] as { capture_connections?: boolean }).capture_connections, true);
 });

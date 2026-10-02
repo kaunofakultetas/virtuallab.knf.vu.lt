@@ -294,8 +294,8 @@ async function bootstrap() {
         // provisioning or teardown request: a hand edit, a guest reboot that
         // lost a runtime-only setting, a reconciliation that failed after its
         // trigger had gone. It observes first and only repairs what actually
-        // drifted, because an unconditional apply restarts Squid and dnsmasq and
-        // would interrupt every session on a schedule.
+        // drifted, because an unconditional apply reloads Squid and would
+        // disturb every session on a schedule.
         //
         // Ten minutes is a compromise: long enough that a healthy stack is only
         // being read from, short enough that drift is repaired before anybody

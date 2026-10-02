@@ -45,7 +45,11 @@ import {
 // 6: broadcast DHCP is admitted again. Version 5 scoped the udp/67 accept to the
 //    interface's own address, which no DHCPDISCOVER carries, so no new VM could
 //    take a lease; existing VMs were unaffected because renewal is unicast.
-export const GATEWAY_RENDER_VERSION = 6;
+// 7: dnsmasq lists every VLAN in the approved range rather than only allocated
+//    groups, so a new group no longer changes the file and dnsmasq is not
+//    restarted on every VM create. Squid's lab_any_src is one line per subnet, so a new
+//    group only adds lines to squid.conf and the applier can reload Squid.
+export const GATEWAY_RENDER_VERSION = 7;
 
 // Loopback-only forward-proxy port.
 //

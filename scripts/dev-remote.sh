@@ -25,10 +25,14 @@ Commands:
   preflight-tokens  Run the secret-safe Proxmox network token lifecycle preflight.
   attempt-status    Print the newest reconciliation attempt summary.
   attempt-detail    Print the newest attempt's revision, actions, and checks.
+  attempt-timings   Per-step apply durations over the last 14 days.
   configure-gateway <mgmt> <trunk> <uplink> <resolvers>
                     Record the Gateway guest interface names and resolvers.
   settings          List persisted settings (metadata) keys and values.
   groups            List persisted network groups and their allocations.
+  templates         List templates and how students connect to them.
+  instances         List live instances with their template and address.
+  guacd-logs        Tail the Guacamole/guacd log from the Access LXC (200).
   vnets             List Proxmox SDN VNets and zones.
   status            Print Compose service state.
 
@@ -76,6 +80,26 @@ cmd_attempt_detail() {
     in_ct "docker compose exec -T virtual-lab-postgres sh -c '\''psql -x -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -c \"SELECT id, desired_revision, jsonb_array_length(checks) AS n_checks, jsonb_array_length(actions) AS n_actions FROM network_reconciliation_attempts ORDER BY id DESC LIMIT 1\" -c \"SELECT jsonb_pretty(actions) AS actions FROM network_reconciliation_attempts ORDER BY id DESC LIMIT 1\" -c \"SELECT jsonb_pretty(checks) AS checks FROM network_reconciliation_attempts ORDER BY id DESC LIMIT 1\"'\''"
 }
 
+# How long each provisioning/teardown step takes, from the attempt log. The
+# SQL travels over stdin rather than through the nested shell quoting, so it can
+# use ordinary string literals. Access-trunk attempts carry component "access"
+# like the Access policy, so they are told apart by their own check key.
+cmd_attempt_timings() {
+    in_ct "docker compose exec -T virtual-lab-postgres sh -c '\''psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\"'\''" <<'SQL'
+SELECT
+    CASE WHEN checks @> '[{"key": "access-trunk-live"}]' THEN 'access-trunk'
+         ELSE checks->0->>'component' END AS step,
+    status,
+    count(*) AS n,
+    round(avg(extract(epoch FROM finished_at - started_at))::numeric, 1) AS avg_s,
+    round(max(extract(epoch FROM finished_at - started_at))::numeric, 1) AS max_s
+FROM network_reconciliation_attempts
+WHERE mode = 'apply' AND finished_at > now() - interval '14 days'
+GROUP BY 1, 2
+ORDER BY 1, 2;
+SQL
+}
+
 # Records the Gateway guest's observed interface names and upstream resolvers.
 # Values are passed as environment variables so no shell quoting reaches the SQL
 # or JavaScript layer.
@@ -104,6 +128,20 @@ cmd_groups() {
 
 # Authenticated read-only readiness report, minted with a short-lived admin JWT
 # inside the backend container so no secret is passed through the shell.
+cmd_templates() {
+    in_ct "docker compose exec -T virtual-lab-postgres sh -c '\''psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -c \"SELECT id, type, name, proxmox_id, visible_to_students, connection_type, connection_config FROM templates ORDER BY id\"'\''"
+}
+
+cmd_instances() {
+    in_ct "docker compose exec -T virtual-lab-postgres sh -c '\''psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -c \"SELECT i.id, i.proxmox_id, i.name, i.template_id, t.connection_type, i.network_group_id, i.run_until FROM instances i LEFT JOIN templates t ON t.id = i.template_id ORDER BY i.id\"'\''"
+}
+
+# Guacamole and guacd share one container on the Access LXC, so guacd's RDP
+# failure reasons land in that container's log. Read-only.
+cmd_guacd_logs() {
+    on_host "pct exec 200 -- sh -c 'cd ${INSTALL_ROOT}/infra/guacamole && docker compose logs --tail 200 --no-color guacamole'"
+}
+
 cmd_readiness() {
     in_ct "docker compose exec -T virtual-lab-backend node -e \"const jwt=require('\''jsonwebtoken'\'');const t=jwt.sign({vu_id:process.env.SMOKE_USER||'\''admin'\'',role:'\''admin'\''},process.env.BACKEND_JWT_SECRET,{expiresIn:'\''2m'\''});fetch('\''http://localhost:3000/network/readiness'\'',{headers:{authorization:'\''Bearer '\''+t}}).then(r=>r.json()).then(b=>{console.log('\''mode='\''+b.mode,'\''ready_for_active='\''+b.ready_for_active);for(const c of b.checks)if(c.status!=='\''pass'\'')console.log(c.status.toUpperCase(),c.key,'\''|'\'',c.detail);}).catch(e=>{console.error(e.message);process.exit(1)})\""
 }
@@ -130,8 +168,12 @@ main() {
         preflight-tokens) cmd_preflight_tokens ;;
         attempt-status) cmd_attempt_status ;;
         attempt-detail) cmd_attempt_detail ;;
+        attempt-timings) cmd_attempt_timings ;;
         settings) cmd_settings ;;
         groups) cmd_groups ;;
+        templates) cmd_templates ;;
+        instances) cmd_instances ;;
+        guacd-logs) cmd_guacd_logs ;;
         readiness) cmd_readiness ;;
         vnets) cmd_vnets ;;
         status) cmd_status ;;

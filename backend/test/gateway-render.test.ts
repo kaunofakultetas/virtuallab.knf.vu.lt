@@ -65,13 +65,40 @@ test("dnsmasq never binds or serves DHCP on the uplink", () => {
     assert.doesNotMatch(files.dnsmasq, /^dhcp-range=ens20/m);
 });
 
-test("dnsmasq binds only loopback when no lab VLAN exists", () => {
+test("dnsmasq lists every VLAN in the range even when no group exists", () => {
     const { files } = render(baseInput());
 
-    // An empty interface list would otherwise let dnsmasq fall back to every
-    // interface, putting a DHCP server on the shared uplink segment.
-    assert.match(files.dnsmasq, /^interface=lo$/m);
-    assert.doesNotMatch(files.dnsmasq, /^dhcp-range=/m);
+    // A non-empty interface list is what stops dnsmasq falling back to every
+    // interface and putting a DHCP server on the shared uplink segment.
+    assert.equal((files.dnsmasq.match(/^interface=/gm) ?? []).length, 256);
+    assert.match(files.dnsmasq, /^interface=ens19\.2000$/m);
+    assert.match(files.dnsmasq, /^interface=ens19\.2255$/m);
+    assert.match(files.dnsmasq, /^dhcp-range=ens19\.2255,10\.200\.255\.25,10\.200\.255\.254,255\.255\.255\.0,12h$/m);
+    assert.doesNotMatch(files.dnsmasq, /^interface=(ens18|ens20|lo)$/m);
+});
+
+test("allocating a group only adds lines to squid.conf, so Squid can be reloaded", () => {
+    // The applier restarts Squid whenever a line disappears (that is what cuts
+    // a revoked domain's open tunnels), so an ordinary allocation must not
+    // remove any.
+    const lines = (input: GatewayDesiredStateInput) => render(input).files.squid
+        .split("\n").filter((line) => !/revision [0-9a-f]{64}/.test(line));
+    const before = lines(baseInput({ groups: [group(2000, 1, ["a.example"])] }));
+    const after = lines(baseInput({ groups: [group(2000, 1, ["a.example"]), group(2001, 2, ["b.example"])] }));
+
+    assert.deepEqual(before.filter((line) => !after.includes(line)), []);
+    assert.match(after.join("\n"), /^acl lab_any_src src 10\.200\.1\.0\/24$/m);
+});
+
+test("allocating a group leaves the dnsmasq file unchanged apart from the revision", () => {
+    // The applier skips the dnsmasq restart when only the revision line moved,
+    // so a group must not change anything else in this file.
+    const withoutRevision = (text: string) => text.replace(/revision [0-9a-f]{64}/, "");
+    const before = render(baseInput()).files.dnsmasq;
+    const after = render(baseInput({ groups: [group(2000), group(2007)] })).files.dnsmasq;
+
+    assert.notEqual(before, after);
+    assert.equal(withoutRevision(before), withoutRevision(after));
 });
 
 test("dnsmasq advertises the gateway as router and resolver per VLAN", () => {

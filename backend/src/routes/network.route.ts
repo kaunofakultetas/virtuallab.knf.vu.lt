@@ -322,8 +322,8 @@ async function convergeAfterRevocation(requestedBy: string) {
 // is the point. That would be an unconditional apply of the
 // whole plan; this is the same observe-then-repair pass the
 // scheduler already runs unattended, so it touches only
-// what genuinely drifted and restarts Squid and dnsmasq
-// only when the Gateway is actually wrong. It opens no
+// what genuinely drifted and reloads Squid only when the
+// Gateway is actually wrong. It opens no
 // capability the stack did not already exercise on its own
 // — it only changes when.
 //
@@ -384,7 +384,9 @@ router.post("/reconciliation-attempts", isAuthenticated, isAdmin, async (req, re
 
     let accessObserver: AccessObservationClient;
     try {
-        accessObserver = createAccessObserver();
+        // The dry-run is the one observation a person reads, so it is the one
+        // that pays for the guest's 5 s capture of Guacamole client sources.
+        accessObserver = createAccessObserver(process.env, { captureConnections: true });
     } catch (error) {
         if (!(error instanceof AccessClientConfigurationError)) throw error;
         return res.status(503).json({ error: "Access observation is not configured" });

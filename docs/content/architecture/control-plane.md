@@ -184,9 +184,9 @@ Every ten minutes the backend re-checks live state against desired state. It run
 only in `active` mode.
 
 It **observes first and repairs only what actually drifted**. An unconditional
-apply would be the wrong shape here: a Gateway apply restarts Squid and dnsmasq,
-so applying on a schedule would interrupt every student's session in order to
-write files that were already correct. Observation is cheap and read-only; repair
+apply would be the wrong shape here: a Gateway apply reloads Squid, briefly
+closing its listeners, so applying on a schedule would disturb every student's
+traffic in order to write files that were already correct. Observation is cheap and read-only; repair
 is not.
 
 Only *fixable* drift triggers a repair. Checks whose subject is guest

@@ -31,6 +31,7 @@ import re
 import signal
 import socket
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -363,8 +364,8 @@ def parse_conntrack(output: str) -> list[dict[str, Any]]:
 ############################################################
 #
 # Reads whichever conntrack proc file this kernel exposes;
-# an empty result (no file, or no flows) tells socket_state
-# to fall back to the packet capture.
+# an empty result (no file, or no flows) lets socket_state
+# fall back to the packet capture when one was requested.
 #
 # Used by:
 #   - socket_state (below)
@@ -477,20 +478,25 @@ def packet_capture(errors: list[str], duration_seconds: int = 5) -> list[dict[st
 #
 # Listeners plus the merged connection view: socket-level
 # connections (post-DNAT), overlaid with the original client
-# sources from conntrack — or from a live capture when
-# conntrack has no matching flow.
+# sources from conntrack — or, when `capture` is set and
+# conntrack has no matching flow, from a 5 s live capture.
+# conntrack is not visible inside LXC 200, so the capture
+# would otherwise cost every observation five seconds.
 #
 # Used by:
 #   - main (below)
 ############################################################
 
-def socket_state(errors: list[str]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def socket_state(
+    errors: list[str],
+    capture: bool,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     output = run(["ss", "-H", "-4", "-tna"], errors)
     listeners, socket_connections = (
         parse_socket_state(output) if output is not None else ([], [])
     )
     observed_connections = conntrack_state()
-    if not observed_connections:
+    if not observed_connections and capture:
         observed_connections = packet_capture(errors)
     connections = {
         (connection["local_port"], connection["remote_address"])
@@ -569,7 +575,7 @@ def nftables(errors: list[str]) -> dict[str, Any]:
 
 def main() -> None:
     errors: list[str] = []
-    listeners, connections = socket_state(errors)
+    listeners, connections = socket_state(errors, "--capture-connections" in sys.argv[1:])
     observation = {
         "version": 1,
         "captured_at": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),

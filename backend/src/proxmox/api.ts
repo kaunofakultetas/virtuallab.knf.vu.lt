@@ -750,6 +750,19 @@ export class ProxmoxClient {
         );
     }
 
+    // Any guest on any node: for sweeps that start from
+    // getClusterResources("vm"), where a guest need not live on nodeName.
+    async getGuestConfig(
+        node: string,
+        type: "qemu" | "lxc",
+        vmid: string,
+    ): Promise<ProxmoxGuestConfig> {
+        return this.request<ProxmoxGuestConfig>(
+            "GET",
+            `/nodes/${encodeURIComponent(node)}/${type}/${encodeURIComponent(vmid)}/config`,
+        );
+    }
+
     async getNodeStorageStatus(storage: string): Promise<ProxmoxNodeStorageStatus> {
         return this.request<ProxmoxNodeStorageStatus>(
             "GET",

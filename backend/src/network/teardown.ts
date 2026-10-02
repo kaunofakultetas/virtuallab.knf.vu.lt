@@ -133,27 +133,44 @@ export type RevisionedApply = {
 // instance row was lost, would be invisible to any query
 // over `instances`.
 //
+// Cluster-wide and both guest kinds, read in parallel: a
+// leftover container, or a VM on another node, is just as
+// much on the VLAN as a QEMU guest on this one.
+//
 // Used by:
 //   - releaseNetworkGroup (below) — the guard step
+//   - test/teardown.test.ts
 // -----------------------------------------------------------
 
-async function findVnetReferencesInProxmox(
-    client: Pick<ProxmoxClient, "getVms" | "getVmConfig">,
+export async function findVnetReferencesInProxmox(
+    client: Pick<ProxmoxClient, "getClusterResources" | "getGuestConfig">,
     vnetName: string,
 ): Promise<string[]> {
-    const referencing: string[] = [];
-    for (const vm of await client.getVms()) {
-        const config = await client.getVmConfig(String(vm.vmid));
-        const referenced = Object.entries(config).some(([key, value]) => (
+    const guests: { node: string; type: string; vmid: number }[] =
+        await client.getClusterResources("vm");
+    const referenced = await Promise.all(guests.map(async ({ node, type, vmid }) => {
+        if (type !== "qemu" && type !== "lxc") {
+            // Fail closed: a guest kind this check cannot read might be the
+            // one still bridged to the VNet.
+            throw new Error(`Cannot inspect ${type}/${vmid} for VNet references`);
+        }
+        const config = await client.getGuestConfig(node, type, String(vmid)).catch(async (error) => {
+            // A guest destroyed between the listing and this read cannot be on
+            // the VNet, and must not strand an unrelated group's teardown. One
+            // still listed anywhere -- even migrated -- fails closed.
+            const remaining: { vmid: number }[] = await client.getClusterResources("vm");
+            if (remaining.some((guest) => guest.vmid === vmid)) throw error;
+            return {};
+        });
+        return Object.entries(config).some(([key, value]) => (
             /^net\d+$/.test(key)
             && typeof value === "string"
             // Anchored on the field boundary so `lab2000` never matches
             // `lab20001`, which would silently protect the wrong VNet.
             && new RegExp(`(^|,)bridge=${vnetName}(,|$)`).test(value)
-        ));
-        if (referenced) referencing.push(`qemu/${vm.vmid}`);
-    }
-    return referencing;
+        )) ? `${type}/${vmid}` : null;
+    }));
+    return referenced.filter((reference): reference is string => reference !== null);
 }
 
 
@@ -244,25 +261,25 @@ async function reconcile(
 // -----------------------------------------------------------
 
 async function deleteVnetWithMutator(vnetName: string): Promise<void> {
-    const proxmox = createNetworkProxmoxMutator();
+    const mutator = createNetworkProxmoxMutator();
     try {
         // Absence is the goal, so an already-absent VNet is success. Teardown is
         // resumable by design, and a retry after a failure further down the
         // sequence arrives here with the VNet already gone -- issuing the DELETE
         // anyway turns a completed step into a 404 and blocks the retry forever.
-        if ((await proxmox.getSdnVnets()).some(({ vnet }) => vnet === vnetName)) {
-            await proxmox.deleteSdnVnet(vnetName);
-            const upid = await proxmox.applySdnConfiguration();
-            if (upid) await proxmox.waitForTask(upid);
+        if ((await mutator.getSdnVnets()).some(({ vnet }) => vnet === vnetName)) {
+            await mutator.deleteSdnVnet(vnetName);
+            const upid = await mutator.applySdnConfiguration();
+            if (upid) await mutator.waitForTask(upid);
         }
         // Verified rather than assumed: an SDN apply that reports success while
         // leaving the VNet behind would release the VLAN into the pool with a
         // live bridge still carrying its name.
-        if ((await proxmox.getSdnVnets()).some(({ vnet }) => vnet === vnetName)) {
+        if ((await mutator.getSdnVnets()).some(({ vnet }) => vnet === vnetName)) {
             throw new Error(`VNet ${vnetName} still exists after delete and apply`);
         }
     } finally {
-        await proxmox.close();
+        await mutator.close();
     }
 }
 
@@ -318,14 +335,15 @@ export async function releaseNetworkGroup(
         ?? (async () => (await getInfrastructurePlan()).revision);
     const gatewayRevision = dependencies.gatewayRevision
         ?? (async () => (await getGatewayPlan()).revision);
+    // The app-wide client, not the network mutator: the mutator's token is
+    // scoped to /sdn, and Proxmox silently filters out every guest a token may
+    // not audit -- so through it this guard saw no VMs and always passed.
+    // Imported lazily, as drift-reconciler.ts does, so loading this module
+    // does not require the app client's environment.
     const findReferences = dependencies.findVnetReferences
         ?? (async (vnetName: string) => {
-            const proxmox = createNetworkProxmoxMutator();
-            try {
-                return await findVnetReferencesInProxmox(proxmox, vnetName);
-            } finally {
-                await proxmox.close();
-            }
+            const { proxmox } = await import("@/proxmox");
+            return findVnetReferencesInProxmox(proxmox, vnetName);
         });
 
     const marked = await markDeleting(group.id);

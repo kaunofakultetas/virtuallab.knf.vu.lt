@@ -71,12 +71,22 @@ export interface AccessObservationClient {
 // answer left in the channel must never be read as this
 // call's result.
 //
+// `captureConnections` asks the guest for its 5 s packet
+// capture of Guacamole client sources. It feeds only the
+// non-required `-source` checks, so it is left off for the
+// provisioning and drift paths, which observe several times
+// per request. The field is sent only when set, so a host
+// still running the older forced command keeps answering.
+//
 // Used by:
 //   - access-clients.ts — createAccessObserver
 // -----------------------------------------------------------
 
 export class RestrictedSshAccessObservationClient implements AccessObservationClient {
-    constructor(private readonly transport: Pick<RestrictedSshTransport, "execute">) {}
+    constructor(
+        private readonly transport: Pick<RestrictedSshTransport, "execute">,
+        private readonly captureConnections = false,
+    ) {}
 
     async observe(): Promise<AccessHostObservation> {
         const requestId = randomUUID();
@@ -85,6 +95,7 @@ export class RestrictedSshAccessObservationClient implements AccessObservationCl
             request_id: requestId,
             target: "access",
             operation: "observe",
+            ...(this.captureConnections ? { capture_connections: true } : {}),
         }));
         if (result.request_id !== requestId) {
             throw new Error("Access observer request ID does not match the request");

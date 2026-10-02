@@ -97,12 +97,16 @@ function missingKeys(error: z.ZodError): string[] {
 // observe must not be allowed to look like one that
 // observed nothing wrong.
 //
+// `captureConnections` turns on the guest's 5 s client
+// capture — only the admin dry-run asks for it.
+//
 // Used by:
 //   - network.route.ts, readiness.ts, drift-reconciler.ts
 // -----------------------------------------------------------
 
 export function createAccessObserver(
     environment: NodeJS.ProcessEnv = process.env,
+    { captureConnections = false }: { captureConnections?: boolean } = {},
 ): AccessObservationClient {
     const config = observerConfigSchema.safeParse(environment);
     if (!config.success) {
@@ -119,7 +123,7 @@ export function createAccessObserver(
         // The guest observation runs inside `pct exec` within the forced
         // command, so it needs more headroom than a plain host command.
         executionTimeoutMs: 45_000,
-    }));
+    }), captureConnections);
 }
 
 

@@ -120,7 +120,7 @@ def main() -> None:
         input_text=APPLIER.read_text(),
         timeout=30,
     )
-    # Generous, because staging restarts Squid, which is the slowest step.
+    # Generous, because staging may (re)start Squid, which is the slowest step.
     answer = guest(
         f"sudo -n /usr/bin/python3 {REMOTE_APPLIER}",
         input_text=json.dumps(request),

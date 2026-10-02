@@ -128,7 +128,7 @@ export function createGatewayApplier(
         identityFile: config.data.GATEWAY_APPLIER_IDENTITY_FILE,
         knownHostsFile: config.data.GATEWAY_APPLIER_KNOWN_HOSTS_FILE,
         remoteCommand: config.data.GATEWAY_APPLIER_COMMAND,
-        // Staging restarts Squid and reloads nftables on the guest, over two SSH
+        // Staging reloads Squid and nftables on the guest, over two SSH
         // hops. The guest's own rollback timer bounds the damage if this is cut
         // short, so a generous ceiling is safer than a premature abort.
         executionTimeoutMs: 180_000,

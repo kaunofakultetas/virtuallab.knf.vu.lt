@@ -52,6 +52,8 @@ ROLLBACK_SCRIPT = STATE_DIR / "rollback.sh"
 MAX_REQUEST_BYTES = 512 * 1024
 MANAGED_TABLE = "virtual_lab_gateway"
 REVISION_PATTERN = re.compile(r"Gateway desired-state revision ([0-9a-f]{64})")
+DNSMASQ_CONF = "/etc/dnsmasq.d/virtual-lab-gateway.conf"
+SQUID_CONF = "/etc/squid/squid.conf"
 
 # Only these paths may be written. The applier runs as root, so this is not a
 # privilege boundary; it is a contract boundary. A request that names anything
@@ -59,8 +61,8 @@ REVISION_PATTERN = re.compile(r"Gateway desired-state revision ([0-9a-f]{64})")
 # guest that no renderer knows how to remove.
 ALLOWED_EXACT = {
     "/etc/nftables.d/virtual-lab-gateway.nft",
-    "/etc/dnsmasq.d/virtual-lab-gateway.conf",
-    "/etc/squid/squid.conf",
+    DNSMASQ_CONF,
+    SQUID_CONF,
     "/etc/sysctl.d/99-virtual-lab-gateway.conf",
 }
 # Gateway VLAN subinterfaces are named after the trunk parent, e.g. ens19.2000 --
@@ -296,14 +298,78 @@ def live_revision() -> str | None:
 
 
 ############################################################
+# changed_paths
+############################################################
+#
+# The requested paths whose content differs from what is on
+# disk. Every rendered file names the plan revision, and the
+# revision moves on every allocation, so the comparison
+# ignores that line — otherwise every file would always
+# count as changed and nothing would ever be skipped.
+#
+# Used by:
+#   - operation_stage (below)
+#   - test_apply_gateway.py
+############################################################
+
+def body(text: str) -> str:
+    return REVISION_PATTERN.sub("", text)
+
+
+def changed_paths(files: dict[str, str]) -> set[str]:
+    return {
+        path for path, content in files.items()
+        if not Path(path).exists() or body(Path(path).read_text()) != body(content)
+    }
+
+
+
+
+
+
+
+
+############################################################
+# removes_lines
+############################################################
+#
+# Whether installing `content` at `path` would drop any line
+# the live file has. For squid.conf that is the line between
+# a reload and a restart: a reload applies new ACLs to new
+# requests only, so an allowlist entry that disappears would
+# keep its already-spliced tunnels open. The renderer keeps
+# an ordinary allocation purely additive for exactly this.
+#
+# Used by:
+#   - operation_stage (below)
+#   - test_apply_gateway.py
+############################################################
+
+def removes_lines(path: str, content: str) -> bool:
+    live = Path(path)
+    if not live.exists():
+        return False
+    kept = set(body(content).splitlines())
+    return any(line not in kept for line in body(live.read_text()).splitlines())
+
+
+
+
+
+
+
+
+############################################################
 # validate_staged
 ############################################################
 #
 # Offline validation of staged content. Every validator here
 # is necessary but not sufficient: `squid -k parse` in
 # particular never binds a socket, so a port collision
-# passes parse and only fatals at start — the service
-# restart in reload_services is the real gate.
+# passes parse and only fatals at start. Squid is reloaded,
+# not restarted, and a reload returns before the reconfigure
+# finishes — so the real gate is the observer proof and the
+# commit-time verify, both of which run after it settles.
 #
 # Used by:
 #   - operation_stage (below)
@@ -480,23 +546,53 @@ def remove_pruned_vlan_links(pruned: list[str]) -> list[str]:
 # files would be written and never take effect — invisible
 # until the first group is allocated.
 #
+# dnsmasq and Squid are touched only when their own file
+# changed (`changed`, from changed_paths), because an apply
+# runs on every VM create and each restart interrupted every
+# student at once. dnsmasq's file lists every lab VLAN, so a
+# new group never changes it: bind-dynamic picks up the new
+# subinterface by itself. Squid's does change; a purely
+# additive change gets a reload (SIGHUP), which keeps
+# established tunnels and skips shutdown_lifetime. Anything
+# that removes a line (`restart_squid`) — a revoked domain,
+# a released group — still restarts, because only that
+# closes tunnels the old configuration let through. An
+# unchanged service is still `start`ed, which is a no-op
+# when it runs and the drift repair when it does not.
+#
 # Used by:
 #   - operation_stage (below)
 ############################################################
 
-def reload_services(paths: list[str], pruned: list[str] | None = None) -> list[str]:
+def reload_services(
+    paths: list[str],
+    pruned: list[str],
+    changed: set[str],
+    restart_squid: bool,
+) -> list[str]:
     reloaded = []
     if any(path.startswith("/etc/systemd/network/") for path in paths):
         run(["networkctl", "reload"])
         reloaded.append("networkd")
-        for interface in remove_pruned_vlan_links(pruned or []):
+        for interface in remove_pruned_vlan_links(pruned):
             reloaded.append(f"removed:{interface}")
     run(["sysctl", "--system"])
     reloaded.append("sysctl")
-    run(["systemctl", "restart", "dnsmasq"])
-    reloaded.append("dnsmasq")
-    run(["systemctl", "restart", "squid"], timeout=90)
-    reloaded.append("squid")
+    if DNSMASQ_CONF in changed:
+        # SIGHUP never re-reads dnsmasq's main config, so a real change
+        # needs the restart.
+        run(["systemctl", "restart", "dnsmasq"])
+        reloaded.append("dnsmasq")
+    else:
+        run(["systemctl", "start", "dnsmasq"])
+    if SQUID_CONF in changed:
+        # reload-or-restart, not reload: plain reload fails on a stopped unit,
+        # which is exactly the state a previous failed apply leaves behind.
+        action = "restart" if restart_squid else "reload-or-restart"
+        run(["systemctl", action, "squid"], timeout=90)
+        reloaded.append("squid" if restart_squid else "squid:reload")
+    else:
+        run(["systemctl", "start", "squid"], timeout=90)
     run(["nft", "-f", "/etc/nftables.conf"])
     reloaded.append("nftables")
     return reloaded
@@ -602,6 +698,10 @@ def operation_stage(request: dict[str, Any]) -> dict[str, Any]:
     # and no longer desired is removed as part of the same transaction.
     prune = [path for path in existing_variable_paths() if path not in files]
 
+    # Compared now, while the live files are still the ones in force.
+    changed = changed_paths(files)
+    restart_squid = SQUID_CONF in files and removes_lines(SQUID_CONF, files[SQUID_CONF])
+
     # Stage under the basename each validator expects, then back up whatever is
     # currently in force so the rollback restores reality, not an assumption.
     for path, content in sorted(files.items()):
@@ -636,7 +736,7 @@ def operation_stage(request: dict[str, Any]) -> dict[str, Any]:
 
     # STEP 8: make it live — service reloads — and verify
     # ===================================================
-    reloaded = reload_services(sorted([*files, *prune]), prune)
+    reloaded = reload_services(sorted([*files, *prune]), prune, changed, restart_squid)
     verification = verify(str(revision))
 
 

@@ -29,6 +29,8 @@ class ForcedCommandTest(unittest.TestCase):
     # The name-set comparison rejects a request with any extra
     # field — an "apply" flag smuggled beside the observe call
     # fails, it does not fall through as ignored.
+    # The one optional field, capture_connections, must be a
+    # real boolean.
     ############################################################
 
     def test_accepts_only_the_fixed_observe_request(self) -> None:
@@ -41,6 +43,10 @@ class ForcedCommandTest(unittest.TestCase):
         self.assertEqual(request["target"], "access")
         with self.assertRaisesRegex(ValueError, "unknown or missing"):
             observer.parse_request(json.dumps({**request, "apply": True}).encode())
+        captured = observer.parse_request(json.dumps({**request, "capture_connections": True}).encode())
+        self.assertIs(captured["capture_connections"], True)
+        with self.assertRaisesRegex(ValueError, "must be a boolean"):
+            observer.parse_request(json.dumps({**request, "capture_connections": "yes"}).encode())
 
 
 

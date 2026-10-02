@@ -4,11 +4,11 @@
 //  Observes first, repairs only what actually drifted.
 //
 //  This runs on a timer, which makes "apply unconditionally"
-//  the wrong shape: a Gateway apply restarts Squid and
-//  dnsmasq and arms a rollback timer each time, so an
-//  unconditional pass would interrupt every student's
-//  session on a schedule in order to write files that were
-//  already correct. Observation is cheap and read-only;
+//  the wrong shape: a Gateway apply reloads Squid (briefly
+//  closing its listeners) and arms a rollback timer each
+//  time, so an unconditional pass would disturb every
+//  student's traffic on a schedule in order to write files
+//  that were already correct. Observation is cheap and read-only;
 //  repair is not.
 //
 //  Only *fixable* drift triggers a repair — the same sets

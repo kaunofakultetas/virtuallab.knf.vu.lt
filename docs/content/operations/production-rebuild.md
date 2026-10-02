@@ -465,6 +465,16 @@ without OpenSSL, and the rendered configuration uses `ssl-bump`, so validation
 fails with `FATAL: Unknown https_port option 'ssl-bump'` — a message that names
 the config rather than the package, and sends you looking in the wrong place.
 
+Take Squid from `noble-updates` (6.14 or later), not the 6.6 release pocket. A
+Gateway apply **reloads** Squid rather than restarting it, so established
+student sessions survive a new group being created, and 6.11 fixed a DNS bug
+on exactly that reconfigure path. Confirm both once the packages are in:
+
+```bash
+squid -v | head -1                          # Version 6.14 or later
+systemctl cat squid | grep ExecReload       # ExecReload=/bin/kill -HUP $MAINPID
+```
+
 The rendered configuration also references a certificate that nothing in this
 repository creates ([`gateway-render.ts`](https://github.com/kaunofakultetas/virtuallab.knf.vu.lt/blob/main/backend/src/network/gateway-render.ts) writes
 `cert=/etc/squid/ssl/gateway-bump.pem`). Generate it before the first apply:

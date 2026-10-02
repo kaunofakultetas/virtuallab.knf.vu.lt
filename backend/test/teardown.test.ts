@@ -15,6 +15,7 @@ import { NetworkGroup } from "../src/types/network-groups";
 import { AccessApplyRevisionError } from "../src/network/access-apply-runner";
 import { GatewayApplyRevisionError } from "../src/network/gateway-apply-runner";
 import {
+    findVnetReferencesInProxmox,
     NetworkTeardownDependencies,
     NetworkTeardownError,
     releaseNetworkGroup,
@@ -310,4 +311,56 @@ test("an unallocated group needs no teardown", async () => {
 
     assert.equal(outcome.released, false);
     assert.deepEqual(order, []);
+});
+
+// A fake cluster: guests keyed "node/type/vmid", each with the config the API returns.
+function cluster(configs: Record<string, Record<string, unknown>>) {
+    return {
+        async getClusterResources() {
+            return Object.keys(configs).map((key) => {
+                const [node, type, vmid] = key.split("/");
+                return { node, type, vmid: Number(vmid) };
+            });
+        },
+        async getGuestConfig(node: string, type: "qemu" | "lxc", vmid: string) {
+            return configs[`${node}/${type}/${vmid}`];
+        },
+    } as unknown as Parameters<typeof findVnetReferencesInProxmox>[0];
+}
+
+test("the VNet guard finds containers and guests on other nodes, not just local VMs", async () => {
+    const references = await findVnetReferencesInProxmox(cluster({
+        "pve/qemu/10001": { net0: "virtio=AA:BB:CC:00:00:01,bridge=lab2000,firewall=1" },
+        "pve/lxc/300": { net0: "name=eth0,bridge=lab2000,ip=dhcp" },
+        "pve2/qemu/10002": { net0: "virtio=AA:BB:CC:00:00:02,bridge=lab2000" },
+        "pve/qemu/10003": { net0: "virtio=AA:BB:CC:00:00:03,bridge=vmbr0" },
+    }), "lab2000");
+
+    assert.deepEqual(references.sort(), ["lxc/300", "qemu/10001", "qemu/10002"]);
+});
+
+test("the VNet guard never mistakes lab20001 for lab2000", async () => {
+    const references = await findVnetReferencesInProxmox(cluster({
+        "pve/qemu/10001": { net0: "virtio=AA:BB:CC:00:00:01,bridge=lab20001" },
+    }), "lab2000");
+
+    assert.deepEqual(references, []);
+});
+
+test("the VNet guard fails closed when a listed guest cannot be read", async () => {
+    const client = cluster({ "pve/qemu/10001": {} });
+    client.getGuestConfig = async () => { throw new Error("403 Permission check failed"); };
+
+    await assert.rejects(findVnetReferencesInProxmox(client, "lab2000"), /403/);
+});
+
+test("the VNet guard skips a guest destroyed while it was scanning", async () => {
+    const client = cluster({ "pve/qemu/10001": {} });
+    let listings = 0;
+    client.getClusterResources = async () => (
+        listings++ === 0 ? [{ node: "pve", type: "qemu", vmid: 10001 }] : []
+    );
+    client.getGuestConfig = async () => { throw new Error("500 Configuration file does not exist"); };
+
+    assert.deepEqual(await findVnetReferencesInProxmox(client, "lab2000"), []);
 });

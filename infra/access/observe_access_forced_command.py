@@ -78,7 +78,8 @@ def run(command: list[str], *, input_text: str | None = None) -> str:
 ############################################################
 #
 # Accepts exactly one request shape — the fixed observe call
-# with a strict UUID request ID — and rejects any extra or
+# with a strict UUID request ID, plus an optional boolean
+# `capture_connections` — and rejects any other extra or
 # missing field by name-set comparison.
 #
 # Used by:
@@ -90,8 +91,10 @@ def parse_request(raw: bytes) -> dict[str, Any]:
     if len(raw) > MAX_REQUEST_BYTES:
         raise ValueError("request exceeds the maximum size")
     request = json.loads(raw)
-    if set(request) != {"version", "request_id", "target", "operation"}:
+    if set(request) - {"capture_connections"} != {"version", "request_id", "target", "operation"}:
         raise ValueError("request has unknown or missing fields")
+    if not isinstance(request.get("capture_connections", False), bool):
+        raise ValueError("capture_connections must be a boolean")
     if request["version"] != 1 or request["target"] != "access" or request["operation"] != "observe":
         raise ValueError("unsupported request")
     if not re.fullmatch(
@@ -228,11 +231,14 @@ def main() -> None:
     live_vlans = parse_bridge_vlans(run(["bridge", "-j", "vlan", "show", "dev", HOST_VETH]))
 
 
-    # STEP 3: the guest half — pipe the checked-in collector in
+    # STEP 3: the guest half — pipe the checked-in collector in.
+    # The 5 s connection capture runs only when asked for: it
+    # feeds a diagnostic, and every provisioning step observes.
     # =========================================================
     guest_source = GUEST_OBSERVER.read_text()
+    capture = ["--capture-connections"] if request.get("capture_connections") else []
     guest = json.loads(run(
-        ["pct", "exec", str(VMID), "--", "python3", "-"],
+        ["pct", "exec", str(VMID), "--", "python3", "-", *capture],
         input_text=guest_source,
     ))
 

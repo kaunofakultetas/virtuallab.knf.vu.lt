@@ -25,6 +25,7 @@
 //    - test/gateway-render.test.ts
 // -----------------------------------------------------------
 
+import { getNetworkSlot, networkProjectionConfig } from "./config";
 import { GatewayPlan, GatewayVlanInterface } from "./gateway-desired-state";
 
 export type RenderedGatewayConfiguration = {
@@ -198,7 +199,17 @@ function renderSysctl(plan: GatewayPlan): string {
 // infrastructure, so binding there would put a rogue DHCP
 // server on someone else's network. bind-dynamic with an
 // explicit interface list, plus explicit exceptions, keeps
-// that impossible even when the lab VLAN list is empty.
+// that impossible.
+//
+// The list covers EVERY VLAN in the approved range, not
+// just allocated groups, so this file is identical across
+// allocations and the applier never restarts dnsmasq for a
+// new group (SIGHUP does not re-read it). bind-dynamic
+// starts serving a subinterface the moment networkd brings
+// it up, and a dhcp-range with no matching interface is
+// never selected. Unallocated VLANs have no subinterface on
+// the Gateway, so nothing is served on them; networkd and
+// the nft input chain remain the gates.
 //
 // Used by:
 //   - renderGatewayConfiguration (below)
@@ -206,7 +217,11 @@ function renderSysctl(plan: GatewayPlan): string {
 
 function renderDnsmasq(plan: GatewayPlan): string {
     const desired = plan.desired_state;
-    const { interfaces } = desired.transport;
+    const { first, last } = networkProjectionConfig.vlan;
+    const slots = Array.from({ length: last - first + 1 }, (_, index) => {
+        const slot = getNetworkSlot(first + index);
+        return { ...slot, interfaceName: `${desired.transport.parent_interface}.${slot.vlanTag}` };
+    });
     const lines = [
         `# Gateway desired-state revision ${plan.revision}.`,
         // bind-dynamic, never bind-interfaces. Under bind-interfaces dnsmasq
@@ -228,21 +243,15 @@ function renderDnsmasq(plan: GatewayPlan): string {
         `no-dhcp-interface=${desired.management.interface}`,
     ];
 
-    if (interfaces.length === 0) {
-        // No lab VLANs: bind loopback only rather than letting dnsmasq fall back
-        // to every interface.
-        lines.push("interface=lo", "no-dhcp-interface=lo");
-    } else {
-        lines.push(...interfaces.map(({ interface_name }) => `interface=${interface_name}`));
-    }
-
+    lines.push(...slots.map(({ interfaceName }) => `interface=${interfaceName}`));
     lines.push(...desired.dns.upstream_resolvers.map((resolver) => `server=${resolver}`));
 
-    for (const entry of interfaces) {
+    // getNetworkSlot fixes every group subnet at /24.
+    for (const slot of slots) {
         lines.push(
-            `dhcp-range=${entry.interface_name},${entry.dhcp_first},${entry.dhcp_last},${entry.netmask},12h`,
-            `dhcp-option=${entry.interface_name},option:router,${entry.gateway_ip}`,
-            `dhcp-option=${entry.interface_name},option:dns-server,${entry.gateway_ip}`,
+            `dhcp-range=${slot.interfaceName},${slot.dhcpFirstIp},${slot.dhcpLastIp},255.255.255.0,12h`,
+            `dhcp-option=${slot.interfaceName},option:router,${slot.gatewayIp}`,
+            `dhcp-option=${slot.interfaceName},option:dns-server,${slot.gatewayIp}`,
         );
     }
 
@@ -305,12 +314,11 @@ function renderSquid(plan: GatewayPlan): string {
         "host_verify_strict on",
         "",
         // Squid's default is 30 seconds, spent waiting for in-flight requests to
-        // drain before the process exits. The applier restarts Squid on every
-        // gateway apply, and an apply runs on every network group creation, so
-        // that default was charging ~30s of the ~35s each VM provision spent on
-        // gateway policy — measured, not estimated. Draining buys nothing here:
-        // the sessions being drained belong to the same lab whose policy is
-        // being rewritten by the very apply doing the restart.
+        // drain before the process exits. When the applier still restarted Squid
+        // on every gateway apply, that default charged ~30s of the ~35s each VM
+        // provision spent on gateway policy — measured, not estimated. Applies
+        // now reload instead, which does not drain; this still bounds the
+        // restarts that remain (rollback, a stopped service).
         "shutdown_lifetime 1 second",
         "",
         "acl lab_safe_ports port 80 443",
@@ -341,10 +349,15 @@ function renderSquid(plan: GatewayPlan): string {
     // This is not a hole: nothing is forwarded yet at that point. A connection
     // whose SNI matches no group allowlist -- including one carrying no SNI at
     // all -- is terminated at step 2 before any byte reaches the origin.
+    //
+    // One `acl` line per subnet (Squid accumulates them) so that adding a group
+    // only ever ADDS lines to this file. The applier reloads Squid for a purely
+    // additive change and restarts it when any line disappears, because only a
+    // restart closes tunnels a revocation is meant to cut.
     const labSubnets = desired.transport.interfaces.map(({ subnet_cidr }) => subnet_cidr);
     if (labSubnets.length > 0) {
         lines.push(
-            `acl lab_any_src src ${labSubnets.join(" ")}`,
+            ...labSubnets.map((subnet) => `acl lab_any_src src ${subnet}`),
             "http_access allow lab_connect lab_ssl_ports lab_any_src",
             "",
         );

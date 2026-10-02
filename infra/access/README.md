@@ -42,9 +42,12 @@ sudo ./infra/access/observe-access.sh >access-observation.json
 Root is needed to read the complete nftables ruleset, Docker networks, and
 kernel connection tracking state. Conntrack preserves the original source
 address before Docker destination NAT. When conntrack does not expose a matching
-flow, the collector passively watches service packets for five seconds. The
+flow, the collector can passively watch service packets for five seconds. The
 capture is restricted to management interface `eth0`, before Docker destination
-NAT. The command does not modify interfaces, sysctls, Docker, nftables,
+NAT. It runs only with `--capture-connections`, which this wrapper passes and
+the backend requests only for the admin dry-run. Conntrack is not visible inside
+LXC `200`, so on the provisioning path, which observes several times per VM, the
+capture would otherwise add five seconds to every observation. The command does not modify interfaces, sysctls, Docker, nftables,
 containers, or files. A non-empty `errors` array means the observation is
 incomplete and must fail readiness.
 
