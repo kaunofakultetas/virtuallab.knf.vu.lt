@@ -20,7 +20,7 @@ import {
 } from "./infrastructure-apply-runner";
 import { getInfrastructurePlan, InfrastructurePlan } from "./infrastructure-desired-state";
 import { createNetworkProxmoxMutator } from "./proxmox-clients";
-import { ReconciliationAttempt } from "./reconciliation-attempts";
+import { ReconciliationAttempt, ReconciliationLockedError } from "./reconciliation-attempts";
 
 export class NetworkGroupVnetError extends Error {}
 
@@ -28,11 +28,55 @@ export class NetworkGroupVnetError extends Error {}
 // desired revision between our read and the reconciliation lock.
 export const VNET_APPLY_REVISION_ATTEMPTS = 3;
 
-export type EnsureNetworkGroupVnetDependencies = {
+// How long a provisioning step waits out a reconciliation lock held by someone
+// else -- a drift repair, or a concurrent student's step -- before failing.
+// Each step takes the lock on its own, so the holder is normally gone within
+// one appliance apply; 90 s outlasts several. With the network converging
+// alongside the clone, the wait is mostly hidden.
+export const PROVISIONING_LOCK_WAIT_MS = 90_000;
+export const PROVISIONING_LOCK_RETRY_MS = 2_000;
+
+export type LockWaitDependencies = {
+    lockWaitMs?: number;
+    // Injected so tests drive time without waiting.
+    sleep?: (milliseconds: number) => Promise<void>;
+    now?: () => number;
+};
+
+export type EnsureNetworkGroupVnetDependencies = LockWaitDependencies & {
     getPlan?: () => Promise<InfrastructurePlan>;
     applyVnets?: (input: InfrastructureApplyInput) => Promise<ReconciliationAttempt>;
     revisionAttempts?: number;
 };
+
+
+// -----------------------------------------------------------
+// lockWaiter
+// -----------------------------------------------------------
+//
+// One deadline for one provisioning step: `wait()` sleeps a
+// retry interval and answers whether the caller may try the
+// step again. Separate from the revision-conflict budget,
+// because a held lock says nothing about the plan.
+//
+// Used by:
+//   - ensureNetworkGroupVnet (below)
+//   - provisioning-network.ts — runStep
+// -----------------------------------------------------------
+
+export function lockWaiter(dependencies: LockWaitDependencies): () => Promise<boolean> {
+    const now = dependencies.now ?? Date.now;
+    const sleep = dependencies.sleep
+        ?? ((milliseconds: number) => new Promise<void>((resolve) => {
+            setTimeout(resolve, milliseconds);
+        }));
+    const deadline = now() + (dependencies.lockWaitMs ?? PROVISIONING_LOCK_WAIT_MS);
+    return async () => {
+        if (now() >= deadline) return false;
+        await sleep(PROVISIONING_LOCK_RETRY_MS);
+        return true;
+    };
+}
 
 
 
@@ -89,7 +133,9 @@ async function applyVnetsWithMutator(
 // concurrent allocation can move that revision between our
 // read and the reconciliation lock, so a bounded retry
 // re-reads the plan instead of failing a provisioning
-// request for a race that is already resolved.
+// request for a race that is already resolved. A lock held
+// by someone else is waited out (lockWaiter) rather than
+// failing the student's create.
 //
 // Used by:
 //   - provisioning-network.ts
@@ -110,8 +156,9 @@ export async function ensureNetworkGroupVnet(
     const applyVnets = dependencies.applyVnets ?? applyVnetsWithMutator;
     const revisionAttempts = dependencies.revisionAttempts ?? VNET_APPLY_REVISION_ATTEMPTS;
 
+    const waitForLock = lockWaiter(dependencies);
     let lastRevisionError: InfrastructureApplyRevisionError | undefined;
-    for (let remaining = revisionAttempts; remaining > 0; remaining -= 1) {
+    for (let remaining = revisionAttempts; remaining > 0;) {
         const plan = await getPlan();
         const owned = plan.desired_state.proxmox.vnets.some(
             ({ vnet }) => vnet === group.vnet_name,
@@ -128,8 +175,10 @@ export async function ensureNetworkGroupVnet(
         try {
             attempt = await applyVnets({ requestedBy, expectedRevision: plan.revision });
         } catch (error) {
+            if (error instanceof ReconciliationLockedError && await waitForLock()) continue;
             if (error instanceof InfrastructureApplyRevisionError) {
                 lastRevisionError = error;
+                remaining -= 1;
                 continue;
             }
             throw error;

@@ -366,8 +366,9 @@ router.get(
 // Create, with the network provisioning wrapped around the
 // clone. Order matters and each phase says why inline:
 // validate template/profile/limit, resolve the network
-// attachment, build shared infrastructure BEFORE cloning,
-// clone+start, then per-VM firewall AFTER — with the VM
+// attachment, build shared infrastructure ALONGSIDE the
+// clone (and finished before the VM is attached or
+// started), then per-VM firewall AFTER — with the VM
 // destroyed if that last step fails, and the whole
 // attachment compensated on any error.
 //
@@ -442,17 +443,19 @@ router.post(
             );
             const attachment = await resolveNetworkAttachment(mode, group);
             let provisionedRevision = "";
-            try {
-                if (attachment.isolated) {
-                    // Every piece of shared infrastructure the VM depends on has
-                    // to exist before it is cloned onto the VNet: the VNet
-                    // itself, the Access trunk, and the two appliances' VLAN
-                    // interfaces. Running this first means a failure here never
-                    // leaves a stray VM behind, and never hands a student a VM
-                    // with no address and no path.
+            const vuId = req.user.vu_id;
+            // Every piece of shared infrastructure the VM depends on -- the VNet,
+            // the Access trunk, and the two appliances' VLAN interfaces -- has to
+            // exist before the VM is attached to the VNet. createInstance runs
+            // this alongside the ~30 s clone, which needs none of it, and waits
+            // for it before net0 names the VNet: a student never gets a VM with
+            // no address and no path, and a failure here destroys the clone
+            // like a failed start does.
+            const prepareNetwork = attachment.isolated
+                ? async () => {
                     const provisioned = await ensureNetworkGroupInfrastructure(
                         attachment.group,
-                        req.user.vu_id,
+                        vuId,
                     );
                     // The infrastructure revision the VNet, trunk and Access
                     // steps agreed on; recorded on the group so `active` names a
@@ -470,6 +473,8 @@ router.post(
                         "Reconciled network infrastructure for an isolated group",
                     );
                 }
+                : undefined;
+            try {
                 if (mode === "dry-run") {
                     const plan = await getNetworkPlan();
                     const projection = plan.desired_state.groups.find(
@@ -494,6 +499,7 @@ router.post(
                     attachment.bridge,
                     // Admins are exempt, exactly as in the pre-check above.
                     req.user.role !== "admin",
+                    prepareNetwork,
                 );
                 if (attachment.isolated) {
                     // Same-segment policy can only be applied once the VM

@@ -49,7 +49,10 @@ import {
 //    groups, so a new group no longer changes the file and dnsmasq is not
 //    restarted on every VM create. Squid's lab_any_src is one line per subnet, so a new
 //    group only adds lines to squid.conf and the applier can reload Squid.
-export const GATEWAY_RENDER_VERSION = 7;
+// 8: the CONNECT allow is per group (lab<T>_src) instead of one shared
+//    lab_any_src, so every per-group squid line names its group and releasing
+//    a group reloads Squid instead of restarting it.
+export const GATEWAY_RENDER_VERSION = 8;
 
 // Loopback-only forward-proxy port.
 //

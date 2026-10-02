@@ -5,7 +5,7 @@
 #  The read-only half of Gateway reconciliation. Runs under
 #  a dedicated authorized_keys entry, so the key the
 #  orchestrator holds can do exactly this and nothing else:
-#  read VM 202's persistent configuration through pvesh/qm,
+#  read VM 202's persistent configuration and run state,
 #  run the guest-side observer (observe_gateway.py) inside
 #  the VM, and return both as one document.
 #
@@ -26,6 +26,7 @@
 
 
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -192,12 +193,99 @@ def observe_guest() -> dict[str, Any]:
 
 
 ############################################################
+# read_pve_config
+############################################################
+#
+# A guest's /etc/pve config file → (digest, keys), the same
+# view `pvesh get .../config` returns, without the ~1 s of
+# Perl startup per call. The digest is the sha1 of the raw
+# file, exactly as Proxmox computes it. Only the main
+# section counts: snapshot and cloud-init sections follow
+# it and must never leak in, while a pending section is
+# overlaid (and its `delete:` honoured) as pvesh does.
+#
+# COPIED in observe_access_forced_command.py,
+# apply_access_trunk_forced_command.py and
+# observe_gateway_forced_command.py — each forced command
+# stays one self-contained file. test_pve_config.py runs the
+# same fixtures through every copy.
+#
+# Used by:
+#   - main / observe (below)
+#   - test_pve_config.py
+############################################################
+
+PVE_SECTION = re.compile(r"^\[([^\]]+)\]\s*$")
+
+
+def read_pve_config(raw: bytes) -> tuple[str, dict[str, str]]:
+    main: dict[str, str] = {}
+    pending: dict[str, str] = {}
+    section = main
+    for line in raw.decode().splitlines():
+        header = PVE_SECTION.match(line)
+        if header:
+            section = pending if header.group(1).lower() in {"pending", "pve:pending"} else {}
+            continue
+        if not line.strip() or line.startswith("#"):
+            continue
+        key, separator, value = line.partition(":")
+        if separator:
+            section[key.strip()] = value.strip()
+    deleted = {key.strip().lstrip("!") for key in pending.pop("delete", "").split(",") if key.strip()}
+    merged = {key: value for key, value in main.items() if key not in deleted}
+    merged.update(pending)
+    return hashlib.sha1(raw).hexdigest(), merged
+
+
+
+
+
+
+
+
+############################################################
+# qemu_running
+############################################################
+#
+# Whether the VM's QEMU process is alive, read the way
+# Proxmox itself decides it: the pidfile names a process
+# whose command line carries that same `-pidfile`, so a
+# recycled PID never counts. Replaces `qm status`, which
+# spent ~1 s starting Perl.
+#
+# Used by:
+#   - main (below)
+#   - test_pve_config.py
+############################################################
+
+def qemu_running(
+    vmid: int,
+    run_dir: Path = Path("/run/qemu-server"),
+    proc: Path = Path("/proc"),
+) -> bool:
+    try:
+        pid = int((run_dir / f"{vmid}.pid").read_text().strip())
+        argv = (proc / str(pid) / "cmdline").read_bytes().split(b"\0")
+    except (OSError, ValueError):
+        return False
+    pidfile = f"/var/run/qemu-server/{vmid}.pid".encode()
+    return any(flag == b"-pidfile" and value == pidfile for flag, value in zip(argv, argv[1:]))
+
+
+
+
+
+
+
+
+############################################################
 # main
 ############################################################
 #
-# One observation round trip: config via pvesh (digest
-# mandatory), running check, the netN/ipconfigN views, then
-# the guest observer — any failure is fatal, because a
+# One observation round trip: the config file read directly
+# (digest mandatory), running check, the netN/ipconfigN
+# views, then the guest observer — any failure is fatal, because a
 # partial observation is not an observation.
 #
 # Used by:
@@ -215,15 +303,10 @@ def main() -> None:
     # STEP 2: the Proxmox-owned half — config digest, running
     # status, every netN and ipconfigN entry
     # =======================================================
-    config = json.loads(run([
-        "pvesh", "get", f"/nodes/{PROXMOX_NODE_NAME}/qemu/{VMID}/config", "--output-format", "json",
-    ]))
-    digest = config.get("digest")
-    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{40}", digest):
-        raise ValueError("VM config digest is missing or malformed")
-
-    status_output = run(["qm", "status", str(VMID)]).strip()
-    if status_output != "status: running":
+    digest, config = read_pve_config(
+        Path(f"/etc/pve/nodes/{PROXMOX_NODE_NAME}/qemu-server/{VMID}.conf").read_bytes(),
+    )
+    if not qemu_running(VMID):
         raise ValueError("Gateway VM is not running")
 
     network_devices = {

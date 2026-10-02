@@ -275,6 +275,15 @@ export const Instances = {
     // steps around this one check out one or two more pool clients each, and
     // with the default pool size of 10 a 30-second transaction would deadlock
     // the pool under a handful of concurrent creates.
+    //
+    // `prepareNetwork` (the group's VNet, trunk, Access and Gateway steps) runs
+    // ALONGSIDE the clone, which needs none of it: started once the
+    // reservation commits, awaited before net0 names the VNet. So no VM is
+    // ever configured onto or started on a network that is not ready, and a
+    // network failure tears the clone down through the same path as a failed
+    // start. It is always settled before this returns or throws -- the
+    // caller's compensation and the plan's operational set both assume the
+    // network work is over.
     createInstance: async (
         userId: string,
         template: Template,
@@ -285,10 +294,12 @@ export const Instances = {
         // rather than re-derived here, so the two checks cannot disagree about
         // who is exempt.
         enforceVmLimit: boolean = true,
+        prepareNetwork?: () => Promise<void>,
     ): Promise<number> => {
         const stopTimer = vlabInstanceCreateDurationSeconds.startTimer();
         let instanceId: number | null = null;
         let clonedVmId: string | null = null;
+        let networkReady: Promise<void> | undefined;
 
         try {
             const [minVmId, defaultRuntimeHours, storageReserveBytes, vmLimit] =
@@ -370,6 +381,13 @@ export const Instances = {
             }
             // --- end reservation ----------------------------------------
 
+            // Started only now, so an over-quota request never begins network
+            // work. The no-op catch is load-bearing: this promise sits
+            // un-awaited for the whole clone, and an unhandled rejection
+            // terminates the process. Awaiting it below still sees the error.
+            networkReady = prepareNetwork?.();
+            networkReady?.catch(() => {});
+
             // Clone template -> new id
             const cloneTask = await proxmox.cloneVM(
                 template.proxmox_id,
@@ -383,6 +401,9 @@ export const Instances = {
             if (!cloneSuccess) {
                 throw Error("Failed to clone VM");
             }
+
+            // net0 is about to name the VNet; it must exist and be policed.
+            await networkReady;
 
             await proxmox.configVM(newId, {
                 ciuser: "user",
@@ -447,6 +468,17 @@ export const Instances = {
                         );
                     });
             }
+            // Settle the network work before reporting: when the clone failed
+            // first, it may still be running. Its own failure, if it is not the
+            // one being thrown, is logged rather than lost.
+            await networkReady?.catch((networkError) => {
+                if (networkError !== err) {
+                    logger.error(
+                        { err: networkError, instanceId },
+                        "Network provisioning also failed for a failed create",
+                    );
+                }
+            });
 
             throw err;
         } finally {

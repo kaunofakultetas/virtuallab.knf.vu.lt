@@ -16,7 +16,7 @@ import {
     ensureNetworkGroupVnet,
     NetworkGroupVnetError,
 } from "../src/network/provisioning-vnet";
-import { ReconciliationAttempt } from "../src/network/reconciliation-attempts";
+import { ReconciliationAttempt, ReconciliationLockedError } from "../src/network/reconciliation-attempts";
 import { NetworkGroup } from "../src/types/network-groups";
 
 function buildGroup(overrides: Partial<NetworkGroup> = {}): NetworkGroup {
@@ -187,5 +187,35 @@ test("propagates a non-revision apply error unchanged", async () => {
             },
         }),
         /proxmox unreachable/,
+    );
+});
+
+test("waits out a held reconciliation lock, then applies", async () => {
+    let time = 0;
+    let locked = 3;
+    const attempt = await ensureNetworkGroupVnet(buildGroup(), "vu1234", {
+        getPlan: async () => buildPlan("a".repeat(64)),
+        applyVnets: async () => {
+            if (locked-- > 0) throw new ReconciliationLockedError();
+            return buildAttempt();
+        },
+        now: () => time,
+        sleep: async (milliseconds) => { time += milliseconds; },
+    });
+
+    assert.equal(attempt.status, "succeeded");
+});
+
+test("gives up on a lock still held at the deadline", async () => {
+    let time = 0;
+    await assert.rejects(
+        ensureNetworkGroupVnet(buildGroup(), "vu1234", {
+            getPlan: async () => buildPlan("a".repeat(64)),
+            applyVnets: async () => { throw new ReconciliationLockedError(); },
+            lockWaitMs: 10_000,
+            now: () => time,
+            sleep: async (milliseconds) => { time += milliseconds; },
+        }),
+        ReconciliationLockedError,
     );
 });

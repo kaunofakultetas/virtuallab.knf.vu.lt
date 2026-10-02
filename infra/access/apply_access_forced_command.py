@@ -7,8 +7,8 @@
 #  read-only principal, so the mutating capability can be
 #  revoked on its own.
 #
-#  Unlike the Gateway, the guest is reached with `pct exec`
-#  rather than SSH, so the applier (apply_access.py) is
+#  Unlike the Gateway, the guest is reached with
+#  `lxc-attach` (what `pct exec` runs) rather than SSH, so the applier (apply_access.py) is
 #  piped in on stdin along with the request in a single
 #  call: the guest needs no persistent copy and cannot run a
 #  stale one.
@@ -32,6 +32,33 @@ from pathlib import Path
 VMID = 200
 APPLIER = Path("/usr/local/libexec/virtual-lab/apply_access.py")
 MAX_REQUEST_BYTES = 512 * 1024
+
+
+
+
+
+
+
+
+############################################################
+# lxc_running
+############################################################
+#
+# `lxc-info -n <id> -s` output → whether the container runs.
+# The C tool answers instantly where `pct status` spent ~1 s
+# starting Perl. COPIED in observe_access_forced_command.py
+# and apply_access_forced_command.py.
+#
+# Used by:
+#   - main (below)
+#   - test_pve_config.py
+############################################################
+
+def lxc_running(lxc_info: str) -> bool:
+    for line in lxc_info.splitlines():
+        if line.startswith("State:"):
+            return line.split()[-1] == "RUNNING"
+    return False
 
 
 
@@ -75,12 +102,14 @@ def main() -> None:
 
     # STEP 2: refuse to talk to a stopped guest
     # =========================================
-    status = subprocess.run(["pct", "status", str(VMID)], check=True, capture_output=True, text=True)
-    if status.stdout.strip() != "status: running":
+    status = subprocess.run(
+        ["lxc-info", "-n", str(VMID), "-s"], check=True, capture_output=True, text=True,
+    )
+    if not lxc_running(status.stdout):
         raise ValueError("Access LXC is not running")
 
 
-    # STEP 3: one `pct exec` carries everything — the awk in the
+    # STEP 3: one `lxc-attach` carries everything — the awk in the
     # guest splits the payload at the marker line, writes the
     # applier and the request to /run, and runs the applier
     # ==========================================================
@@ -94,7 +123,9 @@ def main() -> None:
         f"python3 {remote} < /run/virtual-lab-access-request.json"
     )
     result = subprocess.run(
-        ["pct", "exec", str(VMID), "--", "sh", "-c", script],
+        # Exactly what `pct exec` runs on PVE 9 (keep-env is its default),
+        # minus ~1 s of Perl startup.
+        ["lxc-attach", "-n", str(VMID), "--keep-env", "--", "sh", "-c", script],
         check=True,
         capture_output=True,
         input=payload,

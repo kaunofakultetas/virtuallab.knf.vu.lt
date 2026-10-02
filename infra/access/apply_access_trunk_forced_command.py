@@ -30,6 +30,7 @@
 
 
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -136,22 +137,79 @@ def parse_request() -> dict[str, Any]:
 
 
 ############################################################
+# read_pve_config
+############################################################
+#
+# A guest's /etc/pve config file → (digest, keys), the same
+# view `pvesh get .../config` returns, without the ~1 s of
+# Perl startup per call. The digest is the sha1 of the raw
+# file, exactly as Proxmox computes it. Only the main
+# section counts: snapshot and cloud-init sections follow
+# it and must never leak in, while a pending section is
+# overlaid (and its `delete:` honoured) as pvesh does.
+#
+# COPIED in observe_access_forced_command.py,
+# apply_access_trunk_forced_command.py and
+# observe_gateway_forced_command.py — each forced command
+# stays one self-contained file. test_pve_config.py runs the
+# same fixtures through every copy.
+#
+# Used by:
+#   - current_net1 (below)
+#   - test_pve_config.py
+############################################################
+
+PVE_SECTION = re.compile(r"^\[([^\]]+)\]\s*$")
+
+
+def read_pve_config(raw: bytes) -> tuple[str, dict[str, str]]:
+    main: dict[str, str] = {}
+    pending: dict[str, str] = {}
+    section = main
+    for line in raw.decode().splitlines():
+        header = PVE_SECTION.match(line)
+        if header:
+            section = pending if header.group(1).lower() in {"pending", "pve:pending"} else {}
+            continue
+        if not line.strip() or line.startswith("#"):
+            continue
+        key, separator, value = line.partition(":")
+        if separator:
+            section[key.strip()] = value.strip()
+    deleted = {key.strip().lstrip("!") for key in pending.pop("delete", "").split(",") if key.strip()}
+    merged = {key: value for key, value in main.items() if key not in deleted}
+    merged.update(pending)
+    return hashlib.sha1(raw).hexdigest(), merged
+
+
+
+
+
+
+
+
+############################################################
 # current_net1
 ############################################################
 #
-# The raw net1 property string from the LXC config. Its
-# absence is an error: without net1 there is no trunk to
-# reconcile.
+# The raw net1 property string from the LXC config, read
+# from the file rather than through `pct config` (~1 s of
+# Perl each). The string is byte-identical to what pct
+# prints, which the expected_net1 precondition relies on.
+# Its absence is an error: without net1 there is no trunk
+# to reconcile.
 #
 # Used by:
 #   - observe (below)
 ############################################################
 
 def current_net1() -> str:
-    for line in run(["pct", "config", str(VMID)]).stdout.splitlines():
-        if line.startswith("net1: "):
-            return line[len("net1: "):]
-    raise TrunkError("LXC net1 is missing")
+    # /etc/pve/lxc is the local node's view, which is what `pct config` read.
+    _, config = read_pve_config(Path(f"/etc/pve/lxc/{VMID}.conf").read_bytes())
+    net1 = config.get("net1")
+    if net1 is None:
+        raise TrunkError("LXC net1 is missing")
+    return net1
 
 
 
@@ -261,9 +319,10 @@ def live_vlan_ids() -> list[int]:
 
 def observe() -> dict[str, Any]:
     veth_present = run(["ip", "link", "show", "dev", HOST_VETH], check=False).returncode == 0
+    net1 = current_net1()
     return {
-        "net1": current_net1(),
-        "persistent_vlan_ids": parse_trunks(current_net1()),
+        "net1": net1,
+        "persistent_vlan_ids": parse_trunks(net1),
         "live_veth_present": veth_present,
         "live_vlan_ids": live_vlan_ids() if veth_present else [],
     }

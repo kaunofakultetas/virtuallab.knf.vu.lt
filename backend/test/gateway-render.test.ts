@@ -77,17 +77,25 @@ test("dnsmasq lists every VLAN in the range even when no group exists", () => {
     assert.doesNotMatch(files.dnsmasq, /^interface=(ens18|ens20|lo)$/m);
 });
 
-test("allocating a group only adds lines to squid.conf, so Squid can be reloaded", () => {
-    // The applier restarts Squid whenever a line disappears (that is what cuts
-    // a revoked domain's open tunnels), so an ordinary allocation must not
-    // remove any.
+test("squid.conf changes by whole groups, so the applier can reload rather than restart", () => {
+    // The applier restarts Squid only when a line of a group that REMAINS
+    // disappears (a revoked domain), and recognises a group's lines by their
+    // `lab<T>_` name. So allocating must only add lines, releasing must only
+    // drop the released group's own, and every non-static line must name one.
     const lines = (input: GatewayDesiredStateInput) => render(input).files.squid
         .split("\n").filter((line) => !/revision [0-9a-f]{64}/.test(line));
-    const before = lines(baseInput({ groups: [group(2000, 1, ["a.example"])] }));
-    const after = lines(baseInput({ groups: [group(2000, 1, ["a.example"]), group(2001, 2, ["b.example"])] }));
+    const one = lines(baseInput({ groups: [group(2000, 1, ["a.example"])] }));
+    const two = lines(baseInput({ groups: [group(2000, 1, ["a.example"]), group(2001, 2, ["b.example"])] }));
+    const empty = lines(baseInput());
 
-    assert.deepEqual(before.filter((line) => !after.includes(line)), []);
-    assert.match(after.join("\n"), /^acl lab_any_src src 10\.200\.1\.0\/24$/m);
+    assert.deepEqual(one.filter((line) => !two.includes(line)), []);
+    const released = two.filter((line) => !one.includes(line));
+    assert.ok(released.length > 0);
+    assert.ok(released.every((line) => /\blab2001_/.test(line)), released.join("\n"));
+    assert.ok(
+        two.filter((line) => !empty.includes(line)).every((line) => /\blab200[01]_/.test(line)),
+        "every group line names its group",
+    );
 });
 
 test("allocating a group leaves the dnsmasq file unchanged apart from the revision", () => {
@@ -172,8 +180,7 @@ test("squid lets the intercepted CONNECT reach the peek, then filters on SNI", (
     // allowlisted domains as well as everything else.
     const { files } = render(baseInput({ groups: [group(2000, 1, ["example.com"])] }));
 
-    assert.match(files.squid, /^acl lab_any_src src 10\.200\.0\.0\/24$/m);
-    assert.match(files.squid, /^http_access allow lab_connect lab_ssl_ports lab_any_src$/m);
+    assert.match(files.squid, /^http_access allow lab_connect lab_ssl_ports lab2000_src$/m);
     assert.match(files.squid, /^acl lab2000_sni ssl::server_name \.example\.com$/m);
 });
 

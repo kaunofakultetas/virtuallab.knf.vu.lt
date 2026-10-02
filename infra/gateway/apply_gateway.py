@@ -330,27 +330,42 @@ def changed_paths(files: dict[str, str]) -> set[str]:
 
 
 ############################################################
-# removes_lines
+# needs_squid_restart
 ############################################################
 #
-# Whether installing `content` at `path` would drop any line
-# the live file has. For squid.conf that is the line between
-# a reload and a restart: a reload applies new ACLs to new
-# requests only, so an allowlist entry that disappears would
-# keep its already-spliced tunnels open. The renderer keeps
-# an ordinary allocation purely additive for exactly this.
+# Whether installing `content` over the live squid.conf
+# needs a restart rather than a reload. A reload applies new
+# ACLs to new requests only, so a dropped allowlist entry
+# would keep its already-spliced tunnels open; only a
+# restart cuts them. But a released group's lines can go
+# with a reload: its VMs are already destroyed, so it has no
+# tunnels left. The renderer names every per-group line
+# `lab<T>_`, so a dropped line is harmless exactly when every
+# group it names is gone from the new file. An unnamed line
+# (global policy) always restarts.
 #
 # Used by:
 #   - operation_stage (below)
 #   - test_apply_gateway.py
 ############################################################
 
-def removes_lines(path: str, content: str) -> bool:
+GROUP_NAME = re.compile(r"\blab(\d{4})_")
+
+
+def needs_squid_restart(path: str, content: str) -> bool:
     live = Path(path)
     if not live.exists():
         return False
-    kept = set(body(content).splitlines())
-    return any(line not in kept for line in body(live.read_text()).splitlines())
+    new = body(content)
+    kept = set(new.splitlines())
+    remaining = set(GROUP_NAME.findall(new))
+    for line in body(live.read_text()).splitlines():
+        if line in kept:
+            continue
+        groups = GROUP_NAME.findall(line)
+        if not groups or any(group in remaining for group in groups):
+            return True
+    return False
 
 
 
@@ -551,12 +566,11 @@ def remove_pruned_vlan_links(pruned: list[str]) -> list[str]:
 # runs on every VM create and each restart interrupted every
 # student at once. dnsmasq's file lists every lab VLAN, so a
 # new group never changes it: bind-dynamic picks up the new
-# subinterface by itself. Squid's does change; a purely
-# additive change gets a reload (SIGHUP), which keeps
-# established tunnels and skips shutdown_lifetime. Anything
-# that removes a line (`restart_squid`) — a revoked domain,
-# a released group — still restarts, because only that
-# closes tunnels the old configuration let through. An
+# subinterface by itself. Squid's does change; it gets a
+# reload (SIGHUP), which keeps established tunnels and skips
+# shutdown_lifetime — unless a group that remains lost a
+# line (`restart_squid`, see needs_squid_restart), because
+# only a restart closes tunnels a revocation must cut. An
 # unchanged service is still `start`ed, which is a no-op
 # when it runs and the drift repair when it does not.
 #
@@ -700,7 +714,7 @@ def operation_stage(request: dict[str, Any]) -> dict[str, Any]:
 
     # Compared now, while the live files are still the ones in force.
     changed = changed_paths(files)
-    restart_squid = SQUID_CONF in files and removes_lines(SQUID_CONF, files[SQUID_CONF])
+    restart_squid = SQUID_CONF in files and needs_squid_restart(SQUID_CONF, files[SQUID_CONF])
 
     # Stage under the basename each validator expects, then back up whatever is
     # currently in force so the rollback restores reality, not an assumption.

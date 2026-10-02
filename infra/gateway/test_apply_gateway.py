@@ -77,22 +77,62 @@ class ChangedPathsTest(unittest.TestCase):
 
 
     ############################################################
-    # test_only_a_dropped_line_forces_a_squid_restart
+    # test_squid_restarts_only_when_a_remaining_group_loses_access
     ############################################################
     #
-    # Added lines (a new group) can be reloaded; a dropped line
-    # (a revoked domain) must restart, or its tunnels survive.
+    # A new group, or a released one, is reloaded: the released
+    # group's VMs are gone. A domain dropped from a group that
+    # remains, or any unnamed global line, must restart — a
+    # reload would leave the revoked tunnels open.
     ############################################################
 
-    def test_only_a_dropped_line_forces_a_squid_restart(self) -> None:
+    def test_squid_restarts_only_when_a_remaining_group_loses_access(self) -> None:
+        both = rendered(
+            OLD,
+            "acl lab2000_src src 10.200.0.0/24",
+            "acl lab2000_dom dstdomain -n .a.example .b.example",
+            "acl lab2001_src src 10.200.1.0/24",
+            "acl lab2001_dom dstdomain -n .c.example",
+            "http_access deny all",
+        )
+        cases = {
+            "grown": (rendered(
+                NEW,
+                "acl lab2000_src src 10.200.0.0/24",
+                "acl lab2000_dom dstdomain -n .a.example .b.example",
+                "acl lab2001_src src 10.200.1.0/24",
+                "acl lab2001_dom dstdomain -n .c.example",
+                "acl lab2002_src src 10.200.2.0/24",
+                "http_access deny all",
+            ), False),
+            "released": (rendered(
+                NEW,
+                "acl lab2000_src src 10.200.0.0/24",
+                "acl lab2000_dom dstdomain -n .a.example .b.example",
+                "http_access deny all",
+            ), False),
+            "revoked": (rendered(
+                NEW,
+                "acl lab2000_src src 10.200.0.0/24",
+                "acl lab2000_dom dstdomain -n .a.example",
+                "acl lab2001_src src 10.200.1.0/24",
+                "acl lab2001_dom dstdomain -n .c.example",
+                "http_access deny all",
+            ), True),
+            "global": (rendered(
+                NEW,
+                "acl lab2000_src src 10.200.0.0/24",
+                "acl lab2000_dom dstdomain -n .a.example .b.example",
+                "acl lab2001_src src 10.200.1.0/24",
+                "acl lab2001_dom dstdomain -n .c.example",
+            ), True),
+        }
         with tempfile.TemporaryDirectory() as directory:
             live = Path(directory) / "squid.conf"
-            live.write_text(rendered(OLD, "acl lab2000_dom dstdomain -n .a.example", "http_access deny all"))
-            grown = rendered(NEW, "acl lab2000_dom dstdomain -n .a.example", "acl lab2001_src src 10.200.1.0/24", "http_access deny all")
-            shrunk = rendered(NEW, "http_access deny all")
-            self.assertFalse(apply_gateway.removes_lines(str(live), grown))
-            self.assertTrue(apply_gateway.removes_lines(str(live), shrunk))
-
+            live.write_text(both)
+            for name, (content, expected) in cases.items():
+                with self.subTest(name):
+                    self.assertIs(apply_gateway.needs_squid_restart(str(live), content), expected)
 
 if __name__ == "__main__":
     unittest.main()

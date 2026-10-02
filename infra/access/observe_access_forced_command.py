@@ -3,10 +3,10 @@
 #  [*] Access observe — forced command on the Proxmox host
 #
 #  The read-only half of Access reconciliation: reads LXC
-#  200's config through pvesh, verifies the LXC is running,
-#  reads the host veth's tagged VLAN membership, and runs
-#  the checked-in guest collector (observe_access.py)
-#  through `pct exec` — all in answer to one fixed, bounded
+#  200's config file, verifies the LXC is running, reads
+#  the host veth's tagged VLAN membership, and runs the
+#  checked-in guest collector (observe_access.py) through
+#  `lxc-attach` — all in answer to one fixed, bounded
 #  observation request. No mutation operation, no caller-
 #  controlled command dispatch.
 #
@@ -22,6 +22,7 @@
 
 
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -191,13 +192,94 @@ def parse_bridge_vlans(output: str) -> list[int]:
 
 
 ############################################################
+# read_pve_config
+############################################################
+#
+# A guest's /etc/pve config file → (digest, keys), the same
+# view `pvesh get .../config` returns, without the ~1 s of
+# Perl startup per call. The digest is the sha1 of the raw
+# file, exactly as Proxmox computes it. Only the main
+# section counts: snapshot and cloud-init sections follow
+# it and must never leak in, while a pending section is
+# overlaid (and its `delete:` honoured) as pvesh does.
+#
+# COPIED in observe_access_forced_command.py,
+# apply_access_trunk_forced_command.py and
+# observe_gateway_forced_command.py — each forced command
+# stays one self-contained file. test_pve_config.py runs the
+# same fixtures through every copy.
+#
+# Used by:
+#   - main / observe (below)
+#   - test_pve_config.py
+############################################################
+
+PVE_SECTION = re.compile(r"^\[([^\]]+)\]\s*$")
+
+
+def read_pve_config(raw: bytes) -> tuple[str, dict[str, str]]:
+    main: dict[str, str] = {}
+    pending: dict[str, str] = {}
+    section = main
+    for line in raw.decode().splitlines():
+        header = PVE_SECTION.match(line)
+        if header:
+            section = pending if header.group(1).lower() in {"pending", "pve:pending"} else {}
+            continue
+        if not line.strip() or line.startswith("#"):
+            continue
+        key, separator, value = line.partition(":")
+        if separator:
+            section[key.strip()] = value.strip()
+    deleted = {key.strip().lstrip("!") for key in pending.pop("delete", "").split(",") if key.strip()}
+    merged = {key: value for key, value in main.items() if key not in deleted}
+    merged.update(pending)
+    return hashlib.sha1(raw).hexdigest(), merged
+
+
+
+
+
+
+
+
+############################################################
+# lxc_running
+############################################################
+#
+# `lxc-info -n <id> -s` output → whether the container runs.
+# The C tool answers instantly where `pct status` spent ~1 s
+# starting Perl. COPIED in observe_access_forced_command.py
+# and apply_access_forced_command.py.
+#
+# Used by:
+#   - main (below)
+#   - test_pve_config.py
+############################################################
+
+def lxc_running(lxc_info: str) -> bool:
+    for line in lxc_info.splitlines():
+        if line.startswith("State:"):
+            return line.split()[-1] == "RUNNING"
+    return False
+
+
+
+
+
+
+
+
+############################################################
 # main
 ############################################################
 #
-# One observation round trip: config via pvesh (digest and
-# net1 both mandatory), running check, live bridge VLANs,
-# then the guest collector piped into `pct exec python3 -`
-# so the guest never holds a copy. Any failure is fatal —
+# One observation round trip: the config file read directly
+# (digest and net1 both mandatory), running check, live
+# bridge VLANs, then the guest collector piped into
+# `lxc-attach python3 -` so the guest never holds a copy.
+# No Perl CLI on this path: each cost ~1 s per observation,
+# and every VM create observes several times. Any failure is fatal —
 # a partial observation is not an observation.
 #
 # Used by:
@@ -215,17 +297,13 @@ def main() -> None:
     # STEP 2: the Proxmox-owned half — config digest, net1,
     # running status, live bridge VLANs
     # =====================================================
-    config = json.loads(run([
-        "pvesh", "get", f"/nodes/{PROXMOX_NODE_NAME}/lxc/{VMID}/config", "--output-format", "json",
-    ]))
-    digest = config.get("digest")
+    digest, config = read_pve_config(
+        Path(f"/etc/pve/nodes/{PROXMOX_NODE_NAME}/lxc/{VMID}.conf").read_bytes(),
+    )
     net1 = config.get("net1")
-    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{40}", digest):
-        raise ValueError("LXC config digest is missing or malformed")
-    if not isinstance(net1, str):
+    if net1 is None:
         raise ValueError("LXC config net1 is missing")
-    status_output = run(["pct", "status", str(VMID)]).strip()
-    if status_output != "status: running":
+    if not lxc_running(run(["lxc-info", "-n", str(VMID), "-s"])):
         raise ValueError("Access LXC is not running")
     run(["ip", "link", "show", "dev", HOST_VETH])
     live_vlans = parse_bridge_vlans(run(["bridge", "-j", "vlan", "show", "dev", HOST_VETH]))
@@ -238,7 +316,9 @@ def main() -> None:
     guest_source = GUEST_OBSERVER.read_text()
     capture = ["--capture-connections"] if request.get("capture_connections") else []
     guest = json.loads(run(
-        ["pct", "exec", str(VMID), "--", "python3", "-", *capture],
+        # Exactly what `pct exec` runs on PVE 9 (keep-env is its default),
+        # minus the Perl wrapper.
+        ["lxc-attach", "-n", str(VMID), "--keep-env", "--", "python3", "-", *capture],
         input_text=guest_source,
     ))
 

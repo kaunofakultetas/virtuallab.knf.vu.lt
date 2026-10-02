@@ -99,6 +99,15 @@ Each step reconciles the *whole* desired state rather than this one group, so a
 run also converges drift left behind by an earlier failure and is a no-op once
 everything already matches.
 
+Steps 2–5 run **while the VM is cloned**, which needs none of them. The new VM's
+network card is pointed at the VNet only once they have all succeeded, so it is
+never attached to, or started on, a network that is not ready. If they fail, the
+clone is destroyed the same way as a VM that fails to start.
+
+Each step takes the reconciliation lock on its own. If a drift repair or another
+student's step holds it, provisioning waits for it (up to 90 seconds) rather than
+failing the create.
+
 A failure part-way through is deliberately **not** unwound. Every step is
 idempotent, the group is marked `error` with its allocation intact, and the next
 apply finishes the job. Tearing a VNet or a trunk entry down here could strip

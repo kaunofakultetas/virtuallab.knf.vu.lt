@@ -30,7 +30,8 @@
 //  depends on.
 //
 //  Used by:
-//    - instances.route.ts — before cloning an isolated VM
+//    - instances.route.ts — alongside the clone of an isolated VM,
+//      finished before the VM is attached or started
 //    - test/provisioning-network.test.ts
 // -----------------------------------------------------------
 
@@ -47,8 +48,8 @@ import { createGatewayApplier, createGatewayObserver } from "./gateway-clients";
 import { GatewayApplyRevisionError, GatewayApplyRunner } from "./gateway-apply-runner";
 import { getGatewayPlan } from "./gateway-plan";
 import { getInfrastructurePlan } from "./infrastructure-desired-state";
-import { ensureNetworkGroupVnet } from "./provisioning-vnet";
-import { ReconciliationAttempt } from "./reconciliation-attempts";
+import { ensureNetworkGroupVnet, LockWaitDependencies, lockWaiter } from "./provisioning-vnet";
+import { ReconciliationAttempt, ReconciliationLockedError } from "./reconciliation-attempts";
 
 export type NetworkProvisioningStepName =
     | "vnet"
@@ -79,7 +80,7 @@ export type NetworkProvisioningResult = {
     steps: NetworkProvisioningStep[];
 };
 
-export type NetworkProvisioningDependencies = {
+export type NetworkProvisioningDependencies = LockWaitDependencies & {
     ensureVnet?: (group: NetworkGroup, requestedBy: string) => Promise<ReconciliationAttempt>;
     applyAccessTrunk?: (input: RevisionedApply) => Promise<ReconciliationAttempt>;
     applyAccessPolicy?: (input: RevisionedApply) => Promise<ReconciliationAttempt>;
@@ -113,7 +114,10 @@ export type RevisionedApply = {
 // guarantee is worth keeping, but it turns a routine race —
 // two students provisioning at once — into a failed
 // request, so a bounded retry re-reads instead of failing
-// for a conflict that has already resolved itself.
+// for a conflict that has already resolved itself. A held
+// reconciliation lock is the same race one step earlier,
+// and is waited out up to a deadline (lockWaiter) without
+// spending a revision retry.
 //
 // Used by:
 //   - ensureNetworkGroupInfrastructure (below) — steps 2-4
@@ -125,15 +129,18 @@ async function runStep(
     readRevision: () => Promise<string>,
     apply: (expectedRevision: string) => Promise<ReconciliationAttempt>,
     isRevisionConflict: (error: unknown) => boolean,
+    waitForLock: () => Promise<boolean>,
 ): Promise<NetworkProvisioningStep> {
     let lastConflict: unknown;
-    for (let remaining = attempts; remaining > 0; remaining -= 1) {
+    for (let remaining = attempts; remaining > 0;) {
         let attempt: ReconciliationAttempt;
         try {
             attempt = await apply(await readRevision());
         } catch (error) {
+            if (error instanceof ReconciliationLockedError && await waitForLock()) continue;
             if (isRevisionConflict(error)) {
                 lastConflict = error;
+                remaining -= 1;
                 continue;
             }
             throw new NetworkProvisioningError(
@@ -247,7 +254,12 @@ export async function ensureNetworkGroupInfrastructure(
         ?? (async () => (await getInfrastructurePlan()).revision);
     const gatewayRevision = dependencies.gatewayRevision
         ?? (async () => (await getGatewayPlan()).revision);
-    const ensureVnet = dependencies.ensureVnet ?? ensureNetworkGroupVnet;
+    const ensureVnet = dependencies.ensureVnet
+        ?? ((vnetGroup: NetworkGroup, by: string) => ensureNetworkGroupVnet(vnetGroup, by, {
+            lockWaitMs: dependencies.lockWaitMs,
+            sleep: dependencies.sleep,
+            now: dependencies.now,
+        }));
     const applyAccessTrunk = dependencies.applyAccessTrunk ?? defaultAccessTrunkApply;
     const applyAccessPolicy = dependencies.applyAccessPolicy ?? defaultAccessPolicyApply;
     const applyGatewayPolicy = dependencies.applyGatewayPolicy ?? defaultGatewayPolicyApply;
@@ -271,6 +283,7 @@ export async function ensureNetworkGroupInfrastructure(
         infrastructureRevision,
         (expectedRevision) => applyAccessTrunk({ requestedBy, expectedRevision }),
         (error) => error instanceof AccessTrunkRevisionError,
+        lockWaiter(dependencies),
     ));
 
     steps.push(await runStep(
@@ -279,6 +292,7 @@ export async function ensureNetworkGroupInfrastructure(
         infrastructureRevision,
         (expectedRevision) => applyAccessPolicy({ requestedBy, expectedRevision }),
         (error) => error instanceof AccessApplyRevisionError,
+        lockWaiter(dependencies),
     ));
 
     steps.push(await runStep(
@@ -287,6 +301,7 @@ export async function ensureNetworkGroupInfrastructure(
         gatewayRevision,
         (expectedRevision) => applyGatewayPolicy({ requestedBy, expectedRevision }),
         (error) => error instanceof GatewayApplyRevisionError,
+        lockWaiter(dependencies),
     ));
 
     return { steps };

@@ -22,9 +22,12 @@ restrict,command="PROXMOX_NODE_NAME=pve1 /usr/local/libexec/virtual-lab/observe_
 ```
 
 The forced command accepts only a bounded, versioned Access observation request.
-It reads LXC `200` config through `pvesh`, verifies that the LXC is running,
-reads only tagged VLAN membership from `veth200i1`, and executes the checked-in
-guest collector through `pct exec`. It has no mutation operation or caller-
+It reads LXC `200`'s config file directly (`/etc/pve/nodes/<node>/lxc/200.conf`;
+the digest is the file's SHA-1, as Proxmox computes it), verifies that the LXC is
+running with `lxc-info`, reads only tagged VLAN membership from `veth200i1`, and
+executes the checked-in guest collector through `lxc-attach --keep-env`, which is
+exactly what `pct exec` runs. The Proxmox Perl CLIs are avoided because each
+costs about a second, and every VM create observes several times. It has no mutation operation or caller-
 controlled command dispatch.
 
 The backend SSH client additionally enforces batch mode, strict pinned host-key

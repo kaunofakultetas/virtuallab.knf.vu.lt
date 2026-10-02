@@ -350,25 +350,22 @@ function renderSquid(plan: GatewayPlan): string {
     // whose SNI matches no group allowlist -- including one carrying no SNI at
     // all -- is terminated at step 2 before any byte reaches the origin.
     //
-    // One `acl` line per subnet (Squid accumulates them) so that adding a group
-    // only ever ADDS lines to this file. The applier reloads Squid for a purely
-    // additive change and restarts it when any line disappears, because only a
-    // restart closes tunnels a revocation is meant to cut.
-    const labSubnets = desired.transport.interfaces.map(({ subnet_cidr }) => subnet_cidr);
-    if (labSubnets.length > 0) {
-        lines.push(
-            ...labSubnets.map((subnet) => `acl lab_any_src src ${subnet}`),
-            "http_access allow lab_connect lab_ssl_ports lab_any_src",
-            "",
-        );
-    }
-
+    // That CONNECT allow is emitted per group, so every line a group contributes
+    // names it (`lab<T>_`). The applier relies on this: a change that only adds
+    // lines, or only drops lines of groups that no longer exist, is reloaded;
+    // dropping a line of a group that remains (a revoked domain) restarts Squid,
+    // because only a restart closes the tunnels the revocation is meant to cut.
+    // Rules for other groups never match this group's source, so per-group
+    // placement is equivalent to one shared allow ahead of them all.
     const spliceRules: string[] = [];
     for (const entry of desired.transport.interfaces) {
         const sourceAcl = `lab${entry.vlan_tag}_src`;
         const domainAcl = `lab${entry.vlan_tag}_dom`;
         const sniAcl = `lab${entry.vlan_tag}_sni`;
-        lines.push(`acl ${sourceAcl} src ${entry.subnet_cidr}`);
+        lines.push(
+            `acl ${sourceAcl} src ${entry.subnet_cidr}`,
+            `http_access allow lab_connect lab_ssl_ports ${sourceAcl}`,
+        );
         if (entry.allowed_web_domains.length === 0) {
             // No allowlist means no web access. Denying explicitly keeps the
             // group from falling through to another group's allow rule, and the

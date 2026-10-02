@@ -20,7 +20,7 @@ import {
     NetworkProvisioningDependencies,
     NetworkProvisioningError,
 } from "../src/network/provisioning-network";
-import { ReconciliationAttempt } from "../src/network/reconciliation-attempts";
+import { ReconciliationAttempt, ReconciliationLockedError } from "../src/network/reconciliation-attempts";
 
 const INFRASTRUCTURE_REVISION = "a".repeat(64);
 const GATEWAY_REVISION = "b".repeat(64);
@@ -236,4 +236,40 @@ test("a VNet failure is reported as the vnet step and stops everything else", as
         (error: NetworkProvisioningError) => error.step === "vnet",
     );
     assert.deepEqual(order, []);
+});
+
+// A clock the tests advance by hand: each injected sleep moves it forward, so a
+// 90 s wait costs nothing.
+function fakeClock() {
+    let time = 0;
+    return { now: () => time, sleep: async (milliseconds: number) => { time += milliseconds; } };
+}
+
+test("a held reconciliation lock is waited out rather than failing the create", async () => {
+    let locked = 2;
+    const { order, dependencies } = harness({
+        ...fakeClock(),
+        async applyAccessPolicy() {
+            if (locked-- > 0) throw new ReconciliationLockedError();
+            order.push("access-policy");
+            return attempt("3");
+        },
+    });
+
+    await ensureNetworkGroupInfrastructure(group(), "vu1234", dependencies);
+
+    assert.deepEqual(order, ["vnet", "access-trunk", "access-policy", "gateway-policy"]);
+});
+
+test("a lock still held at the deadline fails the named step", async () => {
+    const { dependencies } = harness({
+        ...fakeClock(),
+        lockWaitMs: 10_000,
+        async applyGatewayPolicy() { throw new ReconciliationLockedError(); },
+    });
+
+    await assert.rejects(
+        () => ensureNetworkGroupInfrastructure(group(), "vu1234", dependencies),
+        (error) => error instanceof NetworkProvisioningError && error.step === "gateway-policy",
+    );
 });
