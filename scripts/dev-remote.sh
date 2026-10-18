@@ -30,6 +30,7 @@ Commands:
                     Record the Gateway guest interface names and resolvers.
   settings          List persisted settings (metadata) keys and values.
   groups            List persisted network groups and their allocations.
+  group-errors      Non-active groups with last_error, and failed apply attempts.
   templates         List templates and how students connect to them.
   instances         List live instances with their template and address.
   guacd-logs        Tail the Guacamole/guacd log from the Access LXC (200).
@@ -122,6 +123,26 @@ cmd_settings() {
     in_ct "docker compose exec -T virtual-lab-postgres sh -c '\''psql -Atq -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -c \"SELECT key, value FROM metadata ORDER BY key\"'\''"
 }
 
+# Every group not active, with its recorded error, plus the failed apply
+# attempts of the last 14 days — where stuck teardowns record themselves.
+cmd_group_errors() {
+    in_ct "docker compose exec -T virtual-lab-postgres sh -c '\''psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\"'\''" <<'SQL'
+\x on
+SELECT id, owner_id, profile_id, vlan_tag, state, applied_revision, created_at, updated_at, last_error
+FROM network_groups WHERE state <> 'active' ORDER BY id;
+\x off
+SELECT id, status, phase, checks->0->>'component' AS component, error_code,
+       left(error_detail, 120) AS error_detail, started_at,
+       round(extract(epoch FROM finished_at - started_at)::numeric, 1) AS secs
+FROM network_reconciliation_attempts
+WHERE mode = 'apply' AND started_at > now() - interval '14 days'
+  AND (status <> 'succeeded' OR checks->0->>'component' = 'access')
+ORDER BY id;
+SELECT id, error_detail FROM network_reconciliation_attempts
+WHERE mode = 'apply' AND status <> 'succeeded' ORDER BY id DESC LIMIT 1;
+SQL
+}
+
 cmd_groups() {
     in_ct "docker compose exec -T virtual-lab-postgres sh -c '\''psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -c \"SELECT id, owner_id, profile_id, vlan_tag, vnet_name, subnet_cidr, state FROM network_groups ORDER BY id\"'\''"
 }
@@ -171,6 +192,7 @@ main() {
         attempt-timings) cmd_attempt_timings ;;
         settings) cmd_settings ;;
         groups) cmd_groups ;;
+        group-errors) cmd_group_errors ;;
         templates) cmd_templates ;;
         instances) cmd_instances ;;
         guacd-logs) cmd_guacd_logs ;;

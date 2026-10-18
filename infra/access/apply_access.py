@@ -37,6 +37,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -499,6 +500,58 @@ def remove_pruned_vlan_links(pruned: list[str]) -> list[str]:
 
 
 ############################################################
+# wait_for_vlan_addresses
+############################################################
+#
+# `networkctl reload` returns before networkd has finished.
+# Rewriting the parent's unit makes it reconfigure every
+# VLAN child, which drops their addresses for a moment, and
+# the window grows with the VLAN count. The backend observes
+# straight after staging, so without this wait it saw no
+# VLAN interfaces at all and abandoned every apply once the
+# trunk carried about 14 VLANs.
+#
+# Returns False on timeout instead of raising: the backend's
+# independent observation is still the verdict.
+#
+# Used by:
+#   - reload_services (below)
+############################################################
+
+VLAN_NETWORK = re.compile(rf"^50-{INTERFACE}\.\d{{4}}\.network$")
+
+
+def wait_for_vlan_addresses(files: dict[str, str], timeout: float = 20.0) -> bool:
+    wanted = set()
+    for path, content in files.items():
+        if not VLAN_NETWORK.match(Path(path).name):
+            continue
+        name = re.search(r"^Name=(\S+)$", content, re.MULTILINE)
+        address = re.search(r"^Address=(\S+)$", content, re.MULTILINE)
+        if name and address:
+            wanted.add(f"{name.group(1)}={address.group(1)}")
+    deadline = time.monotonic() + timeout
+    while True:
+        links = json.loads(run(["ip", "-j", "-4", "addr", "show"], check=False).stdout or "[]")
+        present = {
+            f"{link['ifname']}={info['local']}/{info['prefixlen']}"
+            for link in links
+            for info in link.get("addr_info", [])
+        }
+        if wanted <= present:
+            return True
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.25)
+
+
+
+
+
+
+
+
+############################################################
 # reload_services
 ############################################################
 #
@@ -511,13 +564,19 @@ def remove_pruned_vlan_links(pruned: list[str]) -> list[str]:
 #   - operation_stage (below)
 ############################################################
 
-def reload_services(paths: list[str], pruned: list[str] | None = None) -> list[str]:
+def reload_services(
+    paths: list[str],
+    pruned: list[str] | None = None,
+    files: dict[str, str] | None = None,
+) -> list[str]:
     reloaded = []
     if any(path.startswith("/etc/systemd/network/") for path in paths):
         run(["networkctl", "reload"])
         reloaded.append("networkd")
         for interface in remove_pruned_vlan_links(pruned or []):
             reloaded.append(f"removed:{interface}")
+        if not wait_for_vlan_addresses(files or {}):
+            reloaded.append("networkd-unsettled")
     run(["sysctl", "--system"])
     reloaded.append("sysctl")
     if MANAGED_NFT.exists():
@@ -665,7 +724,7 @@ def operation_stage(request: dict[str, Any]) -> dict[str, Any]:
     # and verify the result
     # ======================================================
     include_added = ensure_nftables_include()
-    reloaded = reload_services(sorted([*files, *prune]), prune)
+    reloaded = reload_services(sorted([*files, *prune]), prune, files)
     verification = verify(revision)
 
 
