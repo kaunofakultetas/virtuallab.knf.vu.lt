@@ -9,8 +9,9 @@
 //  branches on the session type: "web" sets the
 //  webTargetMachine cookie and opens the :8888 proxy,
 //  anything else opens the Guacamole URL. The create dialog
-//  offers profile → template (auto-selected when only one
-//  exists) and shows the 429 VM-limit answer as a warning.
+//  offers profile → template (the default profile, and a
+//  lone template, come preselected) and shows the 429
+//  VM-limit answer as a warning.
 //
 //  Used by:
 //    - router.tsx — route /instances
@@ -156,15 +157,21 @@ export default function Instances() {
             const response = await axios.get<LabProfile[]>("/api/lab-profiles");
             const next = Array.isArray(response.data) ? response.data : [];
             setProfiles(next);
-            if (next.length === 1) {
-                setSelectedProfileId(next[0].id);
-                if (next[0].templates.length === 1) {
-                    setSelectedTemplateId(Number(next[0].templates[0].id));
-                }
-            }
         } catch {
             // Silently fail — profiles are only needed for creation
         }
+    };
+
+    // Preselect the default profile (or the only one), and its template if it has just one.
+    const openCreate = () => {
+        const profile =
+            profiles.find(({ is_default }) => is_default) ??
+            (profiles.length === 1 ? profiles[0] : undefined);
+        setSelectedProfileId(profile?.id ?? "");
+        setSelectedTemplateId(
+            profile?.templates.length === 1 ? Number(profile.templates[0].id) : "",
+        );
+        setCreateOpen(true);
     };
 
     const selectedProfile = profiles.find(({ id }) => id === selectedProfileId);
@@ -359,7 +366,7 @@ export default function Instances() {
                 <Button
                     variant="contained"
                     startIcon={<AddOutlinedIcon fontSize="small" />}
-                    onClick={() => setCreateOpen(true)}
+                    onClick={openCreate}
                     disabled={profiles.length === 0}
                 >
                     New instance

@@ -176,15 +176,21 @@ export default function AdminInstances() {
             const response = await axios.get<LabProfile[]>("/api/lab-profiles");
             const next = Array.isArray(response.data) ? response.data : [];
             setProfiles(next);
-            if (next.length === 1) {
-                setSelectedProfileId(next[0].id);
-                if (next[0].templates.length === 1) {
-                    setSelectedTemplateId(Number(next[0].templates[0].id));
-                }
-            }
         } catch {
             // non-critical
         }
+    };
+
+    // Preselect the default profile (or the only one), and its template if it has just one.
+    const openCreate = () => {
+        const profile =
+            profiles.find(({ is_default }) => is_default) ??
+            (profiles.length === 1 ? profiles[0] : undefined);
+        setSelectedProfileId(profile?.id ?? "");
+        setSelectedTemplateId(
+            profile?.templates.length === 1 ? Number(profile.templates[0].id) : "",
+        );
+        setCreateOpen(true);
     };
 
     const selectedProfile = profiles.find(({ id }) => id === selectedProfileId);
@@ -389,7 +395,7 @@ export default function AdminInstances() {
                 <Button
                     variant="contained"
                     startIcon={<AddOutlinedIcon fontSize="small" />}
-                    onClick={() => setCreateOpen(true)}
+                    onClick={openCreate}
                     disabled={templates.length === 0}
                 >
                     New instance

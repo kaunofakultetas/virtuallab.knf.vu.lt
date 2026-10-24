@@ -75,7 +75,10 @@ export type NetworkTeardownOutcome =
     | { released: false; reason: string }
     | { released: true; vlan_tag: number; vnet_name: string; steps: string[] };
 
-export const TEARDOWN_REVISION_ATTEMPTS = 3;
+// Ten, not three: a group whose only VM is deleted seconds after creation
+// tears down while that create's own Gateway and Access applies still hold
+// the lock, and 3 x 3s ran out before they finished (group 234, 2026-10-19).
+export const TEARDOWN_REVISION_ATTEMPTS = 10;
 
 // How long to wait before re-reading the revision after a conflict.
 //

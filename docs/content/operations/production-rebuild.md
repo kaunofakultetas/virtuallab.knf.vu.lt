@@ -893,12 +893,19 @@ docker compose exec -T \
   -e GATEWAY_MANAGEMENT_INTERFACE=eth0 \
   -e GATEWAY_TRUNK_INTERFACE=ens19 \
   -e GATEWAY_UPLINK_INTERFACE=eth2 \
-  -e GATEWAY_UPSTREAM_RESOLVERS=1.1.1.1,8.8.8.8 \
+  -e GATEWAY_UPSTREAM_RESOLVERS=172.16.0.1 \
   virtual-lab-backend npm run set-gateway-settings
 ```
 
+The resolver must be the campus one. The uplink network drops DNS to public
+resolvers (1.1.1.1 and 8.8.8.8 time out on both UDP and TCP 53 while TCP 443
+to the same address works), and with them every allowlisted domain fails to
+resolve: dnsmasq answers lab VMs with nothing and Squid's access log stays
+empty, so the failure looks like a dead network rather than a DNS one.
+
 **Verify:** `GET /network/readiness` shows `gateway-runtime-settings` passing
-with the interface names you expect.
+with the interface names you expect, and on the Gateway
+`dig +short nomoreransom.org @127.0.0.1` returns addresses.
 
 ### Leave bootstrap mode — before the Gateway apply, not after
 
