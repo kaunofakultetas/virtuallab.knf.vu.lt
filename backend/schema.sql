@@ -29,6 +29,14 @@ END $$;
 -- Add 'web' connection type for existing deployments (idempotent)
 ALTER TYPE connection_type ADD VALUE IF NOT EXISTS 'web';
 
+-- NIC model a clone's net0 is created with; more models are one ADD VALUE away
+DO $$
+BEGIN
+    CREATE TYPE nic_model AS ENUM ('virtio', 'e1000');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
+
 CREATE TABLE IF NOT EXISTS users (
     vu_id VARCHAR(255) PRIMARY KEY,
     password VARCHAR(255),
@@ -80,6 +88,7 @@ CREATE TABLE IF NOT EXISTS templates (
     visible_to_students BOOLEAN NOT NULL DEFAULT FALSE,
     connection_type connection_type NOT NULL DEFAULT 'guacamole',
     connection_config JSONB NOT NULL DEFAULT '{}',
+    nic_model nic_model NOT NULL DEFAULT 'virtio',
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
@@ -87,6 +96,7 @@ CREATE TABLE IF NOT EXISTS templates (
 -- Idempotent migrations for existing deployments
 ALTER TABLE templates ADD COLUMN IF NOT EXISTS connection_type connection_type NOT NULL DEFAULT 'guacamole';
 ALTER TABLE templates ADD COLUMN IF NOT EXISTS connection_config JSONB NOT NULL DEFAULT '{}';
+ALTER TABLE templates ADD COLUMN IF NOT EXISTS nic_model nic_model NOT NULL DEFAULT 'virtio';
 
 CREATE TABLE IF NOT EXISTS lab_profiles (
     id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

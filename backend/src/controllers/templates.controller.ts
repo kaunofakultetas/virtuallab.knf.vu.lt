@@ -126,8 +126,8 @@ export const Templates = {
         try {
             await client.query("BEGIN");
             const res = await client.query(
-                `INSERT INTO templates (type, name, proxmox_id, description, connection_type, connection_config)
-                 VALUES ($1, $2, $3, $4, $5, $6)
+                `INSERT INTO templates (type, name, proxmox_id, description, connection_type, connection_config, nic_model)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)
                  RETURNING *`,
                 [
                     template.type,
@@ -136,6 +136,7 @@ export const Templates = {
                     template.description || null,
                     template.connection_type ?? "guacamole",
                     JSON.stringify(template.connection_config ?? {}),
+                    template.nic_model ?? "virtio",
                 ],
             );
             const created = res.rows[0] as Template;

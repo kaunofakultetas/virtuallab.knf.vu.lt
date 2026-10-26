@@ -53,6 +53,7 @@ const emptyFormValues: TemplateFormValues = {
     proxmox_id: "",
     description: "",
     visible_to_students: false,
+    nic_model: "virtio",
     connection_type: "guacamole",
     guac_username_mode: "creatorId",
     guac_username_custom: "",
@@ -110,6 +111,7 @@ export default function TemplateDetails() {
             proxmox_id: template.proxmox_id ? String(template.proxmox_id) : "",
             description: template.description ?? "",
             visible_to_students: Boolean(template.visible_to_students),
+            nic_model: template.nic_model ?? "virtio",
             connection_type: connType,
             guac_username_mode: connType === "guacamole" ? detectMode(cfg.username) : "creatorId",
             guac_username_custom: connType === "guacamole" && detectMode(cfg.username) === "custom" ? (cfg.username ?? "") : "",
@@ -161,6 +163,7 @@ export default function TemplateDetails() {
                 proxmox_id: editValues.proxmox_id.trim(),
                 description: editValues.description.trim(),
                 visible_to_students: editValues.visible_to_students,
+                nic_model: editValues.nic_model,
                 connection_type: editValues.connection_type,
                 connection_config: buildConnectionConfig(editValues),
             };
@@ -301,6 +304,14 @@ export default function TemplateDetails() {
                                 </Typography>
                                 <Typography variant="body2" sx={{ fontWeight: 600 }}>
                                     {template.proxmox_id ?? "-"}
+                                </Typography>
+                            </Box>
+                            <Box>
+                                <Typography variant="caption" color="text.secondary">
+                                    Network adapter
+                                </Typography>
+                                <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                    {template.nic_model ?? "virtio"}
                                 </Typography>
                             </Box>
                             <Box>

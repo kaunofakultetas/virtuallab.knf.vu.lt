@@ -17,6 +17,9 @@ export type TemplateType = "student_vm" | "lab_vm";
 
 export type ConnectionType = "guacamole" | "ssh" | "web";
 
+// The model a clone's net0 is created with.
+export type NicModel = "virtio" | "e1000";
+
 export type SshConnectionConfig = {
     port?: number;
     username?: string;
@@ -46,6 +49,7 @@ export type CreateTemplateDTO = {
     proxmox_id: string;
     connection_type?: ConnectionType;
     connection_config?: ConnectionConfig;
+    nic_model?: NicModel;
 };
 
 export type UpdateTemplateDTO = {
@@ -56,6 +60,7 @@ export type UpdateTemplateDTO = {
     visible_to_students?: boolean;
     connection_type?: ConnectionType;
     connection_config?: ConnectionConfig;
+    nic_model?: NicModel;
 };
 
 export type Template = {
@@ -69,6 +74,7 @@ export type Template = {
 
     connection_type: ConnectionType;
     connection_config: ConnectionConfig;
+    nic_model: NicModel;
 
     created_at: Date;
     updated_at: Date;

@@ -28,12 +28,17 @@ function deferred<T>() {
     return { promise, resolve, reject };
 }
 
-async function harness(t: TestContext, cloneOutcome: Promise<boolean>) {
+async function harness(
+    t: TestContext,
+    cloneOutcome: Promise<boolean>,
+    templateFields: Record<string, unknown> = {},
+) {
     const { Instances } = await import("../src/controllers/instances.controller");
     const { proxmox } = await import("../src/proxmox");
     const { pool } = await import("../src/utils/db");
     const { metadata } = await import("../src/utils/metadata");
     const calls: string[] = [];
+    const configs: Record<string, unknown>[] = [];
 
     t.mock.method(metadata, "get", async () => undefined);
     t.mock.method(proxmox, "getVmConfig", async () => ({ scsi0: "local-lvm:base-9000-disk-0" }));
@@ -43,9 +48,14 @@ async function harness(t: TestContext, cloneOutcome: Promise<boolean>) {
     t.mock.method(proxmox, "waitForTaskCompletion", async (upid: string) => (
         upid === "UPID:clone" ? cloneOutcome : true
     ));
-    for (const name of ["configVM", "startVM", "stopVM", "deleteVM"] as const) {
+    for (const name of ["startVM", "stopVM", "deleteVM"] as const) {
         t.mock.method(proxmox, name, async () => { calls.push(name); return `UPID:${name}`; });
     }
+    t.mock.method(proxmox, "configVM", async (_vmid: string, config: Record<string, unknown>) => {
+        calls.push("configVM");
+        configs.push(config);
+        return "UPID:configVM";
+    });
     t.mock.method(pool, "connect", async () => ({
         async query(sql: string) {
             if (sql.includes("count(*)")) return { rows: [{ count: "0" }] };
@@ -59,11 +69,11 @@ async function harness(t: TestContext, cloneOutcome: Promise<boolean>) {
         return { rows: [] };
     });
 
-    const template = { id: 1, proxmox_id: "9000", name: "kali" };
+    const template = { id: 1, proxmox_id: "9000", name: "kali", ...templateFields };
     const create = (prepareNetwork: () => Promise<void>) => Instances.createInstance(
         "vu1234", template as never, 7, "lab2000", true, prepareNetwork,
     );
-    return { calls, create };
+    return { calls, configs, create };
 }
 
 test("a network failure during the clone destroys the clone and never attaches it", async (t) => {
@@ -101,4 +111,15 @@ test("a failed clone still waits for the network work before reporting", async (
 
     network.resolve();
     await assert.rejects(created, /Failed to clone VM/);
+});
+
+test("net0 uses the template's NIC model, virtio when unset", async (t) => {
+    const e1000 = await harness(t, Promise.resolve(true), { nic_model: "e1000" });
+    await e1000.create(async () => {});
+    assert.equal(e1000.configs[0].net0, "e1000,bridge=lab2000,firewall=1");
+
+    t.mock.restoreAll();
+    const unset = await harness(t, Promise.resolve(true));
+    await unset.create(async () => {});
+    assert.equal(unset.configs[0].net0, "virtio,bridge=lab2000,firewall=1");
 });

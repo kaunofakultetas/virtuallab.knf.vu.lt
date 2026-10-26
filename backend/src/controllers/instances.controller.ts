@@ -409,7 +409,7 @@ export const Instances = {
                 ciuser: "user",
                 cipassword: userId,
                 ipconfig0: "ip=dhcp",
-                net0: `virtio,bridge=${bridge},firewall=1`,
+                net0: `${template.nic_model ?? "virtio"},bridge=${bridge},firewall=1`,
                 tags: `vm;owner${userId}`,
             });
 

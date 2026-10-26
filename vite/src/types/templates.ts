@@ -12,6 +12,8 @@
 
 export type ConnectionType = "guacamole" | "ssh" | "web";
 
+export type NicModel = "virtio" | "e1000";
+
 export interface Template {
     id: string | number;
     name?: string;
@@ -20,6 +22,7 @@ export interface Template {
     description?: string;
     visible_to_students?: boolean;
     connection_type?: ConnectionType;
+    nic_model?: NicModel;
     connection_config?: {
         port?: number;
         protocol?: "http" | "https";

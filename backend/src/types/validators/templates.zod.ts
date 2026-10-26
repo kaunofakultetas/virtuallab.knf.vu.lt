@@ -22,6 +22,8 @@ export const templateTypeSchema = z.enum(["student_vm", "lab_vm"]);
 
 export const connectionTypeSchema = z.enum(["guacamole", "ssh", "web"]);
 
+export const nicModelSchema = z.enum(["virtio", "e1000"]);
+
 export const templateParamsSchema = z.object({
     id: templateIdSchema,
 });
@@ -36,6 +38,7 @@ export const createTemplateSchema = z.object({
     description: z.string().optional(),
     connection_type: connectionTypeSchema.optional().default("guacamole"),
     connection_config: connectionConfigSchema,
+    nic_model: nicModelSchema.optional().default("virtio"),
 });
 
 // PATCH /templates/:id — everything optional, but not all absent
@@ -48,6 +51,7 @@ export const updateTemplateSchema = z
         visible_to_students: z.boolean().optional(),
         connection_type: connectionTypeSchema.optional(),
         connection_config: connectionConfigSchema,
+        nic_model: nicModelSchema.optional(),
     })
     .refine((data) => Object.keys(data).length > 0, {
         message: "At least one field must be provided for update",

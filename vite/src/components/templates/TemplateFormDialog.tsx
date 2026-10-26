@@ -30,7 +30,7 @@ import Switch from "@mui/material/Switch";
 import MenuItem from "@mui/material/MenuItem";
 import Divider from "@mui/material/Divider";
 import Typography from "@mui/material/Typography";
-import type { ConnectionType } from "@/types/templates";
+import type { ConnectionType, NicModel } from "@/types/templates";
 
 export type SshCredentialMode = "creatorId" | "userId" | "custom";
 
@@ -40,6 +40,7 @@ export interface TemplateFormValues {
     proxmox_id: string;
     description: string;
     visible_to_students: boolean;
+    nic_model: NicModel;
     connection_type: ConnectionType;
     // Guacamole (RDP) config
     guac_username_mode: SshCredentialMode;
@@ -175,6 +176,19 @@ export function TemplateFormDialog({
                         multiline
                         minRows={2}
                     />
+                    <TextField
+                        label="Network adapter"
+                        value={values.nic_model}
+                        onChange={(event) =>
+                            onChange({ nic_model: event.target.value as NicModel })
+                        }
+                        select
+                        fullWidth
+                        size="small"
+                    >
+                        <MenuItem value="virtio">VirtIO (default)</MenuItem>
+                        <MenuItem value="e1000">Intel E1000</MenuItem>
+                    </TextField>
 
                     <Divider />
                     <Typography variant="subtitle2" color="text.secondary">

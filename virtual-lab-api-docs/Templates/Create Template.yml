@@ -13,7 +13,8 @@ http:
         "name": "Kali Linux",
         "type": "student_vm",
         "proxmox_id": "9000",
-        "description": "Kali Linux attackbox"
+        "description": "Kali Linux attackbox",
+        "nic_model": "virtio"
       }
   auth: inherit
 
